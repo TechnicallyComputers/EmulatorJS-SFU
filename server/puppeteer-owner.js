@@ -1,7 +1,7 @@
 const puppeteer = require("puppeteer");
 
 (async () => {
-  const ROOT = process.env.ROOT_URL || "http://localhost:8080";
+  const ROOT = process.env.ROOT_URL || "http://localhost:8086";
   const PAGE = ROOT + "/index.html?debug=true";
 
   console.log("Launching headless browser to", PAGE);
