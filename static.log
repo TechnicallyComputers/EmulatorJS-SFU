@@ -1,0 +1,58 @@
+127.0.0.1 - - [05/Jan/2026 15:51:11] "GET /index.html?debug=true HTTP/1.1" 304 -
+127.0.0.1 - - [05/Jan/2026 15:51:11] code 404, message File not found
+127.0.0.1 - - [05/Jan/2026 15:51:11] "GET /.well-known/appspecific/com.chrome.devtools.json HTTP/1.1" 404 -
+127.0.0.1 - - [05/Jan/2026 15:51:17] code 404, message File not found
+127.0.0.1 - - [05/Jan/2026 15:51:17] "GET /data/src/socket.io.min.js.map HTTP/1.1" 404 -
+127.0.0.1 - - [05/Jan/2026 15:51:18] code 404, message File not found
+127.0.0.1 - - [05/Jan/2026 15:51:18] "GET /data/cores/reports/snes9x.json HTTP/1.1" 404 -
+127.0.0.1 - - [05/Jan/2026 15:51:18] code 404, message File not found
+127.0.0.1 - - [05/Jan/2026 15:51:18] "GET /data/cores/snes9x-wasm.data HTTP/1.1" 404 -
+127.0.0.1 - - [05/Jan/2026 15:59:01] "GET /index.html?debug=true HTTP/1.1" 200 -
+127.0.0.1 - - [05/Jan/2026 15:59:01] code 404, message File not found
+127.0.0.1 - - [05/Jan/2026 15:59:01] "GET /.well-known/appspecific/com.chrome.devtools.json HTTP/1.1" 404 -
+127.0.0.1 - - [05/Jan/2026 15:59:05] "GET /data/vendor/mediasoup-client-umd.js HTTP/1.1" 200 -
+127.0.0.1 - - [05/Jan/2026 15:59:05] "GET /data/src/emulator.js HTTP/1.1" 200 -
+127.0.0.1 - - [05/Jan/2026 15:59:05] code 404, message File not found
+127.0.0.1 - - [05/Jan/2026 15:59:05] "GET /data/src/socket.io.min.js.map HTTP/1.1" 404 -
+127.0.0.1 - - [05/Jan/2026 15:59:05] code 404, message File not found
+127.0.0.1 - - [05/Jan/2026 15:59:05] "GET /data/cores/reports/snes9x.json HTTP/1.1" 404 -
+127.0.0.1 - - [05/Jan/2026 15:59:05] code 404, message File not found
+127.0.0.1 - - [05/Jan/2026 15:59:05] "GET /data/cores/snes9x-wasm.data HTTP/1.1" 404 -
+127.0.0.1 - - [05/Jan/2026 15:59:38] "GET /data/loader.js HTTP/1.1" 304 -
+127.0.0.1 - - [05/Jan/2026 15:59:38] "GET /data/src/emulator.js HTTP/1.1" 200 -
+127.0.0.1 - - [05/Jan/2026 15:59:38] "GET /data/src/nipplejs.js HTTP/1.1" 304 -
+127.0.0.1 - - [05/Jan/2026 15:59:38] "GET /data/src/shaders.js HTTP/1.1" 304 -
+127.0.0.1 - - [05/Jan/2026 15:59:38] "GET /data/src/storage.js HTTP/1.1" 304 -
+127.0.0.1 - - [05/Jan/2026 15:59:38] "GET /data/src/gamepad.js HTTP/1.1" 304 -
+127.0.0.1 - - [05/Jan/2026 15:59:38] "GET /data/src/GameManager.js HTTP/1.1" 304 -
+127.0.0.1 - - [05/Jan/2026 15:59:38] "GET /data/src/socket.io.min.js HTTP/1.1" 304 -
+127.0.0.1 - - [05/Jan/2026 15:59:38] "GET /data/src/compression.js HTTP/1.1" 304 -
+127.0.0.1 - - [05/Jan/2026 15:59:38] code 404, message File not found
+127.0.0.1 - - [05/Jan/2026 15:59:38] "GET /data/src/socket.io.min.js.map HTTP/1.1" 404 -
+127.0.0.1 - - [05/Jan/2026 15:59:38] "GET /data/emulator.css HTTP/1.1" 304 -
+127.0.0.1 - - [05/Jan/2026 15:59:38] code 404, message File not found
+127.0.0.1 - - [05/Jan/2026 15:59:38] "GET /data/cores/reports/snes9x.json HTTP/1.1" 404 -
+127.0.0.1 - - [05/Jan/2026 15:59:38] code 404, message File not found
+127.0.0.1 - - [05/Jan/2026 15:59:38] "GET /data/cores/snes9x-legacy-wasm.data HTTP/1.1" 404 -
+127.0.0.1 - - [05/Jan/2026 15:59:38] "GET /data/compression/extract7z.js HTTP/1.1" 304 -
+127.0.0.1 - - [05/Jan/2026 15:59:50] "GET /docs/favicon.ico HTTP/1.1" 304 -
+127.0.0.1 - - [05/Jan/2026 16:01:42] "GET /index.html?debug=true HTTP/1.1" 200 -
+127.0.0.1 - - [05/Jan/2026 16:01:42] code 404, message File not found
+127.0.0.1 - - [05/Jan/2026 16:01:42] "GET /.well-known/appspecific/com.chrome.devtools.json HTTP/1.1" 404 -
+127.0.0.1 - - [05/Jan/2026 16:01:42] "GET /docs/Logo-light.png HTTP/1.1" 304 -
+127.0.0.1 - - [05/Jan/2026 16:01:43] code 404, message File not found
+127.0.0.1 - - [05/Jan/2026 16:01:43] "GET /.well-known/appspecific/com.chrome.devtools.json HTTP/1.1" 404 -
+127.0.0.1 - - [05/Jan/2026 16:01:46] "GET /data/vendor/mediasoup-client-umd.js HTTP/1.1" 200 -
+127.0.0.1 - - [05/Jan/2026 16:01:46] "GET /data/src/emulator.js HTTP/1.1" 304 -
+127.0.0.1 - - [05/Jan/2026 16:01:46] code 404, message File not found
+127.0.0.1 - - [05/Jan/2026 16:01:46] "GET /data/src/socket.io.min.js.map HTTP/1.1" 404 -
+127.0.0.1 - - [05/Jan/2026 16:01:46] code 404, message File not found
+127.0.0.1 - - [05/Jan/2026 16:01:46] "GET /data/cores/reports/snes9x.json HTTP/1.1" 404 -
+127.0.0.1 - - [05/Jan/2026 16:01:46] code 404, message File not found
+127.0.0.1 - - [05/Jan/2026 16:01:46] "GET /data/cores/snes9x-legacy-wasm.data HTTP/1.1" 404 -
+127.0.0.1 - - [05/Jan/2026 16:05:34] "GET /index.html?debug=true HTTP/1.1" 200 -
+127.0.0.1 - - [05/Jan/2026 16:05:34] "GET /data/vendor/mediasoup-client-umd.js HTTP/1.1" 304 -
+127.0.0.1 - - [05/Jan/2026 16:05:34] "GET /docs/Logo-light.png HTTP/1.1" 304 -
+127.0.0.1 - - [05/Jan/2026 16:05:34] code 404, message File not found
+127.0.0.1 - - [05/Jan/2026 16:05:34] "GET /.well-known/appspecific/com.chrome.devtools.json HTTP/1.1" 404 -
+127.0.0.1 - - [05/Jan/2026 16:05:34] "GET /docs/favicon.ico HTTP/1.1" 304 -

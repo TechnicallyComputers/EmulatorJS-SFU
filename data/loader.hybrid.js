@@ -17,7 +17,7 @@
       ? window.EJS_pathtodata
       : folderPath(new URL(document.currentScript.src).pathname);
   if (!scriptPath.endsWith("/")) scriptPath += "/";
-  //console.log(scriptPath);
+
   function loadScript(file) {
     return new Promise(function (resolve) {
       let script = document.createElement("script");
@@ -27,7 +27,7 @@
           typeof EJS_paths[file] === "string"
         ) {
           return EJS_paths[file];
-        } else if (file.endsWith("emulator.min.js")) {
+        } else if (file.endsWith("emulator.hybrid.min.js")) {
           return scriptPath + file;
         } else {
           return scriptPath + "src/" + file;
@@ -73,7 +73,7 @@
     );
     if (minifiedFailed) {
       console.log("Attempting to load non-minified files");
-      if (file === "emulator.min.js") {
+      if (file === "emulator.hybrid.min.js") {
         for (let i = 0; i < scripts.length; i++) {
           await loadScript(scripts[i]);
         }
@@ -83,15 +83,19 @@
     }
   }
 
+  // Hybrid-only build: force the flag on.
+  window.EJS_NETPLAY_HYBRID_ONLY = true;
+
   if ("undefined" != typeof EJS_DEBUG_XX && true === EJS_DEBUG_XX) {
     for (let i = 0; i < scripts.length; i++) {
       await loadScript(scripts[i]);
     }
     await loadStyle("emulator.css");
   } else {
-    await loadScript("emulator.min.js");
+    await loadScript("emulator.hybrid.min.js");
     await loadStyle("emulator.min.css");
   }
+
   const config = {};
   config.gameUrl = window.EJS_gameUrl;
   config.dataPath = scriptPath;
@@ -120,9 +124,8 @@
   config.netplayUrl = window.EJS_netplayServer;
   config.netplayICEServers = window.EJS_netplayICEServers;
   config.gameId = window.EJS_gameID;
-  // Hybrid-only netplay mode: SFU for A/V + P2P controls. Can be enabled by
-  // setting window.EJS_NETPLAY_HYBRID_ONLY=true.
-  config.netplayHybridOnly = window.EJS_NETPLAY_HYBRID_ONLY === true;
+  // Hybrid-only netplay mode: SFU for A/V + P2P controls.
+  config.netplayHybridOnly = true;
   config.backgroundImg = window.EJS_backgroundImage;
   config.backgroundBlur = window.EJS_backgroundBlur;
   config.backgroundColor = window.EJS_backgroundColor;

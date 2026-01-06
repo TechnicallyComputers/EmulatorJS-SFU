@@ -25,12 +25,14 @@
         "@node-minify/core": "^10.2.0",
         "@node-minify/terser": "^10.2.0",
         "http-server": "^14.1.1",
+        "mediasoup-client": "^3.18.3",
         "node-7z": "^3.0.0"
     },
     "optionalDependencies": {
         "@emulatorjs/cores": "latest"
     },
     "devDependencies": {
+        "esbuild": "^0.27.2",
         "jsdoc": "^4.0.4",
         "nipplejs": "^0.10.2",
         "node-fetch": "^3.3.2",
