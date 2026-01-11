@@ -4,6 +4,8 @@ yarn.lock
 roms/
 data/emulator.min.js
 data/emulator.min.css
+data/emulator.hybrid.min.js
+emulator.hybrid.min.js
 data/cores/*
 !data/cores/README.md
 !data/cores/core-README.md
@@ -14,3 +16,5 @@ data/cores/*
 *.tgz
 dist/
 jsdoc/
+server/nohup.out
+data/loader.js.bak
