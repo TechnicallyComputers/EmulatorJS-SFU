@@ -416,12 +416,13 @@ class EmulatorJS {
         : !!configSimulcast;
     window.EJS_NETPLAY_SIMULCAST = this.netplaySimulcastEnabled;
 
-    // VP9 SVC mode (used when VP9 is selected/negotiated): L1T1 | L1T3
+    // VP9 SVC mode (used when VP9 is selected/negotiated): L1T1 | L1T3 | L2T3
     const normalizeVP9SVCMode = (v) => {
       const s = typeof v === "string" ? v.trim() : "";
       const sl = s.toLowerCase();
       if (sl === "l1t1") return "L1T1";
       if (sl === "l1t3") return "L1T3";
+      if (sl === "l2t3") return "L2T3";
       return "L1T1";
     };
     const storedVP9SVC = this.preGetSetting("netplayVP9SVC");
@@ -459,19 +460,20 @@ class EmulatorJS {
     window.EJS_NETPLAY_HOST_CODEC = this.netplayHostCodec;
 
     // Client Simulcast Quality (replaces legacy Client Max Resolution).
-    // Values are: high | medium | low.
+    // Values are: high | low.
     const normalizeSimulcastQuality = (v) => {
       const s = typeof v === "string" ? v.trim().toLowerCase() : "";
-      if (s === "high" || s === "medium" || s === "low") return s;
+      if (s === "high" || s === "low") return s;
+      if (s === "medium") return "low";
       // Legacy values
       if (s === "720p") return "high";
-      if (s === "360p") return "medium";
+      if (s === "360p") return "low";
       if (s === "180p") return "low";
       return "high";
     };
     const simulcastQualityToLegacyRes = (q) => {
       const s = normalizeSimulcastQuality(q);
-      return s === "low" ? "180p" : s === "medium" ? "360p" : "720p";
+      return s === "low" ? "360p" : "720p";
     };
 
     const storedSimulcastQuality = this.preGetSetting(
@@ -626,7 +628,8 @@ class EmulatorJS {
       } else if (setting === "enabled") {
         return true;
       }
-      return null;
+      // Default-on when supported.
+      return true;
     })();
     this.isSafari = /^((?!chrome|android).)*safari/i.test(navigator.userAgent);
     if (this.config.disableDatabases) {
@@ -6873,6 +6876,7 @@ class EmulatorJS {
         const sl = s.toLowerCase();
         if (sl === "l1t1") return "L1T1";
         if (sl === "l1t3") return "L1T3";
+        if (sl === "l2t3") return "L2T3";
         return "L1T1";
       };
       this.netplayVP9SVCMode = normalizeVP9SVCMode(value);
@@ -6946,15 +6950,16 @@ class EmulatorJS {
     ) {
       const normalizeSimulcastQuality = (v) => {
         const s = typeof v === "string" ? v.trim().toLowerCase() : "";
-        if (s === "high" || s === "medium" || s === "low") return s;
+        if (s === "high" || s === "low") return s;
+        if (s === "medium") return "low";
         if (s === "720p") return "high";
-        if (s === "360p") return "medium";
+        if (s === "360p") return "low";
         if (s === "180p") return "low";
         return "high";
       };
       const simulcastQualityToLegacyRes = (q) => {
         const s = normalizeSimulcastQuality(q);
-        return s === "low" ? "180p" : s === "medium" ? "360p" : "720p";
+        return s === "low" ? "360p" : "720p";
       };
 
       this.netplayClientSimulcastQuality = normalizeSimulcastQuality(value);
@@ -7606,7 +7611,7 @@ class EmulatorJS {
         enabled: this.localization("Enabled"),
         disabled: this.localization("Disabled"),
       },
-      "enabled",
+      "disabled",
       graphicsOptions,
       true
     );
@@ -7953,6 +7958,7 @@ class EmulatorJS {
       {
         L1T1: "L1T1",
         L1T3: "L1T3",
+        L2T3: "L2T3",
       },
       (() => {
         const normalizeVP9SVCMode = (v) => {
@@ -7960,6 +7966,7 @@ class EmulatorJS {
           const sl = s.toLowerCase();
           if (sl === "l1t1") return "L1T1";
           if (sl === "l1t3") return "L1T3";
+          if (sl === "l2t3") return "L2T3";
           return "L1T1";
         };
         return normalizeVP9SVCMode(
@@ -8016,15 +8023,15 @@ class EmulatorJS {
       "netplayClientSimulcastQuality",
       {
         high: this.localization("High"),
-        medium: this.localization("Medium"),
         low: this.localization("Low"),
       },
       (() => {
         const normalizeSimulcastQuality = (v) => {
           const s = typeof v === "string" ? v.trim().toLowerCase() : "";
-          if (s === "high" || s === "medium" || s === "low") return s;
+          if (s === "high" || s === "low") return s;
+          if (s === "medium") return "low";
           if (s === "720p") return "high";
-          if (s === "360p") return "medium";
+          if (s === "360p") return "low";
           if (s === "180p") return "low";
           return "high";
         };
@@ -9520,6 +9527,7 @@ class EmulatorJS {
                 const sl = s.toLowerCase();
                 if (sl === "l1t1") return "L1T1";
                 if (sl === "l1t3") return "L1T3";
+                if (sl === "l2t3") return "L2T3";
                 return "L1T1";
               };
               const svcMode = normalizeVP9SVCMode(
@@ -9545,19 +9553,14 @@ class EmulatorJS {
                   maxBitrate: 2500000,
                 },
                 {
-                  rid: "m",
+                  rid: "l",
                   scaleResolutionDownBy: 2,
                   maxBitrate: 900000,
-                },
-                {
-                  rid: "l",
-                  scaleResolutionDownBy: 4,
-                  maxBitrate: 250000,
                 },
               ];
               produceParams.appData = {
                 ejsSimulcast: true,
-                ejsLayers: ["high", "medium", "low"],
+                ejsLayers: ["high", "low"],
               };
             }
 
@@ -9685,6 +9688,7 @@ class EmulatorJS {
                   const sl = s.toLowerCase();
                   if (sl === "l1t1") return "L1T1";
                   if (sl === "l1t3") return "L1T3";
+                  if (sl === "l2t3") return "L2T3";
                   return "L1T1";
                 };
                 const svcMode = normalizeVP9SVCMode(
@@ -9714,19 +9718,14 @@ class EmulatorJS {
                     maxBitrate: 2500000,
                   },
                   {
-                    rid: "m",
+                    rid: "l",
                     scaleResolutionDownBy: 2,
                     maxBitrate: 900000,
-                  },
-                  {
-                    rid: "l",
-                    scaleResolutionDownBy: 4,
-                    maxBitrate: 250000,
                   },
                 ];
                 produceParams.appData = {
                   ejsSimulcast: true,
-                  ejsLayers: ["high", "medium", "low"],
+                  ejsLayers: ["high", "low"],
                 };
               }
 
@@ -9804,6 +9803,7 @@ class EmulatorJS {
                     const sl = s.toLowerCase();
                     if (sl === "l1t1") return "L1T1";
                     if (sl === "l1t3") return "L1T3";
+                    if (sl === "l2t3") return "L2T3";
                     return "L1T1";
                   };
                   const svcMode = normalizeVP9SVCMode(
@@ -9833,19 +9833,14 @@ class EmulatorJS {
                       maxBitrate: 2500000,
                     },
                     {
-                      rid: "m",
+                      rid: "l",
                       scaleResolutionDownBy: 2,
                       maxBitrate: 900000,
-                    },
-                    {
-                      rid: "l",
-                      scaleResolutionDownBy: 4,
-                      maxBitrate: 250000,
                     },
                   ];
                   produceParams.appData = {
                     ejsSimulcast: true,
-                    ejsLayers: ["high", "medium", "low"],
+                    ejsLayers: ["high", "low"],
                   };
                 }
 
@@ -10255,6 +10250,7 @@ class EmulatorJS {
                     const sl = s.toLowerCase();
                     if (sl === "l1t1") return "L1T1";
                     if (sl === "l1t3") return "L1T3";
+                    if (sl === "l2t3") return "L2T3";
                     return "L1T1";
                   };
                   const svcMode = normalizeVP9SVCMode(
@@ -10284,19 +10280,14 @@ class EmulatorJS {
                       maxBitrate: 2500000,
                     },
                     {
-                      rid: "m",
+                      rid: "l",
                       scaleResolutionDownBy: 2,
                       maxBitrate: 900000,
-                    },
-                    {
-                      rid: "l",
-                      scaleResolutionDownBy: 4,
-                      maxBitrate: 250000,
                     },
                   ];
                   produceParams.appData = {
                     ejsSimulcast: true,
-                    ejsLayers: ["high", "medium", "low"],
+                    ejsLayers: ["high", "low"],
                   };
                 }
 
@@ -10746,16 +10737,17 @@ class EmulatorJS {
               }
 
               // Enforce client preference for SFU video quality.
-              // When host uses simulcast, mediasoup consumer spatial layers are typically:
-              // 0=lowest, 1=mid, 2=highest.
+              // When host uses our 2-layer simulcast, mediasoup consumer spatial layers are:
+              // 0=low, 1=high.
               try {
                 if (consumer && consumer.kind === "video") {
                   const normalizeSimulcastQuality = (v) => {
                     const s =
                       typeof v === "string" ? v.trim().toLowerCase() : "";
-                    if (s === "high" || s === "medium" || s === "low") return s;
+                    if (s === "high" || s === "low") return s;
+                    if (s === "medium") return "low";
                     if (s === "720p") return "high";
-                    if (s === "360p") return "medium";
+                    if (s === "360p") return "low";
                     if (s === "180p") return "low";
                     return "high";
                   };
@@ -10778,8 +10770,7 @@ class EmulatorJS {
                       : null) ||
                     "high";
                   const pref = normalizeSimulcastQuality(prefRaw);
-                  const spatialLayer =
-                    pref === "low" ? 0 : pref === "medium" ? 1 : 2;
+                  const spatialLayer = pref === "low" ? 0 : 1;
                   if (typeof consumer.setPreferredLayers === "function") {
                     consumer.setPreferredLayers({
                       spatialLayer,

@@ -127,7 +127,13 @@
   config.backgroundBlur = window.EJS_backgroundBlur;
   config.backgroundColor = window.EJS_backgroundColor;
   config.controlScheme = window.EJS_controlScheme;
-  config.threads = window.EJS_threads;
+  // Default to threaded cores when the browser supports SharedArrayBuffer.
+  // If the embedding page explicitly sets EJS_threads, respect it.
+  if (typeof window.EJS_threads === "boolean") {
+    config.threads = window.EJS_threads;
+  } else {
+    config.threads = typeof window.SharedArrayBuffer === "function";
+  }
   config.disableCue = window.EJS_disableCue;
   config.startBtnName = window.EJS_startButtonName;
   config.softLoad = window.EJS_softLoad;
