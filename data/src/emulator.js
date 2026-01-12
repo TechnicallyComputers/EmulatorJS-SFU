@@ -1062,9 +1062,13 @@ class EmulatorJS {
         console.error(
           "**THIS METHOD IS A FAILSAFE, AND NOT OFFICIALLY SUPPORTED. USE AT YOUR OWN RISK**"
         );
-        let version = this.ejs_version.endsWith("-beta")
-          ? "nightly"
-          : this.ejs_version;
+        // RomM does not bundle cores; use the upstream EmulatorJS CDN.
+        // Default to `nightly` for a consistent "latest cores" location.
+        const version =
+          typeof window.EJS_CDN_CORES_VERSION === "string" &&
+          window.EJS_CDN_CORES_VERSION.length > 0
+            ? window.EJS_CDN_CORES_VERSION
+            : "nightly";
         res = await this.downloadFile(
           `https://cdn.emulatorjs.org/${version}/data/${corePath}`,
           (progress) => {

@@ -92,8 +92,13 @@
     }
     await loadStyle("emulator.css");
   } else {
-    await loadScript("emulator.hybrid.min.js");
-    await loadStyle("emulator.min.css");
+    // RomM uses the SFU fork primarily for netplay; it does not bundle cores.
+    // Always load the non-minified runtime so core CDN fallbacks can be patched
+    // without touching huge single-line minified bundles.
+    for (let i = 0; i < scripts.length; i++) {
+      await loadScript(scripts[i]);
+    }
+    await loadStyle("emulator.css");
   }
 
   const config = {};
