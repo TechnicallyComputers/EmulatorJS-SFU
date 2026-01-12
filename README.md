@@ -18,7 +18,7 @@ Self-hosted **Javascript** emulation for various systems.
 [![Button Demo]][Demo]<br>
 [![Button Contributors]][Contributors]
 
-Join our Discord server:
+Join the EmulatorJS Discord server to discuss the original project:
 
 [![Join our Discord server!](https://invidget.switchblade.xyz/6akryGkETU)](https://discord.gg/6akryGkETU)
 
@@ -28,6 +28,8 @@ Join our Discord server:
 
 > [!NOTE]  
 > **As of EmulatorJS version 4.0, this project is no longer a reverse-engineered version of the emulatorjs.com project. It is now a complete rewrite.**
+>
+> **This document still needs to be updated further.  This project is NOT EmulatorJS.  It is EmulatorJS-SFU.  EmulatorJS-SFU is a complete overhaul of EmulatorJS netcode and other tweaks.  This is part of an ambitious project to build a totally new netplay experience for emulators by leveraging ROMM and an SFU server I wrote built on mediasoup libraries.**
 
 > [!WARNING]  
 > As of version 4.0.9 cores and minified files are no longer included in the repository. You will need to get them separately. You can get it from [releases](https://github.com/EmulatorJS/EmulatorJS/releases) or the \* new CDN (see [this](#CDN) for more info). There is also a new version system that we will be using. (read [here](#Versioning) for more info).
