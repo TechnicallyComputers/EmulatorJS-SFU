@@ -12062,6 +12062,15 @@ class EmulatorJS {
         if (this.netplay.owner) {
           console.log("Owner setting up WebRTC for updated users...");
           (async () => {
+            const localSocketId =
+              this.netplay && this.netplay.socket && this.netplay.socket.id
+                ? String(this.netplay.socket.id).trim()
+                : null;
+            const localUserid =
+              this.netplay && this.netplay.playerID
+                ? String(this.netplay.playerID).trim()
+                : null;
+
             // In SFU mode we still want P2P for controls even if P2P media
             // stream init fails/isn't needed.
             if (!this.netplay.useSFU) {
@@ -12075,26 +12084,52 @@ class EmulatorJS {
                 );
             }
             Object.keys(users).forEach((playerId) => {
-              if (playerId !== this.netplay.playerID) {
-                const socketId = this.netplay.players[playerId].socketId;
-                if (!socketId) {
-                  console.error(
-                    "No socketId for player",
-                    playerId,
-                    "- WebRTC may fail"
-                  );
-                  return;
-                }
-                const peerSocketId = socketId;
-                if (!this.netplay.peerConnections[peerSocketId]) {
-                  console.log(
-                    "Creating peer connection for (socketId)",
-                    peerSocketId
-                  );
-                  this.netplayCreatePeerConnection(peerSocketId, {
-                    controlsOnly: !!this.netplay.useSFU,
-                  });
-                }
+              // Some deployments key `users` by username (not userid), so this check alone
+              // does NOT reliably exclude the local player.
+              if (playerId === this.netplay.playerID) return;
+
+              const extra =
+                this.netplay.players && this.netplay.players[playerId]
+                  ? this.netplay.players[playerId]
+                  : null;
+
+              // Skip self by userid when available.
+              if (
+                extra &&
+                localUserid &&
+                extra.userid !== undefined &&
+                extra.userid !== null &&
+                String(extra.userid).trim() === localUserid
+              ) {
+                return;
+              }
+
+              const socketIdRaw = extra && (extra.socketId || extra.socket_id);
+              const peerSocketId = socketIdRaw
+                ? String(socketIdRaw).trim()
+                : "";
+              if (!peerSocketId) {
+                console.error(
+                  "No socketId for player",
+                  playerId,
+                  "- WebRTC may fail"
+                );
+                return;
+              }
+
+              // Skip self by socketId (most reliable).
+              if (localSocketId && peerSocketId === localSocketId) {
+                return;
+              }
+
+              if (!this.netplay.peerConnections[peerSocketId]) {
+                console.log(
+                  "Creating peer connection for (socketId)",
+                  peerSocketId
+                );
+                this.netplayCreatePeerConnection(peerSocketId, {
+                  controlsOnly: !!this.netplay.useSFU,
+                });
               }
             });
           })();
