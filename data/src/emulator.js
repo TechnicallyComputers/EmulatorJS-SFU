@@ -8814,11 +8814,12 @@ class EmulatorJS {
               if (!this.netplay.audioProducer) return;
               if (this.netplay.audioProducer.closed) return;
 
-              const stream = this.netplay.localStream;
               const audioTrack =
-                stream && stream.getAudioTracks
-                  ? stream.getAudioTracks()[0]
-                  : null;
+                (this.netplay && this.netplay._ejsHostAudioTrack) ||
+                (this.netplay.localStream &&
+                this.netplay.localStream.getAudioTracks
+                  ? this.netplay.localStream.getAudioTracks()[0]
+                  : null);
               if (!audioTrack) return;
               if (audioTrack.enabled === false) return;
 
@@ -8857,14 +8858,20 @@ class EmulatorJS {
               // No progress for a while: attempt an automatic recovery.
               if (now - health.lastChangeAt > 12000) {
                 console.warn(
-                  "[Netplay] Host audio producer appears stalled; attempting SFU reproduce",
+                  "[Netplay] Host audio producer appears stalled; attempting SFU audio recovery",
                   {
                     bytesSent: bytes,
                     lastChangeAt: health.lastChangeAt,
                   }
                 );
                 health.lastChangeAt = now;
-                if (typeof this.netplayReproduceHostVideoToSFU === "function") {
+                if (typeof this.netplayReproduceHostAudioToSFU === "function") {
+                  this.netplayReproduceHostAudioToSFU(
+                    "host-audio-producer-stalled"
+                  );
+                } else if (
+                  typeof this.netplayReproduceHostVideoToSFU === "function"
+                ) {
                   this.netplayReproduceHostVideoToSFU(
                     "host-audio-producer-stalled"
                   );
@@ -8898,7 +8905,11 @@ class EmulatorJS {
               id: at.id,
               origin: tag,
             });
-            if (typeof this.netplayReproduceHostVideoToSFU === "function") {
+            if (typeof this.netplayReproduceHostAudioToSFU === "function") {
+              this.netplayReproduceHostAudioToSFU("host-audio-track-ended");
+            } else if (
+              typeof this.netplayReproduceHostVideoToSFU === "function"
+            ) {
               this.netplayReproduceHostVideoToSFU("host-audio-track-ended");
             }
           };
@@ -8907,7 +8918,11 @@ class EmulatorJS {
               id: at.id,
               origin: tag,
             });
-            if (typeof this.netplayReproduceHostVideoToSFU === "function") {
+            if (typeof this.netplayReproduceHostAudioToSFU === "function") {
+              this.netplayReproduceHostAudioToSFU("host-audio-track-muted");
+            } else if (
+              typeof this.netplayReproduceHostVideoToSFU === "function"
+            ) {
               this.netplayReproduceHostVideoToSFU("host-audio-track-muted");
             }
           };
@@ -9875,18 +9890,7 @@ class EmulatorJS {
             reason,
           });
 
-          // Stop old tracks to avoid leaks / stuck capture tracks.
-          try {
-            if (this.netplay.localStream) {
-              this.netplay.localStream.getTracks().forEach((t) => {
-                try {
-                  t.stop();
-                } catch (e) {}
-              });
-            }
-          } catch (e) {
-            // ignore
-          }
+          const oldStream = this.netplay.localStream;
 
           const refreshed = this.collectScreenRecordingMediaTracks(
             this.canvas,
@@ -9899,9 +9903,14 @@ class EmulatorJS {
             );
             return false;
           }
-          this.netplay.localStream = refreshed;
           const videoTrack = refreshed.getVideoTracks()[0];
           const audioTrack = refreshed.getAudioTracks()[0];
+
+          try {
+            this.netplay._ejsHostAudioTrack = audioTrack || null;
+          } catch (e) {
+            // ignore
+          }
 
           try {
             if (
@@ -9928,103 +9937,131 @@ class EmulatorJS {
             return false;
           }
 
-          if (this.netplay.producer) {
-            try {
-              this.netplay.producer.close();
-            } catch (e) {}
-            this.netplay.producer = null;
-          }
-
-          if (this.netplay.audioProducer) {
-            try {
-              this.netplay.audioProducer.close();
-            } catch (e) {}
-            this.netplay.audioProducer = null;
-          }
+          const forceReproduceVideo =
+            typeof reason === "string" &&
+            (reason.includes("codec") || reason.includes("svc"));
 
           if (videoTrack) {
-            const produceParams = {
-              track: videoTrack,
-            };
-            let preferredCodec = null;
-            try {
-              preferredCodec =
-                typeof this.netplayPickSFUVideoCodec === "function"
-                  ? this.netplayPickSFUVideoCodec()
-                  : null;
-              if (preferredCodec) produceParams.codec = preferredCodec;
-            } catch (e) {}
+            const existing = this.netplay.producer;
+            if (
+              existing &&
+              !existing.closed &&
+              !forceReproduceVideo &&
+              typeof existing.replaceTrack === "function"
+            ) {
+              await existing.replaceTrack({ track: videoTrack });
+              console.log("[Netplay] Replaced SFU video track (replaceTrack)");
+            } else {
+              if (existing) {
+                try {
+                  existing.close();
+                } catch (e) {}
+                this.netplay.producer = null;
+              }
 
-            const codecMime =
-              preferredCodec && typeof preferredCodec.mimeType === "string"
-                ? preferredCodec.mimeType.toLowerCase()
-                : "";
-            const wantsVP9 = codecMime === "video/vp9";
-            const simulcastEnabled =
-              this.netplaySimulcastEnabled === true ||
-              window.EJS_NETPLAY_SIMULCAST === true;
-
-            if (wantsVP9) {
-              const normalizeVP9SVCMode = (v) => {
-                const s = typeof v === "string" ? v.trim() : "";
-                const sl = s.toLowerCase();
-                if (sl === "l1t1") return "L1T1";
-                if (sl === "l1t3") return "L1T3";
-                if (sl === "l2t3") return "L2T3";
-                return "L1T1";
+              const produceParams = {
+                track: videoTrack,
               };
-              const svcMode = normalizeVP9SVCMode(
-                this.netplayVP9SVCMode ||
-                  window.EJS_NETPLAY_VP9_SVC_MODE ||
-                  "L1T1"
+              let preferredCodec = null;
+              try {
+                preferredCodec =
+                  typeof this.netplayPickSFUVideoCodec === "function"
+                    ? this.netplayPickSFUVideoCodec()
+                    : null;
+                if (preferredCodec) produceParams.codec = preferredCodec;
+              } catch (e) {}
+
+              const codecMime =
+                preferredCodec && typeof preferredCodec.mimeType === "string"
+                  ? preferredCodec.mimeType.toLowerCase()
+                  : "";
+              const wantsVP9 = codecMime === "video/vp9";
+              const simulcastEnabled =
+                this.netplaySimulcastEnabled === true ||
+                window.EJS_NETPLAY_SIMULCAST === true;
+
+              if (wantsVP9) {
+                const normalizeVP9SVCMode = (v) => {
+                  const s = typeof v === "string" ? v.trim() : "";
+                  const sl = s.toLowerCase();
+                  if (sl === "l1t1") return "L1T1";
+                  if (sl === "l1t3") return "L1T3";
+                  if (sl === "l2t3") return "L2T3";
+                  return "L1T1";
+                };
+                const svcMode = normalizeVP9SVCMode(
+                  this.netplayVP9SVCMode ||
+                    window.EJS_NETPLAY_VP9_SVC_MODE ||
+                    "L1T1"
+                );
+                produceParams.encodings = [
+                  {
+                    scalabilityMode: svcMode,
+                    dtx: false,
+                  },
+                ];
+                produceParams.appData = Object.assign(
+                  {},
+                  produceParams.appData,
+                  {
+                    ejsSVC: true,
+                    ejsScalabilityMode: svcMode,
+                  }
+                );
+              } else if (simulcastEnabled) {
+                produceParams.encodings = [
+                  {
+                    rid: "h",
+                    scaleResolutionDownBy: 1,
+                    maxBitrate: 2500000,
+                  },
+                  {
+                    rid: "l",
+                    scaleResolutionDownBy: 2,
+                    maxBitrate: 900000,
+                  },
+                ];
+                produceParams.appData = {
+                  ejsSimulcast: true,
+                  ejsLayers: ["high", "low"],
+                };
+              }
+
+              this.netplay.producer = await this.netplay.sendTransport.produce(
+                produceParams
               );
-              produceParams.encodings = [
-                {
-                  scalabilityMode: svcMode,
-                  dtx: false,
-                },
-              ];
-              produceParams.appData = Object.assign({}, produceParams.appData, {
-                ejsSVC: true,
-                ejsScalabilityMode: svcMode,
-              });
-            } else if (simulcastEnabled) {
-              produceParams.encodings = [
-                {
-                  rid: "h",
-                  scaleResolutionDownBy: 1,
-                  maxBitrate: 2500000,
-                },
-                {
-                  rid: "l",
-                  scaleResolutionDownBy: 2,
-                  maxBitrate: 900000,
-                },
-              ];
-              produceParams.appData = {
-                ejsSimulcast: true,
-                ejsLayers: ["high", "low"],
-              };
+              console.log(
+                "[Netplay] Produced video to SFU (reproduce), id=",
+                this.netplay.producer.id
+              );
             }
-
-            this.netplay.producer = await this.netplay.sendTransport.produce(
-              produceParams
-            );
-            console.log(
-              "[Netplay] Produced video to SFU (reproduce), id=",
-              this.netplay.producer.id
-            );
           } else {
             console.warn("[Netplay] No video track available to re-produce");
           }
 
           if (audioTrack) {
-            this.netplay.audioProducer =
-              await this.netplay.sendTransport.produce({ track: audioTrack });
-            console.log(
-              "[Netplay] Produced audio to SFU (reproduce), id=",
-              this.netplay.audioProducer.id
-            );
+            const existingAudio = this.netplay.audioProducer;
+            if (
+              existingAudio &&
+              !existingAudio.closed &&
+              typeof existingAudio.replaceTrack === "function"
+            ) {
+              await existingAudio.replaceTrack({ track: audioTrack });
+              console.log("[Netplay] Replaced SFU audio track (replaceTrack)");
+            } else {
+              if (existingAudio) {
+                try {
+                  existingAudio.close();
+                } catch (e) {}
+                this.netplay.audioProducer = null;
+              }
+              this.netplay.audioProducer =
+                await this.netplay.sendTransport.produce({ track: audioTrack });
+              console.log(
+                "[Netplay] Produced audio to SFU (reproduce), id=",
+                this.netplay.audioProducer.id
+              );
+            }
             try {
               if (
                 typeof this._ejsEnsureHostAudioProducerHealthMonitor ===
@@ -10038,9 +10075,133 @@ class EmulatorJS {
           } else {
             console.warn("[Netplay] No audio track available to re-produce");
           }
+
+          // Swap streams only after the producers are updated, to avoid a brief
+          // drop while we stop old tracks.
+          this.netplay.localStream = refreshed;
+          try {
+            if (oldStream && oldStream.getTracks) {
+              oldStream.getTracks().forEach((t) => {
+                try {
+                  if (typeof t._ejsAudioCaptureCleanup === "function") {
+                    t._ejsAudioCaptureCleanup();
+                  }
+                } catch (e) {}
+                try {
+                  t.stop();
+                } catch (e) {}
+              });
+            }
+          } catch (e) {
+            // ignore
+          }
           return true;
         } catch (e) {
           console.error("[Netplay] Failed to reproduce SFU video", e);
+          return false;
+        }
+      };
+
+      // Audio-only SFU recovery: refresh just the audio producer.
+      // This avoids jarring video resets when only audio stalls.
+      this.netplayReproduceHostAudioToSFU = async (reason = "unknown") => {
+        try {
+          if (!this.netplay || !this.netplay.owner || !this.netplay.useSFU)
+            return false;
+
+          const now = Date.now();
+          if (
+            this.netplay._lastSFUAudioReproduceAt &&
+            now - this.netplay._lastSFUAudioReproduceAt < 8000
+          )
+            return false;
+          this.netplay._lastSFUAudioReproduceAt = now;
+
+          console.log("[Netplay] Reproducing SFU audio from capture", {
+            reason,
+          });
+
+          const refreshed =
+            this.collectScreenRecordingMediaTracks(this.canvas, 30, {
+              audioOnly: true,
+            }) || this.collectScreenRecordingMediaTracks(this.canvas, 30);
+          if (!refreshed || !refreshed.getTracks().length) return false;
+          const audioTrack =
+            refreshed.getAudioTracks && refreshed.getAudioTracks()[0];
+          if (!audioTrack) return false;
+
+          // Stop any prior audio-only capture track/graph.
+          try {
+            const prev = this.netplay._ejsHostAudioTrack;
+            if (prev && prev !== audioTrack) {
+              try {
+                if (typeof prev._ejsAudioCaptureCleanup === "function") {
+                  prev._ejsAudioCaptureCleanup();
+                }
+              } catch (e) {}
+              try {
+                prev.stop();
+              } catch (e) {}
+            }
+          } catch (e) {
+            // ignore
+          }
+          this.netplay._ejsHostAudioTrack = audioTrack;
+
+          try {
+            if (
+              typeof this._ejsAttachHostAudioRecoveryHandlers === "function"
+            ) {
+              const ms = new MediaStream();
+              ms.addTrack(audioTrack);
+              this._ejsAttachHostAudioRecoveryHandlers(ms, "reproduce-audio");
+            }
+          } catch (e) {
+            // ignore
+          }
+
+          if (!this.netplay.sendTransport) {
+            await this.netplayCreateSFUTransports();
+          }
+          if (!this.netplay.sendTransport) return false;
+
+          const existingAudio = this.netplay.audioProducer;
+          if (
+            existingAudio &&
+            !existingAudio.closed &&
+            typeof existingAudio.replaceTrack === "function"
+          ) {
+            await existingAudio.replaceTrack({ track: audioTrack });
+            console.log("[Netplay] Replaced SFU audio track (replaceTrack)");
+          } else {
+            if (existingAudio) {
+              try {
+                existingAudio.close();
+              } catch (e) {}
+              this.netplay.audioProducer = null;
+            }
+            this.netplay.audioProducer =
+              await this.netplay.sendTransport.produce({ track: audioTrack });
+            console.log(
+              "[Netplay] Produced audio to SFU (reproduce-audio), id=",
+              this.netplay.audioProducer.id
+            );
+          }
+
+          try {
+            if (
+              typeof this._ejsEnsureHostAudioProducerHealthMonitor ===
+              "function"
+            ) {
+              this._ejsEnsureHostAudioProducerHealthMonitor();
+            }
+          } catch (e) {
+            // ignore
+          }
+
+          return true;
+        } catch (e) {
+          console.error("[Netplay] Failed to reproduce SFU audio", e);
           return false;
         }
       };
@@ -11617,6 +11778,90 @@ class EmulatorJS {
       }
     };
 
+    // Ensure the SFU DataChannel send transport exists for relay inputs.
+    // IMPORTANT: This must not recreate SFU media transports (video/audio), because
+    // it may be called during mid-session input-mode switches.
+    this.netplayEnsureSFUInputSendTransport = async () => {
+      try {
+        if (!this.netplay || !this.isNetplay) return false;
+        if (this.netplay.owner) return false;
+        if (!this.netplay.useSFU) return false;
+        if (!this.netplay.device || !this.netplay.socket) return false;
+        if (!this.netplay.socket.connected) return false;
+
+        if (
+          this.netplay.inputSendTransport &&
+          !this.netplay.inputSendTransport.closed &&
+          typeof this.netplay.inputSendTransport.produceData === "function"
+        ) {
+          return true;
+        }
+
+        const dataSendInfo = await new Promise((resolve, reject) => {
+          this.netplay.socket.emit(
+            "sfu-create-transport",
+            { direction: "send" },
+            (err, info) => {
+              if (err) return reject(err);
+              resolve(info);
+            }
+          );
+        });
+
+        const inputSendTransport =
+          this.netplay.device.createSendTransport(dataSendInfo);
+
+        inputSendTransport.on(
+          "connect",
+          ({ dtlsParameters }, callback, errback) => {
+            this.netplay.socket.emit(
+              "sfu-connect-transport",
+              { transportId: dataSendInfo.id, dtlsParameters },
+              (err) => {
+                if (err) return errback(err);
+                callback();
+              }
+            );
+          }
+        );
+
+        inputSendTransport.on(
+          "producedata",
+          (
+            { sctpStreamParameters, label, protocol, appData },
+            callback,
+            errback
+          ) => {
+            this.netplay.socket.emit(
+              "sfu-produce-data",
+              {
+                transportId:
+                  this.netplay.inputSendTransportId || dataSendInfo.id,
+                sctpStreamParameters,
+                label,
+                protocol,
+                appData,
+              },
+              (err, id) => {
+                if (err) return errback(err);
+                callback({ id });
+              }
+            );
+          }
+        );
+
+        this.netplay.inputSendTransport = inputSendTransport;
+        this.netplay.inputSendTransportId = dataSendInfo.id;
+        console.log("Created inputSendTransport for SFU DataChannel:", {
+          id: dataSendInfo.id,
+        });
+        return true;
+      } catch (e) {
+        console.warn("[Netplay][SFU] Failed ensuring inputSendTransport", e);
+        return false;
+      }
+    };
+
     this.netplayCreatePeerConnection = (peerId, options = {}) => {
       const controlsOnly =
         this.netplay && this.netplay._hybridOnly
@@ -13171,6 +13416,85 @@ class EmulatorJS {
       // Input channel selection (can be changed mid-session).
       // Non-owner sends inputs either via SFU DataChannel relay (ordered/unordered)
       // or via P2P unordered DataChannel.
+      this.netplayTeardownRelayInputs = (reason) => {
+        try {
+          if (!this.netplay) return;
+          if (this.netplay.inputDataProducer) {
+            try {
+              this.netplay.inputDataProducer.close();
+            } catch (e) {}
+            this.netplay.inputDataProducer = null;
+          }
+        } catch (e) {
+          console.warn("[Netplay] Failed to teardown relay inputs", {
+            reason,
+            error: e,
+          });
+        }
+      };
+
+      this.netplayTeardownUnorderedP2PInputs = (reason) => {
+        try {
+          if (!this.netplay) return;
+          Object.values(this.netplay.peerConnections || {}).forEach(
+            (pcData) => {
+              const dc = pcData && pcData.unorderedDataChannel;
+              if (!dc) return;
+              try {
+                if (dc.readyState !== "closed") dc.close();
+              } catch (e) {}
+              try {
+                pcData.unorderedDataChannel = null;
+              } catch (e) {}
+            }
+          );
+        } catch (e) {
+          console.warn("[Netplay] Failed to teardown unordered P2P inputs", {
+            reason,
+            error: e,
+          });
+        }
+      };
+
+      this.netplayEnsureUnorderedP2PInputs = (retries, reason) => {
+        try {
+          if (!this.netplay) return;
+          Object.values(this.netplay.peerConnections || {}).forEach(
+            (pcData) => {
+              if (!pcData || !pcData.pc) return;
+
+              // Recreate the channel to apply changed retransmit settings.
+              if (pcData.unorderedDataChannel) {
+                try {
+                  if (pcData.unorderedDataChannel.readyState !== "closed") {
+                    pcData.unorderedDataChannel.close();
+                  }
+                } catch (e) {}
+                pcData.unorderedDataChannel = null;
+              }
+
+              const dc = pcData.pc.createDataChannel("inputs-unordered", {
+                ordered: false,
+                maxRetransmits: retries,
+              });
+              dc.onopen = () =>
+                console.log("[Netplay] Unordered P2P input channel open", {
+                  reason,
+                });
+              dc.onclose = () =>
+                console.warn("[Netplay] Unordered P2P input channel closed", {
+                  reason,
+                });
+              dc.onerror = (e) =>
+                console.error("[Netplay] Unordered P2P input channel error", e);
+              pcData.unorderedDataChannel = dc;
+            }
+          );
+        } catch (e) {
+          console.warn("[Netplay] Failed ensuring unordered P2P channel", e);
+        }
+      };
+
       this.netplayApplyInputMode = async (reason) => {
         try {
           if (!this.isNetplay || !this.netplay) return;
@@ -13201,13 +13525,13 @@ class EmulatorJS {
               return;
             }
 
-            await this.netplayCreateSFUTransports();
+            // Data-only switch: ensure we only have one input path alive.
+            this.netplayTeardownUnorderedP2PInputs("switch-to-relay:" + reason);
+            this.netplayTeardownRelayInputs("switch-to-relay:" + reason);
 
-            if (this.netplay.inputDataProducer) {
-              try {
-                this.netplay.inputDataProducer.close();
-              } catch (e) {}
-              this.netplay.inputDataProducer = null;
+            // Do not recreate SFU media transports here.
+            if (typeof this.netplayEnsureSFUInputSendTransport === "function") {
+              await this.netplayEnsureSFUInputSendTransport();
             }
 
             if (
@@ -13225,9 +13549,7 @@ class EmulatorJS {
               protocol: "json",
               appData: { ejsType: "inputs", ejsInputMode: mode },
             };
-            if (!ordered) {
-              produceOpts.maxRetransmits = retries;
-            }
+            if (!ordered) produceOpts.maxRetransmits = retries;
 
             this.netplay.inputDataProducer =
               await this.netplay.inputSendTransport.produceData(produceOpts);
@@ -13236,54 +13558,15 @@ class EmulatorJS {
               mode,
               dataProducerId: this.netplay.inputDataProducer.id,
             });
-          } else {
-            // unorderedP2P
-            if (this.netplay.inputDataProducer) {
-              try {
-                this.netplay.inputDataProducer.close();
-              } catch (e) {}
-              this.netplay.inputDataProducer = null;
-            }
-
-            // Ensure an unordered data channel exists (client-initiated) for any existing peer connections.
-            try {
-              Object.values(this.netplay.peerConnections || {}).forEach(
-                (pcData) => {
-                  if (!pcData || !pcData.pc) return;
-                  if (pcData.unorderedDataChannel) {
-                    // If the user changed retries mid-session, recreate the channel.
-                    try {
-                      if (pcData.unorderedDataChannel.readyState !== "closed") {
-                        pcData.unorderedDataChannel.close();
-                      }
-                    } catch (e) {}
-                    pcData.unorderedDataChannel = null;
-                  }
-                  const dc = pcData.pc.createDataChannel("inputs-unordered", {
-                    ordered: false,
-                    maxRetransmits: retries,
-                  });
-                  dc.onopen = () =>
-                    console.log("[Netplay] Unordered P2P input channel open");
-                  dc.onclose = () =>
-                    console.warn(
-                      "[Netplay] Unordered P2P input channel closed"
-                    );
-                  dc.onerror = (e) =>
-                    console.error(
-                      "[Netplay] Unordered P2P input channel error",
-                      e
-                    );
-                  pcData.unorderedDataChannel = dc;
-                }
-              );
-            } catch (e) {
-              console.warn(
-                "[Netplay] Failed ensuring unordered P2P channel",
-                e
-              );
-            }
+            return;
           }
+
+          // unorderedP2P
+          this.netplayTeardownRelayInputs("switch-to-unorderedP2P:" + reason);
+          this.netplayTeardownUnorderedP2PInputs(
+            "switch-to-unorderedP2P:" + reason
+          );
+          this.netplayEnsureUnorderedP2PInputs(retries, reason);
         } catch (e) {
           console.warn("[Netplay] netplayApplyInputMode failed", e);
         }
@@ -14759,77 +15042,82 @@ class EmulatorJS {
   collectScreenRecordingMediaTracks(canvasEl, fps, options = {}) {
     let videoTrack = null;
 
-    // If the source canvas has zero layout or logical size, create an
-    // intermediate hidden canvas with the native resolution and continuously
-    // draw frames into it. captureStream() will be taken from that canvas so
-    // the resulting MediaStream has valid dimensions.
-    let sourceCanvas = canvasEl;
-    let stopCopyLoop = null;
-    const needsCopy =
-      options.forceCopy === true ||
-      !canvasEl ||
-      canvasEl.width === 0 ||
-      canvasEl.height === 0 ||
-      canvasEl.clientWidth === 0 ||
-      canvasEl.clientHeight === 0;
-    if (needsCopy) {
-      const native = (this.getNativeResolution &&
-        this.getNativeResolution()) || { width: 640, height: 480 };
-      const captureCanvas = document.createElement("canvas");
-      captureCanvas.width = native.width;
-      captureCanvas.height = native.height;
-      captureCanvas.style.display = "none";
-      // Append to DOM so captureStream works consistently across browsers
-      try {
-        document.body.appendChild(captureCanvas);
-      } catch (e) {
-        /* ignore */
-      }
-      const ctx = captureCanvas.getContext("2d", { alpha: false });
-      let rafId = null;
-      const doCopy = () => {
-        try {
-          if (canvasEl && canvasEl.width > 0 && canvasEl.height > 0) {
-            ctx.drawImage(
-              canvasEl,
-              0,
-              0,
-              captureCanvas.width,
-              captureCanvas.height
-            );
-          }
-        } catch (err) {
-          // Swallow cross-origin or other draw errors
-        }
-        rafId = requestAnimationFrame(doCopy);
-      };
-      doCopy();
-      stopCopyLoop = () => {
-        if (rafId) cancelAnimationFrame(rafId);
-        try {
-          captureCanvas.remove();
-        } catch (e) {}
-      };
-      sourceCanvas = captureCanvas;
-    }
-
-    const videoTracks = sourceCanvas.captureStream(fps).getVideoTracks();
-    if (videoTracks.length !== 0) {
-      videoTrack = videoTracks[0];
-      if (stopCopyLoop) {
-        const origOnEnded = videoTrack.onended;
-        videoTrack.onended = (...args) => {
-          try {
-            stopCopyLoop();
-          } catch (e) {}
-          if (typeof origOnEnded === "function")
-            origOnEnded.apply(videoTrack, args);
-        };
-      }
+    if (options.audioOnly === true) {
+      // Skip video capture entirely; used for audio-only SFU recovery.
+      videoTrack = null;
     } else {
-      if (this.debug) console.error("Unable to capture video stream");
-      if (stopCopyLoop) stopCopyLoop();
-      return null;
+      // If the source canvas has zero layout or logical size, create an
+      // intermediate hidden canvas with the native resolution and continuously
+      // draw frames into it. captureStream() will be taken from that canvas so
+      // the resulting MediaStream has valid dimensions.
+      let sourceCanvas = canvasEl;
+      let stopCopyLoop = null;
+      const needsCopy =
+        options.forceCopy === true ||
+        !canvasEl ||
+        canvasEl.width === 0 ||
+        canvasEl.height === 0 ||
+        canvasEl.clientWidth === 0 ||
+        canvasEl.clientHeight === 0;
+      if (needsCopy) {
+        const native = (this.getNativeResolution &&
+          this.getNativeResolution()) || { width: 640, height: 480 };
+        const captureCanvas = document.createElement("canvas");
+        captureCanvas.width = native.width;
+        captureCanvas.height = native.height;
+        captureCanvas.style.display = "none";
+        // Append to DOM so captureStream works consistently across browsers
+        try {
+          document.body.appendChild(captureCanvas);
+        } catch (e) {
+          /* ignore */
+        }
+        const ctx = captureCanvas.getContext("2d", { alpha: false });
+        let rafId = null;
+        const doCopy = () => {
+          try {
+            if (canvasEl && canvasEl.width > 0 && canvasEl.height > 0) {
+              ctx.drawImage(
+                canvasEl,
+                0,
+                0,
+                captureCanvas.width,
+                captureCanvas.height
+              );
+            }
+          } catch (err) {
+            // Swallow cross-origin or other draw errors
+          }
+          rafId = requestAnimationFrame(doCopy);
+        };
+        doCopy();
+        stopCopyLoop = () => {
+          if (rafId) cancelAnimationFrame(rafId);
+          try {
+            captureCanvas.remove();
+          } catch (e) {}
+        };
+        sourceCanvas = captureCanvas;
+      }
+
+      const videoTracks = sourceCanvas.captureStream(fps).getVideoTracks();
+      if (videoTracks.length !== 0) {
+        videoTrack = videoTracks[0];
+        if (stopCopyLoop) {
+          const origOnEnded = videoTrack.onended;
+          videoTrack.onended = (...args) => {
+            try {
+              stopCopyLoop();
+            } catch (e) {}
+            if (typeof origOnEnded === "function")
+              origOnEnded.apply(videoTrack, args);
+          };
+        }
+      } else {
+        if (this.debug) console.error("Unable to capture video stream");
+        if (stopCopyLoop) stopCopyLoop();
+        return null;
+      }
     }
 
     let audioTrack = null;
@@ -14928,6 +15216,10 @@ class EmulatorJS {
     }
     if (audioTrack && audioTrack.readyState === "live") {
       stream.addTrack(audioTrack);
+    }
+
+    if (options.audioOnly === true && stream.getAudioTracks().length === 0) {
+      return null;
     }
     return stream;
   }
