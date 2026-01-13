@@ -592,6 +592,49 @@ class EmulatorJS {
     );
     window.EJS_NETPLAY_INPUT_MODE = this.netplayInputMode;
 
+    // Preferred local player slot (0-3) for netplay.
+    const normalizePreferredSlot = (v) => {
+      try {
+        if (typeof v === "number" && isFinite(v)) {
+          const n = Math.floor(v);
+          if (n >= 0 && n <= 3) return n;
+          if (n >= 1 && n <= 4) return n - 1;
+        }
+        const s = typeof v === "string" ? v.trim().toLowerCase() : "";
+        if (!s) return 0;
+        if (s === "p1") return 0;
+        if (s === "p2") return 1;
+        if (s === "p3") return 2;
+        if (s === "p4") return 3;
+        const n = parseInt(s, 10);
+        if (!isNaN(n)) {
+          if (n >= 0 && n <= 3) return n;
+          if (n >= 1 && n <= 4) return n - 1;
+        }
+      } catch (e) {
+        // ignore
+      }
+      return 0;
+    };
+    const storedPreferredSlot = this.preGetSetting("netplayPreferredSlot");
+    const envPreferredSlot =
+      typeof window.EJS_NETPLAY_PREFERRED_SLOT === "number" ||
+      typeof window.EJS_NETPLAY_PREFERRED_SLOT === "string"
+        ? window.EJS_NETPLAY_PREFERRED_SLOT
+        : null;
+    const configPreferredSlot =
+      typeof this.config.netplayPreferredSlot === "number" ||
+      typeof this.config.netplayPreferredSlot === "string"
+        ? this.config.netplayPreferredSlot
+        : envPreferredSlot;
+    this.netplayPreferredSlot = normalizePreferredSlot(
+      typeof storedPreferredSlot === "string" ||
+        typeof storedPreferredSlot === "number"
+        ? storedPreferredSlot
+        : configPreferredSlot
+    );
+    window.EJS_NETPLAY_PREFERRED_SLOT = this.netplayPreferredSlot;
+
     if (this.netplayEnabled) {
       const iceServers =
         this.config.netplayICEServers || window.EJS_netplayICEServers || [];
@@ -1588,6 +1631,142 @@ class EmulatorJS {
       );
       throw new Error("EJS_Runtime is not defined!");
     }
+
+    // Firefox tends to be more sensitive to WebAudio scheduling jitter.
+    // Apply a small compatibility patch that nudges towards stability
+    // (higher latency + larger ScriptProcessor buffers when used).
+    if (!this._ejsWebAudioStabilityPatched) {
+      const ua =
+        typeof navigator !== "undefined" && navigator.userAgent
+          ? navigator.userAgent
+          : "";
+      const isFirefox = /firefox\//i.test(ua);
+      const enabled =
+        !(this.config && this.config.firefoxAudioStability === false) &&
+        isFirefox;
+
+      if (enabled) {
+        const desiredLatencyHint =
+          this.config && typeof this.config.audioLatencyHint !== "undefined"
+            ? this.config.audioLatencyHint
+            : "playback";
+        const minScriptProcessorBufferSize =
+          this.config &&
+          typeof this.config.audioMinScriptProcessorBufferSize === "number"
+            ? this.config.audioMinScriptProcessorBufferSize
+            : 8192;
+
+        const installWebAudioStabilityPatch = () => {
+          const originalAudioContext = window.AudioContext;
+          const originalWebkitAudioContext = window.webkitAudioContext;
+          const cleanups = [];
+
+          const wrapAudioContextConstructor = (Ctor, assign) => {
+            if (typeof Ctor !== "function") return;
+
+            function PatchedAudioContext(options) {
+              const nextOptions =
+                options && typeof options === "object" ? { ...options } : {};
+
+              if (
+                typeof desiredLatencyHint !== "undefined" &&
+                desiredLatencyHint !== null &&
+                typeof nextOptions.latencyHint === "undefined"
+              ) {
+                nextOptions.latencyHint = desiredLatencyHint;
+              }
+
+              return Reflect.construct(
+                Ctor,
+                [nextOptions],
+                PatchedAudioContext
+              );
+            }
+
+            PatchedAudioContext.prototype = Ctor.prototype;
+            Object.setPrototypeOf(PatchedAudioContext, Ctor);
+            assign(PatchedAudioContext);
+            cleanups.push(() => assign(Ctor));
+          };
+
+          // Patch constructors to supply a default latencyHint.
+          wrapAudioContextConstructor(originalAudioContext, (v) => {
+            window.AudioContext = v;
+          });
+          wrapAudioContextConstructor(originalWebkitAudioContext, (v) => {
+            window.webkitAudioContext = v;
+          });
+
+          // Patch ScriptProcessor buffer size when used (older emscripten paths).
+          // Only override explicit small sizes; keep 0 (browser-chosen) as-is.
+          if (
+            originalAudioContext &&
+            originalAudioContext.prototype &&
+            typeof originalAudioContext.prototype.createScriptProcessor ===
+              "function"
+          ) {
+            const originalCreateScriptProcessor =
+              originalAudioContext.prototype.createScriptProcessor;
+            originalAudioContext.prototype.createScriptProcessor = function (
+              bufferSize,
+              numberOfInputChannels,
+              numberOfOutputChannels
+            ) {
+              let nextBufferSize = bufferSize;
+              if (
+                typeof bufferSize === "number" &&
+                bufferSize > 0 &&
+                bufferSize < minScriptProcessorBufferSize
+              ) {
+                nextBufferSize = minScriptProcessorBufferSize;
+              }
+              return originalCreateScriptProcessor.call(
+                this,
+                nextBufferSize,
+                numberOfInputChannels,
+                numberOfOutputChannels
+              );
+            };
+            cleanups.push(() => {
+              originalAudioContext.prototype.createScriptProcessor =
+                originalCreateScriptProcessor;
+            });
+          }
+
+          return () => {
+            for (let i = cleanups.length - 1; i >= 0; i--) {
+              try {
+                cleanups[i]();
+              } catch (e) {}
+            }
+          };
+        };
+
+        this._ejsWebAudioStabilityPatched = true;
+        this._ejsUninstallWebAudioStabilityPatch =
+          installWebAudioStabilityPatch();
+        this.on("exit", () => {
+          if (typeof this._ejsUninstallWebAudioStabilityPatch === "function") {
+            try {
+              this._ejsUninstallWebAudioStabilityPatch();
+            } catch (e) {}
+          }
+          this._ejsUninstallWebAudioStabilityPatch = null;
+          this._ejsWebAudioStabilityPatched = false;
+        });
+
+        if (this.debug) {
+          console.log(
+            "Firefox WebAudio stability patch enabled:",
+            "latencyHint=",
+            desiredLatencyHint,
+            "minScriptProcessorBufferSize=",
+            minScriptProcessorBufferSize
+          );
+        }
+      }
+    }
+
     window
       .EJS_Runtime({
         noInitialRun: true,
@@ -8397,6 +8576,33 @@ class EmulatorJS {
     title2.innerText = "{roomname}";
     const password = this.createElement("div");
     password.innerText = "Password: ";
+
+    // Joined-room controls (shown only after join/create)
+    const joinedControls = this.createElement("div");
+    joinedControls.classList.add("ejs_netplay_header");
+    joinedControls.style.display = "flex";
+    joinedControls.style.alignItems = "center";
+    joinedControls.style.gap = "10px";
+    joinedControls.style.margin = "10px 0";
+    joinedControls.style.justifyContent = "flex-start";
+
+    const slotLabel = this.createElement("strong");
+    slotLabel.innerText = this.localization("Player Slot") || "Player Slot";
+    const slotSelect = this.createElement("select");
+    for (let i = 0; i < 4; i++) {
+      const opt = this.createElement("option");
+      opt.value = String(i);
+      opt.innerText = "P" + (i + 1);
+      slotSelect.appendChild(opt);
+    }
+    const slotCurrent = this.createElement("span");
+    slotCurrent.style.opacity = "0.85";
+    slotCurrent.style.marginLeft = "4px";
+
+    joinedControls.appendChild(slotLabel);
+    joinedControls.appendChild(slotSelect);
+    joinedControls.appendChild(slotCurrent);
+
     const table2 = this.createElement("table");
     table2.classList.add("ejs_netplay_table");
     table2.style.width = "100%";
@@ -8419,6 +8625,7 @@ class EmulatorJS {
     table2.appendChild(tbody2);
     joined.appendChild(title2);
     joined.appendChild(password);
+    joined.appendChild(joinedControls);
     joined.appendChild(table2);
 
     joined.style.display = "none";
@@ -8446,6 +8653,8 @@ class EmulatorJS {
           roomNameElem: title2,
           createButton: createButton,
           tabs: [rooms, joined],
+          slotSelect: slotSelect,
+          slotCurrent: slotCurrent,
           ...this.netplay,
         };
         const popups = this.createSubPopup();
@@ -8485,6 +8694,47 @@ class EmulatorJS {
           this.netplay.name = input.value.trim();
           popups[0].remove();
         });
+      }
+
+      // Always populate slot UI from current preference, and wire live switching once.
+      try {
+        if (this.netplay && this.netplay.slotSelect) {
+          const s =
+            typeof this.netplay.localSlot === "number"
+              ? this.netplay.localSlot
+              : typeof this.netplayPreferredSlot === "number"
+              ? this.netplayPreferredSlot
+              : 0;
+          this.netplay.slotSelect.value = String(Math.max(0, Math.min(3, s)));
+          if (this.netplay.slotCurrent) {
+            this.netplay.slotCurrent.innerText =
+              "(" + "P" + (Math.max(0, Math.min(3, s)) + 1) + ")";
+          }
+
+          if (!this.netplay._slotSelectWired) {
+            this.netplay._slotSelectWired = true;
+            this.addEventListener(this.netplay.slotSelect, "change", () => {
+              const raw = parseInt(this.netplay.slotSelect.value, 10);
+              const slot = isNaN(raw) ? 0 : Math.max(0, Math.min(3, raw));
+              this.netplay.localSlot = slot;
+              this.netplayPreferredSlot = slot;
+              window.EJS_NETPLAY_PREFERRED_SLOT = slot;
+              if (this.netplay.slotCurrent) {
+                this.netplay.slotCurrent.innerText =
+                  "(" + "P" + (slot + 1) + ")";
+              }
+              if (this.netplay.extra) {
+                this.netplay.extra.player_slot = slot;
+              }
+              if (this.settings) {
+                this.settings.netplayPreferredSlot = String(slot);
+              }
+              this.saveSettings();
+            });
+          }
+        }
+      } catch (e) {
+        // ignore
       }
       if (typeof this.netplay.updateList !== "function") {
         this.defineNetplayFunctions();
@@ -8981,6 +9231,27 @@ class EmulatorJS {
       if (isNaN(playerIndex)) playerIndex = 0;
       if (playerIndex < 0) playerIndex = 0;
       if (playerIndex > 3) playerIndex = 3;
+
+      // Client slot enforcement: use the lobby-selected slot for outgoing inputs.
+      // (Some client code paths send inputs via netplaySendMessage("sync-control")
+      // instead of the SFU datachannel hook.)
+      if (this.netplay && !this.netplay.owner) {
+        try {
+          const slotRaw =
+            this.netplay.localSlot ??
+            this.netplayPreferredSlot ??
+            window.EJS_NETPLAY_PREFERRED_SLOT ??
+            0;
+          let slot = parseInt(slotRaw, 10);
+          if (!isNaN(slot)) {
+            if (slot < 0) slot = 0;
+            if (slot > 3) slot = 3;
+            playerIndex = slot;
+          }
+        } catch (e) {
+          // ignore
+        }
+      }
       let frame = this.netplay.currentFrame || 0;
       if (this.netplay.owner) {
         if (!this.netplay.inputsData[frame])
@@ -10422,11 +10693,23 @@ class EmulatorJS {
                     this.gameManager.functions &&
                     this.gameManager.functions.simulateInput
                   ) {
-                    this.gameManager.functions.simulateInput(
-                      playerIndex,
-                      idx,
-                      val
-                    );
+                    // Apply remote input without being affected by host slot override.
+                    const raw =
+                      this.netplay && this.netplay._ejsRawSimulateInputFn;
+                    if (typeof raw === "function") {
+                      try {
+                        this.netplay._ejsApplyingRemoteInput = true;
+                        raw(playerIndex, idx, val);
+                      } finally {
+                        this.netplay._ejsApplyingRemoteInput = false;
+                      }
+                    } else {
+                      this.gameManager.functions.simulateInput(
+                        playerIndex,
+                        idx,
+                        val
+                      );
+                    }
                   }
                 };
 
@@ -11165,7 +11448,22 @@ class EmulatorJS {
                 this.gameManager.functions &&
                 this.gameManager.functions.simulateInput
               ) {
-                this.gameManager.functions.simulateInput(playerIndex, idx, val);
+                // Apply remote input without being affected by host slot override.
+                const raw = this.netplay && this.netplay._ejsRawSimulateInputFn;
+                if (typeof raw === "function") {
+                  try {
+                    this.netplay._ejsApplyingRemoteInput = true;
+                    raw(playerIndex, idx, val);
+                  } finally {
+                    this.netplay._ejsApplyingRemoteInput = false;
+                  }
+                } else {
+                  this.gameManager.functions.simulateInput(
+                    playerIndex,
+                    idx,
+                    val
+                  );
+                }
               } else {
                 console.error(
                   "Cannot process input: gameManager.functions.simulateInput is undefined"
@@ -12337,6 +12635,10 @@ class EmulatorJS {
       this.netplay.playerID = guidGenerator();
       this.netplay.players = {};
       this.netplay.maxPlayers = maxPlayers;
+      this.netplay.localSlot =
+        typeof this.netplayPreferredSlot === "number"
+          ? this.netplayPreferredSlot
+          : 0;
       // Ensure the leave guard never leaks across sessions.
       this.netplay._leaving = false;
       this.netplay._sfuDecisionMade = false;
@@ -12349,6 +12651,7 @@ class EmulatorJS {
         game_id: this.config.gameId,
         room_name: roomName,
         player_name: this.netplay.name,
+        player_slot: this.netplay.localSlot,
         // maps a userid from netplay session negotiation to player ID for mapping controls in game
         userid: this.netplay.playerID,
         sessionid: sessionid,
@@ -12383,6 +12686,10 @@ class EmulatorJS {
       this.netplay.playerID = guidGenerator();
       this.netplay.players = {};
       this.netplay.maxPlayers = maxPlayers;
+      this.netplay.localSlot =
+        typeof this.netplayPreferredSlot === "number"
+          ? this.netplayPreferredSlot
+          : 0;
       // Ensure the leave guard never leaks across sessions.
       this.netplay._leaving = false;
       this.netplay._sfuDecisionMade = false;
@@ -12394,6 +12701,7 @@ class EmulatorJS {
         game_id: this.config.gameId,
         room_name: roomName,
         player_name: this.netplay.name,
+        player_slot: this.netplay.localSlot,
         userid: this.netplay.playerID,
         sessionid: sessionid,
         input_mode:
@@ -12470,6 +12778,61 @@ class EmulatorJS {
       this.netplay.inputs = {};
       this.netplay.owner = isOwner;
       this.netplay._sfuDecisionMade = false;
+
+      // Host local slot override: allow the room owner to switch which player
+      // their *local* inputs control, without affecting remote players.
+      try {
+        if (
+          isOwner &&
+          this.netplay &&
+          this.gameManager &&
+          this.gameManager.functions &&
+          typeof this.gameManager.functions.simulateInput === "function"
+        ) {
+          if (!this.netplay._ejsRawSimulateInputFn) {
+            this.netplay._ejsRawSimulateInputFn =
+              this.gameManager.functions.simulateInput;
+          }
+          if (!this.netplay._ejsSlotOverrideInstalled) {
+            this.netplay._ejsSlotOverrideInstalled = true;
+            this.gameManager.functions.simulateInput = (
+              player,
+              index,
+              value
+            ) => {
+              try {
+                if (!this.netplay || !this.isNetplay) {
+                  return this.netplay._ejsRawSimulateInputFn(
+                    player,
+                    index,
+                    value
+                  );
+                }
+                if (this.netplay._ejsApplyingRemoteInput) {
+                  return this.netplay._ejsRawSimulateInputFn(
+                    player,
+                    index,
+                    value
+                  );
+                }
+                const slot =
+                  typeof this.netplay.localSlot === "number"
+                    ? this.netplay.localSlot
+                    : player;
+                return this.netplay._ejsRawSimulateInputFn(slot, index, value);
+              } catch (e) {
+                return this.netplay._ejsRawSimulateInputFn(
+                  player,
+                  index,
+                  value
+                );
+              }
+            };
+          }
+        }
+      } catch (e) {
+        // ignore
+      }
       // Hybrid-only build mode: SFU audio/video is mandatory; P2P is controls-only.
       this.netplay._hybridOnly = !!(
         (this.config && this.config.netplayHybridOnly) ||
@@ -12836,6 +13199,24 @@ class EmulatorJS {
             if (isNaN(playerIndex)) playerIndex = 0;
             if (playerIndex < 0) playerIndex = 0;
             if (playerIndex > 3) playerIndex = 3;
+
+            // Live slot switching: always send as the currently selected local slot.
+            try {
+              const slotRaw =
+                (this.netplay &&
+                  (this.netplay.localSlot ??
+                    this.netplayPreferredSlot ??
+                    window.EJS_NETPLAY_PREFERRED_SLOT)) ||
+                0;
+              let slot = parseInt(slotRaw, 10);
+              if (!isNaN(slot)) {
+                if (slot < 0) slot = 0;
+                if (slot > 3) slot = 3;
+                playerIndex = slot;
+              }
+            } catch (e) {
+              // ignore
+            }
             const mode =
               (typeof this.netplayInputMode === "string" &&
                 this.netplayInputMode) ||
@@ -13470,6 +13851,19 @@ class EmulatorJS {
               this.netplay.originalSimulateInputFn;
             this.netplay.originalSimulateInputFn = null;
           }
+
+          // Restore host-side slot override wrapper.
+          if (
+            this.gameManager.functions &&
+            this.netplay &&
+            this.netplay._ejsRawSimulateInputFn
+          ) {
+            this.gameManager.functions.simulateInput =
+              this.netplay._ejsRawSimulateInputFn;
+            this.netplay._ejsRawSimulateInputFn = null;
+            this.netplay._ejsSlotOverrideInstalled = false;
+            this.netplay._ejsApplyingRemoteInput = false;
+          }
         }
 
         this.isNetplay = false;
@@ -13531,11 +13925,26 @@ class EmulatorJS {
               this.gameManager.functions &&
               this.gameManager.functions.simulateInput
             ) {
-              this.gameManager.functions.simulateInput(
-                value.connected_input[0],
-                value.connected_input[1],
-                value.connected_input[2]
-              );
+              // Apply remote input without being affected by host slot override.
+              const raw = this.netplay && this.netplay._ejsRawSimulateInputFn;
+              if (typeof raw === "function") {
+                try {
+                  this.netplay._ejsApplyingRemoteInput = true;
+                  raw(
+                    value.connected_input[0],
+                    value.connected_input[1],
+                    value.connected_input[2]
+                  );
+                } finally {
+                  this.netplay._ejsApplyingRemoteInput = false;
+                }
+              } else {
+                this.gameManager.functions.simulateInput(
+                  value.connected_input[0],
+                  value.connected_input[1],
+                  value.connected_input[2]
+                );
+              }
             } else {
               console.error(
                 "Cannot process input: gameManager.functions.simulateInput is undefined"
@@ -13608,11 +14017,26 @@ class EmulatorJS {
               this.gameManager.functions &&
               this.gameManager.functions.simulateInput
             ) {
-              this.gameManager.functions.simulateInput(
-                value.connected_input[0],
-                value.connected_input[1],
-                value.connected_input[2]
-              );
+              // Replay inputs (local+remote) without forcing the host slot.
+              const raw = this.netplay && this.netplay._ejsRawSimulateInputFn;
+              if (typeof raw === "function") {
+                try {
+                  this.netplay._ejsApplyingRemoteInput = true;
+                  raw(
+                    value.connected_input[0],
+                    value.connected_input[1],
+                    value.connected_input[2]
+                  );
+                } finally {
+                  this.netplay._ejsApplyingRemoteInput = false;
+                }
+              } else {
+                this.gameManager.functions.simulateInput(
+                  value.connected_input[0],
+                  value.connected_input[1],
+                  value.connected_input[2]
+                );
+              }
             }
             value.frame = this.netplay.currentFrame + 20;
             to_send.push(value);
@@ -14088,20 +14512,83 @@ class EmulatorJS {
       const alContext = this.Module.AL.currentCtx;
       const audioContext = alContext.audioCtx;
 
-      const gainNodes = [];
-      for (let sourceIdx in alContext.sources) {
-        gainNodes.push(alContext.sources[sourceIdx].gain);
-      }
-
-      const merger = audioContext.createChannelMerger(gainNodes.length);
-      gainNodes.forEach((node) => node.connect(merger));
-
+      // IMPORTANT: OpenAL/emscripten may recreate source nodes over time.
+      // If we only connect the current `alContext.sources` once, the capture
+      // stream can go permanently silent after a source refresh. To avoid
+      // “audio drops and stays dropped”, keep wiring new source gain nodes
+      // into a stable mixer.
+      const mixer = audioContext.createGain();
+      mixer.gain.value = 1;
       const destination = audioContext.createMediaStreamDestination();
-      merger.connect(destination);
+      mixer.connect(destination);
+
+      const connectedGains = typeof WeakSet === "function" ? new WeakSet() : null;
+      const connectSourcesToMixer = () => {
+        try {
+          const sources = alContext.sources;
+          if (!sources) return;
+          for (const sourceIdx in sources) {
+            const src = sources[sourceIdx];
+            const g = src && src.gain;
+            if (!g || typeof g.connect !== "function") continue;
+            if (connectedGains && connectedGains.has(g)) continue;
+            try {
+              g.connect(mixer);
+              if (connectedGains) connectedGains.add(g);
+            } catch (e) {
+              // ignore connect failures
+            }
+          }
+        } catch (e) {
+          // ignore
+        }
+      };
+
+      connectSourcesToMixer();
+
+      // Periodically re-scan for newly created sources.
+      const rewireIntervalMs =
+        typeof options.audioRewireIntervalMs === "number" &&
+        options.audioRewireIntervalMs > 0
+          ? options.audioRewireIntervalMs
+          : 2000;
+      const rewireTimer = setInterval(connectSourcesToMixer, rewireIntervalMs);
 
       const audioTracks = destination.stream.getAudioTracks();
       if (audioTracks.length !== 0) {
         audioTrack = audioTracks[0];
+        // Clean up the timer and graph when the track is stopped.
+        const cleanup = () => {
+          try {
+            clearInterval(rewireTimer);
+          } catch (e) {}
+          try {
+            mixer.disconnect();
+          } catch (e) {}
+          try {
+            destination.disconnect();
+          } catch (e) {}
+        };
+        try {
+          audioTrack.addEventListener("ended", cleanup, { once: true });
+        } catch (e) {
+          // ignore
+        }
+        try {
+          audioTrack._ejsAudioCaptureCleanup = cleanup;
+        } catch (e) {
+          // ignore
+        }
+      } else {
+        try {
+          clearInterval(rewireTimer);
+        } catch (e) {}
+        try {
+          mixer.disconnect();
+        } catch (e) {}
+        try {
+          destination.disconnect();
+        } catch (e) {}
       }
     }
 

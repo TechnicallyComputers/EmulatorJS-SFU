@@ -162,6 +162,13 @@
   config.disableAutoUnload = window.EJS_disableAutoUnload;
   config.disableBatchBootup = window.EJS_disableBatchBootup;
 
+  // Audio tuning hooks (primarily for Firefox stutter/crackling).
+  // Can be overridden by the embedding page.
+  config.firefoxAudioStability = window.EJS_firefoxAudioStability !== false;
+  config.audioLatencyHint = window.EJS_audioLatencyHint;
+  config.audioMinScriptProcessorBufferSize =
+    window.EJS_audioMinScriptProcessorBufferSize;
+
   let systemLang;
   try {
     systemLang = Intl.DateTimeFormat().resolvedOptions().locale;
