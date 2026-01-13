@@ -9067,9 +9067,10 @@ class EmulatorJS {
 
               // Nudge playback in case the element got stuck.
               try {
-                const v = this.netplay && this.netplay.video;
-                if (v && typeof v.play === "function") {
-                  await v.play().catch(() => null);
+                const el =
+                  this.netplay && (this.netplay.audioEl || this.netplay.video);
+                if (el && typeof el.play === "function") {
+                  await el.play().catch(() => null);
                 }
               } catch (e) {}
             } finally {
@@ -9097,7 +9098,8 @@ class EmulatorJS {
 
               // If the video element isn't playing yet (autoplay policies),
               // don't treat this as an audio stall.
-              const v = this.netplay.video;
+              const v =
+                this.netplay && (this.netplay.audioEl || this.netplay.video);
               if (v && v.paused && v.readyState >= 2) {
                 // Try a periodic play() nudge.
                 const now = Date.now();
@@ -9152,6 +9154,169 @@ class EmulatorJS {
               // ignore
             }
           }, 5000);
+        } catch (e) {
+          // ignore
+        }
+      };
+    }
+
+    // Client-side SFU audio silence detection: bytes can keep flowing while the
+    // rendered audio gets stuck silent (common on some mobile browsers).
+    // Use an analyser to detect prolonged silence and trigger a re-consume.
+    if (typeof this._ejsEnsureClientSfuAudioSilenceMonitor !== "function") {
+      this._ejsEnsureClientSfuAudioSilenceMonitor = () => {
+        try {
+          if (!this.netplay || !this.isNetplay) return;
+          if (this.netplay.owner) return;
+          if (!this.netplay.useSFU) return;
+          if (this.netplay._ejsClientAudioSilenceTimer) return;
+
+          const silenceMs =
+            typeof window !== "undefined" &&
+            typeof window.EJS_NETPLAY_AUDIO_SILENCE_MS === "number" &&
+            window.EJS_NETPLAY_AUDIO_SILENCE_MS > 0
+              ? window.EJS_NETPLAY_AUDIO_SILENCE_MS
+              : 25000;
+          const rmsThreshold =
+            typeof window !== "undefined" &&
+            typeof window.EJS_NETPLAY_AUDIO_SILENCE_RMS === "number" &&
+            window.EJS_NETPLAY_AUDIO_SILENCE_RMS > 0
+              ? window.EJS_NETPLAY_AUDIO_SILENCE_RMS
+              : 0.003;
+
+          this.netplay._ejsClientAudioSilence = {
+            lastNonSilentAt: Date.now(),
+            lastRecoverAt: 0,
+            trackId: null,
+            ctx: null,
+            analyser: null,
+            data: null,
+            source: null,
+          };
+
+          const ensureGraph = (stream, trackId) => {
+            const st = this.netplay._ejsClientAudioSilence;
+            if (!st) return false;
+
+            if (st.trackId === trackId && st.ctx && st.analyser && st.data) {
+              return true;
+            }
+
+            // Tear down any prior graph.
+            try {
+              if (st.source) st.source.disconnect();
+            } catch (e) {}
+            try {
+              if (st.analyser) st.analyser.disconnect();
+            } catch (e) {}
+            st.source = null;
+            st.analyser = null;
+            st.data = null;
+            st.trackId = trackId;
+
+            try {
+              const AC = window.AudioContext || window.webkitAudioContext;
+              if (typeof AC !== "function") return false;
+              if (!st.ctx || st.ctx.state === "closed") {
+                st.ctx = new AC({ latencyHint: "interactive" });
+              }
+              st.analyser = st.ctx.createAnalyser();
+              st.analyser.fftSize = 2048;
+              st.data = new Uint8Array(st.analyser.fftSize);
+              st.source = st.ctx.createMediaStreamSource(stream);
+              st.source.connect(st.analyser);
+              st.lastNonSilentAt = Date.now();
+              return true;
+            } catch (e) {
+              return false;
+            }
+          };
+
+          const measureRms = () => {
+            const st = this.netplay._ejsClientAudioSilence;
+            if (!st || !st.analyser || !st.data) return null;
+            try {
+              st.analyser.getByteTimeDomainData(st.data);
+              let sumSq = 0;
+              for (let i = 0; i < st.data.length; i++) {
+                const v = (st.data[i] - 128) / 128;
+                sumSq += v * v;
+              }
+              return Math.sqrt(sumSq / st.data.length);
+            } catch (e) {
+              return null;
+            }
+          };
+
+          this.netplay._ejsClientAudioSilenceTimer = setInterval(async () => {
+            try {
+              if (!this.netplay || !this.isNetplay) return;
+              if (this.netplay.owner) return;
+              if (!this.netplay.useSFU) return;
+
+              const a = this.netplay.audioEl;
+              if (a) {
+                // If it got paused, nudge play.
+                if (a.paused && a.readyState >= 2) {
+                  try {
+                    await a.play();
+                  } catch (e) {}
+                  return;
+                }
+                // If user muted/volume=0, don't treat silence as a failure.
+                if (a.muted || a.volume === 0) return;
+              }
+
+              const stream =
+                this.netplay.sfuAudioStream || this.netplay.sfuStream;
+              const track =
+                stream && stream.getAudioTracks
+                  ? stream.getAudioTracks()[0]
+                  : null;
+              if (!track) return;
+
+              // Only run silence detection when bytes are still flowing (otherwise
+              // the bytesReceived stall monitor should handle it).
+              const health = this.netplay._ejsClientAudioHealth;
+              const now = Date.now();
+              if (!health || !health.lastChangeAt) return;
+              if (now - health.lastChangeAt > 8000) return;
+
+              const ok = ensureGraph(stream, track.id);
+              if (!ok) return;
+
+              const st = this.netplay._ejsClientAudioSilence;
+              if (st && st.ctx && st.ctx.state === "suspended") {
+                try {
+                  await st.ctx.resume();
+                } catch (e) {}
+              }
+
+              const rms = measureRms();
+              if (typeof rms === "number" && rms > rmsThreshold) {
+                if (st) st.lastNonSilentAt = now;
+                return;
+              }
+
+              if (!st) return;
+              if (now - st.lastNonSilentAt < silenceMs) return;
+              if (st.lastRecoverAt && now - st.lastRecoverAt < 20000) return;
+
+              st.lastRecoverAt = now;
+              st.lastNonSilentAt = now;
+              if (
+                this.netplay &&
+                typeof this.netplay._ejsAttemptClientSfuAudioRecovery ===
+                  "function"
+              ) {
+                await this.netplay._ejsAttemptClientSfuAudioRecovery(
+                  "silence-detected"
+                );
+              }
+            } catch (e) {
+              // ignore
+            }
+          }, 2000);
         } catch (e) {
           // ignore
         }
@@ -10958,19 +11123,69 @@ class EmulatorJS {
           } catch (e) {}
           this.netplay.sfuConsumedProducerIds = new Set();
           this.netplay.sfuStream = new MediaStream();
+          // Keep separate streams so we can attach audio to an <audio> element.
+          // This improves reliability on some mobile browsers where audio tied
+          // to a <video> element can get stuck muted/paused.
+          this.netplay.sfuAudioStream = new MediaStream();
+          this.netplay.sfuVideoStream = new MediaStream();
           const sfuStream = this.netplay.sfuStream;
+          const sfuAudioStream = this.netplay.sfuAudioStream;
+          const sfuVideoStream = this.netplay.sfuVideoStream;
+
+          const useAudioElementFallback =
+            typeof window !== "undefined"
+              ? window.EJS_NETPLAY_AUDIO_ELEMENT_FALLBACK !== false
+              : true;
 
           const ensureVideoElement = () => {
             if (!this.netplay.video) {
               this.netplay.video = document.createElement("video");
               this.netplay.video.playsInline = true;
-              // Allow SFU audio to play (may require user gesture depending on browser policy).
-              this.netplay.video.muted = false;
+              // When using an <audio> element for sound, keep the video muted to
+              // avoid double-audio and to reduce the chance of autoplay issues.
+              this.netplay.video.muted = useAudioElementFallback ? true : false;
             }
-            if (this.netplay.video.srcObject !== sfuStream) {
-              this.netplay.video.srcObject = sfuStream;
+            const desired = useAudioElementFallback
+              ? sfuVideoStream
+              : sfuStream;
+            if (this.netplay.video.srcObject !== desired) {
+              this.netplay.video.srcObject = desired;
             }
             return this.netplay.video;
+          };
+
+          const ensureAudioElement = () => {
+            if (!useAudioElementFallback) return null;
+            if (!this.netplay.audioEl) {
+              const el = document.createElement("audio");
+              el.autoplay = true;
+              el.muted = false;
+              el.controls = false;
+              // Keep it in DOM (some mobile browsers are picky) but invisible.
+              el.style.position = "absolute";
+              el.style.left = "0";
+              el.style.top = "0";
+              el.style.width = "1px";
+              el.style.height = "1px";
+              el.style.opacity = "0";
+              el.style.pointerEvents = "none";
+              el.id = "netplay-audio";
+              this.netplay.audioEl = el;
+            }
+            const desired = sfuAudioStream;
+            if (this.netplay.audioEl.srcObject !== desired) {
+              this.netplay.audioEl.srcObject = desired;
+            }
+            try {
+              const container =
+                this.netplay.videoContainer ||
+                (this.elements && this.elements.parent) ||
+                document.body;
+              if (container && !this.netplay.audioEl.parentElement) {
+                container.appendChild(this.netplay.audioEl);
+              }
+            } catch (e) {}
+            return this.netplay.audioEl;
           };
 
           const consumeProducerId = async (producerId) => {
@@ -11092,6 +11307,60 @@ class EmulatorJS {
                 }
               } catch (e) {
                 console.warn("Failed to attach consumer track to sfuStream", e);
+              }
+
+              // Keep audio/video separated for more reliable playback on mobile.
+              try {
+                if (consumer && consumer.track) {
+                  if (consumer.track.kind === "audio" && sfuAudioStream) {
+                    sfuAudioStream.getTracks().forEach((t) => {
+                      if (t && t.kind === "audio") {
+                        try {
+                          sfuAudioStream.removeTrack(t);
+                        } catch (e) {}
+                      }
+                    });
+                    sfuAudioStream.addTrack(consumer.track);
+                    const a = ensureAudioElement();
+                    if (a && typeof a.play === "function") {
+                      a.play().catch(() => {
+                        try {
+                          if (
+                            typeof this.promptUserInteraction === "function"
+                          ) {
+                            this.promptUserInteraction(a);
+                          }
+                        } catch (e) {}
+                      });
+                    }
+                    // Start a silence detector so we can recover if we end up
+                    // receiving bytes but rendering silence.
+                    try {
+                      if (
+                        typeof this._ejsEnsureClientSfuAudioSilenceMonitor ===
+                        "function"
+                      ) {
+                        this._ejsEnsureClientSfuAudioSilenceMonitor();
+                      }
+                    } catch (e) {}
+                  }
+
+                  if (consumer.track.kind === "video" && sfuVideoStream) {
+                    sfuVideoStream.getTracks().forEach((t) => {
+                      if (t && t.kind === "video") {
+                        try {
+                          sfuVideoStream.removeTrack(t);
+                        } catch (e) {}
+                      }
+                    });
+                    sfuVideoStream.addTrack(consumer.track);
+                  }
+                }
+              } catch (e) {
+                console.warn(
+                  "Failed to attach consumer track to sfuAudioStream/sfuVideoStream",
+                  e
+                );
               }
 
               // Instrument consumer track lifecycle
@@ -13739,6 +14008,28 @@ class EmulatorJS {
           this.netplay.sfuStream = null;
         }
 
+        if (this.netplay.sfuAudioStream) {
+          try {
+            this.netplay.sfuAudioStream.getTracks().forEach((track) => {
+              try {
+                track.stop();
+              } catch (e) {}
+            });
+          } catch (e) {}
+          this.netplay.sfuAudioStream = null;
+        }
+
+        if (this.netplay.sfuVideoStream) {
+          try {
+            this.netplay.sfuVideoStream.getTracks().forEach((track) => {
+              try {
+                track.stop();
+              } catch (e) {}
+            });
+          } catch (e) {}
+          this.netplay.sfuVideoStream = null;
+        }
+
         if (this.netplay.peerConnections) {
           Object.values(this.netplay.peerConnections).forEach((pcData) => {
             if (pcData.pc) pcData.pc.close();
@@ -13755,9 +14046,47 @@ class EmulatorJS {
           this.netplay.video.srcObject = null;
           this.netplay.video = null;
         }
+        if (this.netplay.audioEl && this.netplay.audioEl.parentElement) {
+          this.netplay.audioEl.parentElement.removeChild(this.netplay.audioEl);
+          try {
+            this.netplay.audioEl.srcObject = null;
+          } catch (e) {}
+          this.netplay.audioEl = null;
+        }
         if (this.netplay.videoContainer) {
           this.netplay.videoContainer.style.display = "none";
         }
+
+        // Clear client audio watchdogs.
+        try {
+          if (this.netplay._ejsClientAudioHealthTimer) {
+            clearInterval(this.netplay._ejsClientAudioHealthTimer);
+          }
+        } catch (e) {}
+        this.netplay._ejsClientAudioHealthTimer = null;
+
+        try {
+          if (this.netplay._ejsClientAudioSilenceTimer) {
+            clearInterval(this.netplay._ejsClientAudioSilenceTimer);
+          }
+        } catch (e) {}
+        this.netplay._ejsClientAudioSilenceTimer = null;
+
+        try {
+          const st = this.netplay._ejsClientAudioSilence;
+          if (st) {
+            try {
+              if (st.source) st.source.disconnect();
+            } catch (e) {}
+            try {
+              if (st.analyser) st.analyser.disconnect();
+            } catch (e) {}
+            try {
+              if (st.ctx && st.ctx.state !== "closed") st.ctx.close();
+            } catch (e) {}
+          }
+        } catch (e) {}
+        this.netplay._ejsClientAudioSilence = null;
 
         if (this.canvas) {
           Object.assign(this.canvas.style, {
@@ -14522,7 +14851,8 @@ class EmulatorJS {
       const destination = audioContext.createMediaStreamDestination();
       mixer.connect(destination);
 
-      const connectedGains = typeof WeakSet === "function" ? new WeakSet() : null;
+      const connectedGains =
+        typeof WeakSet === "function" ? new WeakSet() : null;
       const connectSourcesToMixer = () => {
         try {
           const sources = alContext.sources;
