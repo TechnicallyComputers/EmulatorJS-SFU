@@ -8977,7 +8977,10 @@ class EmulatorJS {
         );
         return;
       }
-      const playerIndex = this.netplayGetUserIndex();
+      let playerIndex = parseInt(player, 10);
+      if (isNaN(playerIndex)) playerIndex = 0;
+      if (playerIndex < 0) playerIndex = 0;
+      if (playerIndex > 3) playerIndex = 3;
       let frame = this.netplay.currentFrame || 0;
       if (this.netplay.owner) {
         if (!this.netplay.inputsData[frame])
@@ -12793,8 +12796,11 @@ class EmulatorJS {
               this.gameManager.simulateInput;
           }
 
-          const sendInputOverDataChannel = (index, value) => {
-            const playerIndex = this.netplayGetUserIndex();
+          const sendInputOverDataChannel = (player, index, value) => {
+            let playerIndex = parseInt(player, 10);
+            if (isNaN(playerIndex)) playerIndex = 0;
+            if (playerIndex < 0) playerIndex = 0;
+            if (playerIndex > 3) playerIndex = 3;
             const mode =
               (typeof this.netplayInputMode === "string" &&
                 this.netplayInputMode) ||
@@ -12890,7 +12896,7 @@ class EmulatorJS {
               value,
               playerIndex: this.netplayGetUserIndex(),
             });
-            sendInputOverDataChannel(index, value);
+            sendInputOverDataChannel(player, index, value);
           };
 
           // Some code paths call gameManager.functions.simulateInput.
@@ -12913,7 +12919,7 @@ class EmulatorJS {
                 value,
                 playerIndex: this.netplayGetUserIndex(),
               });
-              sendInputOverDataChannel(index, value);
+              sendInputOverDataChannel(player, index, value);
             };
           }
         } else {
