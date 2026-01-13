@@ -11827,15 +11827,46 @@ class EmulatorJS {
       // In SFU mode, P2P is controls-only (data channel).
       this.netplayInitControlsP2P = (controlsOnly) => {
         if (!this.netplay || !this.netplay.players) return;
+        const localSocketId =
+          this.netplay.socket && this.netplay.socket.id
+            ? String(this.netplay.socket.id).trim()
+            : null;
+        const localUserid = this.netplay.playerID
+          ? String(this.netplay.playerID).trim()
+          : null;
         Object.keys(this.netplay.players).forEach((userId) => {
           if (userId === this.netplay.playerID) return;
-          const peerSocketId = this.netplay.players[userId]?.socketId;
+          const extra = this.netplay.players[userId] || null;
+
+          // Never create a P2P connection to ourselves.
+          // Some deployments key `players` by username (not userid), so `userId !== playerID`
+          // can still refer to the local player.
+          if (
+            extra &&
+            localUserid &&
+            extra.userid !== undefined &&
+            extra.userid !== null &&
+            String(extra.userid).trim() === localUserid
+          ) {
+            return;
+          }
+
+          const peerSocketIdRaw = extra && (extra.socketId || extra.socket_id);
+          const peerSocketId = peerSocketIdRaw
+            ? String(peerSocketIdRaw).trim()
+            : "";
           if (!peerSocketId) {
             console.warn(
               `[Netplay] Player ${userId} has no socketId yet; delaying P2P controls init`
             );
             return;
           }
+
+          // SocketId-based self-check (most reliable).
+          if (localSocketId && peerSocketId === localSocketId) {
+            return;
+          }
+
           if (!this.netplay.peerConnections[peerSocketId]) {
             console.log(
               `[Netplay] Initializing P2P controls for peer (socketId) ${peerSocketId}`
@@ -14215,3 +14246,4 @@ class EmulatorJS {
   }
 }
 window.EmulatorJS = EmulatorJS;
+// This is EmulatorJS-SFU, not EmulatorJS.  See https://github.com/TechnicallyComputers/EmulatorJS-SFU
