@@ -9554,18 +9554,13 @@ class EmulatorJS {
       } catch (error) {
         console.error("Error fetching open rooms:", error);
 
-        // check if this is an authentication error
-        if (
-          error.includes("unauthorized") ||
-          error.includes("token") ||
-          error.includes("auth")
-        ) {
-          // call the refresh function from base.vue
-          if (window.handleSfuAuthError) {
-            window.handleSfuAuthError("read");
-            return; // refresh tokens and retry.
-          }
+        // for room listings, attempt token refresh on any error.
+        // Should be safe because token refresh is idempotent.
+        if (window.handleSfuAuthError) {
+          console.log("Room listing failed, attempting token refresh...");
+          window.handleSfuAuthError("read");
         }
+
         return {};
       }
     };
