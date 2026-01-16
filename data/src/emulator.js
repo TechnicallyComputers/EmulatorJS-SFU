@@ -9532,6 +9532,18 @@ class EmulatorJS {
             "&game_id=" +
             this.config.gameId
         );
+
+        // Check for HTTP error status codes (like 503)
+        if (!response.ok) {
+          console.log(`Room list fetch failed with status ${response.status}`);
+          // Trigger token refresh for auth errors
+          if (window.handleSfuAuthError) {
+            console.log("HTTP error detected, attempting token refresh...");
+            window.handleSfuAuthError("read");
+          }
+          return {};
+        }
+
         const data = await response.text();
         console.log("Fetched open rooms:", data);
         const parsed = JSON.parse(data);
