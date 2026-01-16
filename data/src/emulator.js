@@ -9553,6 +9553,19 @@ class EmulatorJS {
         return parsed || {};
       } catch (error) {
         console.error("Error fetching open rooms:", error);
+
+        // check if this is an authentication error
+        if (
+          error.includes("unauthorized") ||
+          error.includes("token") ||
+          error.includes("auth")
+        ) {
+          // call the refresh function from base.vue
+          if (window.handleSfuAuthError) {
+            window.handleSfuAuthError("read");
+            return; // refresh tokens and retry.
+          }
+        }
         return {};
       }
     };
@@ -12715,6 +12728,9 @@ class EmulatorJS {
         "Initializing new Socket.IO connection to:",
         this.netplay.url
       );
+
+      // Netplay socket connection establishment
+      // This handles initial connection errors
       this.netplay.socket = io(this.netplay.url);
       this.netplay.socket.on("connect", () => {
         console.log("Socket.IO connected:", this.netplay.socket.id);
@@ -13176,6 +13192,8 @@ class EmulatorJS {
       };
       this.netplay.players[this.netplay.playerID] = this.netplay.extra;
       this.netplay.owner = true;
+
+      // Netplay room create error handling
       this.netplayStartSocketIO(() => {
         this.netplay.socket.emit(
           "open-room",
@@ -13186,10 +13204,25 @@ class EmulatorJS {
           },
           (error) => {
             if (error) {
+              // Room create fails
               console.error("Error opening room:", error);
+              // Check if this is an authentication error
+              if (
+                error.includes("unauthorized") ||
+                error.includes("token") ||
+                error.includes("auth")
+              ) {
+                // Call the token refresh function from base.vue
+                if (window.handleSfuAuthError) {
+                  window.handleSfuAuthError();
+                  return; // Don't show error message - refreshing token instead
+                }
+              }
+              // If error for some other reasons unrelated to token validity...
               this.displayMessage("Failed to create room: " + error, 5000);
               return;
             }
+            // Room created successfully, join created room.
             this.netplayRoomJoined(true, roomName, password, sessionid);
           }
         );
@@ -13225,6 +13258,8 @@ class EmulatorJS {
       };
       this.netplay.players[this.netplay.playerID] = this.netplay.extra;
       this.netplay.owner = false;
+
+      // Netplay room join error handling
       this.netplayStartSocketIO(() => {
         this.netplay.socket.emit(
           "join-room",
@@ -13235,6 +13270,20 @@ class EmulatorJS {
           (error, users) => {
             if (error) {
               console.error("Error joining room:", error);
+
+              // Check if this is an auth error
+              if (
+                error.includes("unauthorized") ||
+                error.includes("token") ||
+                error.includes("auth")
+              ) {
+                // Calls the refresh function from base.vue
+                if (window.handleSfuAuthError) {
+                  window.handleSfuAuthError();
+                  return; // Don't show an error message - refreshing token instead.
+                }
+              }
+              // If error for some reason other than authentication...
               alert("Error joining room: " + error);
               return;
             }
