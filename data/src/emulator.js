@@ -1883,6 +1883,11 @@ class EmulatorJS {
       this.Module.resumeMainLoop();
       this.checkSupportedOpts();
       this.setupDisksMenu();
+
+      // Initialize netplay functions early (don't wait for menu to open)
+      if (typeof this.defineNetplayFunctions === "function") {
+        this.defineNetplayFunctions();
+      }
       // hide the disks menu if the disk count is not greater than 1
       if (!(this.gameManager.getDiskCount() > 1)) {
         this.diskParent.style.display = "none";
@@ -8746,6 +8751,164 @@ class EmulatorJS {
   defineNetplayFunctions() {
     const EJS_INSTANCE = this;
 
+    // Initialize NetplayEngine if modules are available
+    // Note: This will only work after netplay modules are loaded/included
+    // Check both global scope and window object for compatibility
+    const NetplayEngineClass =
+      typeof NetplayEngine !== "undefined"
+        ? NetplayEngine
+        : typeof window !== "undefined" && window.NetplayEngine
+        ? window.NetplayEngine
+        : undefined;
+    const EmulatorJSAdapterClass =
+      typeof EmulatorJSAdapter !== "undefined"
+        ? EmulatorJSAdapter
+        : typeof window !== "undefined" && window.EmulatorJSAdapter
+        ? window.EmulatorJSAdapter
+        : undefined;
+
+    // Debug logging
+    // #region agent log
+    fetch("http://127.0.0.1:7242/ingest/22e800bc-6bc6-4492-ae2b-c74b05fdebc4", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        location: "emulator.js:8771",
+        message: "defineNetplayFunctions entry",
+        data: {
+          netplayExists: typeof this.netplay !== "undefined",
+          netplayIsObject: this.netplay instanceof Object,
+        },
+        timestamp: Date.now(),
+        sessionId: "debug-session",
+        runId: "run1",
+        hypothesisId: "B",
+      }),
+    }).catch(() => {});
+    // #endregion
+    console.log("[EmulatorJS] defineNetplayFunctions() called");
+    // #region agent log
+    fetch("http://127.0.0.1:7242/ingest/22e800bc-6bc6-4492-ae2b-c74b05fdebc4", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        location: "emulator.js:8773",
+        message: "Checking NetplayEngineClass",
+        data: {
+          netplayEngineClass: typeof NetplayEngineClass,
+          netplayEngine: typeof NetplayEngine,
+          windowNetplayEngine: typeof window.NetplayEngine,
+        },
+        timestamp: Date.now(),
+        sessionId: "debug-session",
+        runId: "run1",
+        hypothesisId: "A",
+      }),
+    }).catch(() => {});
+    // #endregion
+    console.log(
+      "[EmulatorJS] NetplayEngineClass:",
+      typeof NetplayEngineClass !== "undefined" ? "AVAILABLE" : "UNDEFINED"
+    );
+    console.log(
+      "[EmulatorJS] EmulatorJSAdapterClass:",
+      typeof EmulatorJSAdapterClass !== "undefined" ? "AVAILABLE" : "UNDEFINED"
+    );
+    console.log(
+      "[EmulatorJS] window.NetplayEngine:",
+      typeof window.NetplayEngine !== "undefined" ? "AVAILABLE" : "UNDEFINED"
+    );
+    console.log(
+      "[EmulatorJS] window.EmulatorJSAdapter:",
+      typeof window.EmulatorJSAdapter !== "undefined"
+        ? "AVAILABLE"
+        : "UNDEFINED"
+    );
+
+    if (NetplayEngineClass && EmulatorJSAdapterClass) {
+      console.log(
+        "[EmulatorJS] ✅ NetplayEngine classes available - initializing new netplay system"
+      );
+      try {
+        // Create adapter
+        if (!this._netplayAdapter) {
+          this._netplayAdapter = new EmulatorJSAdapterClass(this);
+        }
+
+        // Create NetplayEngine with configuration
+        const netplayConfig = {
+          netplayUrl: this.config.netplayUrl || window.EJS_netplayUrl,
+          gameId: this.config.gameId,
+          inputMode:
+            this.netplayInputMode ||
+            window.EJS_NETPLAY_INPUT_MODE ||
+            "unorderedRelay",
+          preferredSlot:
+            this.netplayPreferredSlot || window.EJS_NETPLAY_PREFERRED_SLOT || 0,
+          frameDelay: 20,
+          callbacks: {
+            onSocketConnect: (socketId) => {
+              // Socket connected callback
+            },
+            onSocketError: (error) => {
+              // Socket error callback
+            },
+            onSocketDisconnect: (reason) => {
+              // Socket disconnect callback
+            },
+            onUsersUpdated: (users) => {
+              // Users updated callback
+            },
+            onRoomClosed: (data) => {
+              // Room closed callback
+            },
+            onFrameData: (frameData) => {
+              // Frame data callback (for reconstruction)
+            },
+          },
+        };
+
+        if (!this._netplayEngine) {
+          this._netplayEngine = new NetplayEngineClass(
+            this._netplayAdapter,
+            netplayConfig
+          );
+
+          // Initialize engine (async, don't await here to avoid blocking)
+          this._netplayEngine
+            .initialize()
+            .then(() => {
+              console.log(
+                "[EmulatorJS] NetplayEngine initialized successfully"
+              );
+
+              // Populate this.netplay with state from engine (for backward compatibility)
+              if (this.netplay) {
+                Object.assign(
+                  this.netplay,
+                  this._netplayEngine.getStateObject()
+                );
+              }
+            })
+            .catch((err) => {
+              console.error(
+                "[EmulatorJS] NetplayEngine initialization failed:",
+                err
+              );
+            });
+        }
+      } catch (error) {
+        console.warn(
+          "[EmulatorJS] NetplayEngine integration failed (modules may not be loaded):",
+          error
+        );
+      }
+    } else {
+      console.log(
+        "[EmulatorJS] ⚠️ NetplayEngine classes NOT available - using legacy netplay code"
+      );
+    }
+
     // SFU audio stability helpers.
     // Keep these on `this` so nested callbacks can access them reliably.
     if (typeof this._ejsExtractOutboundAudioBytesSent !== "function") {
@@ -9389,6 +9552,46 @@ class EmulatorJS {
       return index === -1 ? 0 : index;
     };
 
+    // #region agent log
+    fetch("http://127.0.0.1:7242/ingest/22e800bc-6bc6-4492-ae2b-c74b05fdebc4", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        location: "emulator.js:9518",
+        message: "Before setting simulateInput",
+        data: {
+          netplayExists: typeof this.netplay !== "undefined",
+          netplayIsNull: this.netplay === null,
+          netplayType: typeof this.netplay,
+        },
+        timestamp: Date.now(),
+        sessionId: "debug-session",
+        runId: "run1",
+        hypothesisId: "B",
+      }),
+    }).catch(() => {});
+    // #endregion
+    if (!this.netplay) {
+      // #region agent log
+      fetch(
+        "http://127.0.0.1:7242/ingest/22e800bc-6bc6-4492-ae2b-c74b05fdebc4",
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            location: "emulator.js:9518",
+            message: "this.netplay is undefined, initializing",
+            data: {},
+            timestamp: Date.now(),
+            sessionId: "debug-session",
+            runId: "run1",
+            hypothesisId: "B",
+          }),
+        }
+      ).catch(() => {});
+      // #endregion
+      this.netplay = {};
+    }
     this.netplay.simulateInput = (player, index, value) => {
       console.log("netplay.simulateInput called:", {
         player,
@@ -14666,6 +14869,21 @@ class EmulatorJS {
     };
 
     this.netplayInitModulePostMainLoop = () => {
+      // Try using NetplayEngine first (if available)
+      if (this._netplayEngine && this._netplayEngine.isInitialized()) {
+        try {
+          // Use NetplayEngine's frame processing
+          this._netplayEngine.processFrameInputs();
+          return;
+        } catch (error) {
+          console.warn(
+            "[EmulatorJS] NetplayEngine frame processing failed, falling back to legacy:",
+            error
+          );
+        }
+      }
+
+      // Legacy frame processing (fallback if NetplayEngine not available)
       if (this.isNetplay && !this.netplay.owner) {
         return;
       }
@@ -14722,10 +14940,116 @@ class EmulatorJS {
       stop: this.netplayUpdateListStop,
     };
     this.netplay.showOpenRoomDialog = this.netplayShowOpenRoomDialog;
-    this.netplay.openRoom = this.netplayOpenRoom;
-    this.netplay.joinRoom = this.netplayJoinRoom;
-    this.netplay.leaveRoom = this.netplayLeaveRoom;
-    this.netplay.sendMessage = this.netplaySendMessage;
+
+    // Proxy methods: try NetplayEngine first, fallback to legacy methods
+    this.netplay.openRoom = async (...args) => {
+      if (
+        this._netplayEngine &&
+        this._netplayEngine.isInitialized() &&
+        this._netplayEngine.roomManager
+      ) {
+        try {
+          // Use new RoomManager
+          const [roomName, maxPlayers, password] = args;
+          const playerInfo = {
+            netplayUsername: this.netplay.name || "Player",
+            userId: this.netplay.playerID || null,
+            preferredSlot: this.netplay.localSlot || 0,
+          };
+          await this._netplayEngine.roomManager.createRoom(
+            roomName,
+            maxPlayers,
+            password,
+            playerInfo
+          );
+          return;
+        } catch (error) {
+          console.warn(
+            "[EmulatorJS] NetplayEngine openRoom failed, using legacy:",
+            error
+          );
+        }
+      }
+      // Legacy fallback
+      return this.netplayOpenRoom(...args);
+    };
+
+    this.netplay.joinRoom = async (...args) => {
+      if (
+        this._netplayEngine &&
+        this._netplayEngine.isInitialized() &&
+        this._netplayEngine.roomManager
+      ) {
+        try {
+          // Use new RoomManager
+          const [sessionId, roomName, maxPlayers, password] = args;
+          const playerInfo = {
+            netplayUsername: this.netplay.name || "Player",
+            userId: this.netplay.playerID || null,
+            preferredSlot: this.netplay.localSlot || 0,
+          };
+          await this._netplayEngine.roomManager.joinRoom(
+            sessionId,
+            roomName,
+            maxPlayers,
+            password,
+            playerInfo
+          );
+          return;
+        } catch (error) {
+          console.warn(
+            "[EmulatorJS] NetplayEngine joinRoom failed, using legacy:",
+            error
+          );
+        }
+      }
+      // Legacy fallback
+      return this.netplayJoinRoom(...args);
+    };
+
+    this.netplay.leaveRoom = async (...args) => {
+      if (
+        this._netplayEngine &&
+        this._netplayEngine.isInitialized() &&
+        this._netplayEngine.roomManager
+      ) {
+        try {
+          // Use new RoomManager
+          const [reason] = args;
+          await this._netplayEngine.roomManager.leaveRoom(reason);
+          return;
+        } catch (error) {
+          console.warn(
+            "[EmulatorJS] NetplayEngine leaveRoom failed, using legacy:",
+            error
+          );
+        }
+      }
+      // Legacy fallback
+      return this.netplayLeaveRoom(...args);
+    };
+
+    this.netplay.sendMessage = (data) => {
+      if (
+        this._netplayEngine &&
+        this._netplayEngine.isInitialized() &&
+        this._netplayEngine.socketTransport
+      ) {
+        try {
+          // Use new SocketTransport
+          this._netplayEngine.socketTransport.sendDataMessage(data);
+          return;
+        } catch (error) {
+          console.warn(
+            "[EmulatorJS] NetplayEngine sendMessage failed, using legacy:",
+            error
+          );
+        }
+      }
+      // Legacy fallback
+      return this.netplaySendMessage(data);
+    };
+
     this.netplay.updatePlayersTable = this.netplayUpdatePlayersTable;
     this.netplay.createPeerConnection = this.netplayCreatePeerConnection;
     this.netplay.initWebRTCStream = this.netplayInitWebRTCStream;
