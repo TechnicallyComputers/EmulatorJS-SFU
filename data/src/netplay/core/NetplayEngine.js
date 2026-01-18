@@ -136,11 +136,40 @@ class NetplayEngine {
         this.socketTransport // Pass existing socket if reinitializing
       );
 
+      // Connect the socket transport
+      const sfuUrl = this.config.sfuUrl || this.config.netplayUrl;
+      if (!sfuUrl) {
+        throw new Error("No SFU URL configured for socket connection");
+      }
+
+      // Get authentication token (same logic as listRooms)
+      let token = window.EJS_netplayToken;
+      if (!token) {
+        // Try to get token from cookie
+        const cookies = document.cookie.split(';');
+        for (const cookie of cookies) {
+          const [name, value] = cookie.trim().split('=');
+          if (name === 'romm_sfu_token' || name === 'sfu_token') {
+            token = decodeURIComponent(value);
+            break;
+          }
+        }
+      }
+
+      console.log("[NetplayEngine] Connecting socket to:", sfuUrl, token ? "(with auth token)" : "(no auth token)");
+      await this.socketTransport.connect(sfuUrl, token);
+
       // 10. SFU Transport
       this.sfuTransport = new SFUTransport(
         this.configManager?.loadConfig() || {},
         this.socketTransport
       );
+
+      // Initialize SFU transport (checks availability, loads device)
+      const sfuAvailable = await this.sfuTransport.initialize();
+      if (!sfuAvailable) {
+        console.warn("[NetplayEngine] SFU not available, continuing without WebRTC streaming");
+      }
 
       // 11. Data Channel Manager
       const inputMode =
@@ -150,6 +179,20 @@ class NetplayEngine {
       this.dataChannelManager = new DataChannelManager({
         mode: inputMode,
       });
+
+      // Connect DataChannelManager to SFUTransport
+      if (this.sfuTransport) {
+        this.sfuTransport.setDataChannelManager(this.dataChannelManager);
+      }
+
+      // Set up input callback for DataChannelManager
+      if (this.dataChannelManager && this.inputSync) {
+        this.dataChannelManager.onInput((playerIndex, inputIndex, value, fromSocketId) => {
+          // Receive input via InputSync (use current frame from frame counter)
+          const currentFrame = this.frameCounter?.getCurrentFrame() || 0;
+          this.inputSync.receiveInput(currentFrame, [playerIndex, inputIndex, value], fromSocketId);
+        });
+      }
 
       // 12. Spectator Manager
       this.spectatorManager = new SpectatorManager(
@@ -337,6 +380,226 @@ class NetplayEngine {
    */
   isInitialized() {
     return this._initialized;
+  }
+
+  /**
+   * Create a new room (host only).
+   * @param {string} roomName - Room name
+   * @param {number} maxPlayers - Maximum players
+   * @param {string|null} password - Optional password
+   * @param {Object} playerInfo - Player information
+   * @returns {Promise<Object>} Room creation result
+   */
+  async createRoom(roomName, maxPlayers, password = null, playerInfo = {}) {
+    if (!this.roomManager) {
+      throw new Error("NetplayEngine not initialized");
+    }
+    return await this.roomManager.createRoom(roomName, maxPlayers, password, playerInfo);
+  }
+
+  /**
+   * Join an existing room.
+   * @param {string} sessionId - Session/room ID
+   * @param {string} roomName - Room name
+   * @param {number} maxPlayers - Maximum players
+   * @param {string|null} password - Optional password
+   * @param {Object} playerInfo - Player information
+   * @returns {Promise<Object>} Join result
+   */
+  async joinRoom(sessionId, roomName, maxPlayers, password = null, playerInfo = {}) {
+    if (!this.roomManager) {
+      throw new Error("NetplayEngine not initialized");
+    }
+    return await this.roomManager.joinRoom(sessionId, roomName, maxPlayers, password, playerInfo);
+  }
+
+  /**
+   * Leave the current room.
+   * @param {string|null} reason - Optional leave reason
+   * @returns {Promise<void>}
+   */
+  async leaveRoom(reason = null) {
+    if (!this.roomManager) {
+      throw new Error("NetplayEngine not initialized");
+    }
+    return await this.roomManager.leaveRoom(reason);
+  }
+
+  /**
+   * List available rooms.
+   * @returns {Promise<Array>} Array of room objects
+   */
+  async listRooms() {
+    // Use HTTP request to SFU /list endpoint (same as old netplayGetRoomList)
+    const sfuUrl = this.config.netplayUrl || window.EJS_netplayUrl;
+    if (!sfuUrl) {
+      throw new Error("No SFU URL configured");
+    }
+
+    console.log("[NetplayEngine] Fetching room list from:", sfuUrl);
+
+    // Build URL with authentication token
+    const token = window.EJS_netplayToken;
+    let url = `${sfuUrl}/list?domain=${window.location.host}&game_id=${this.config.gameId || ""}`;
+    if (token) {
+      url += `&token=${encodeURIComponent(token)}`;
+    }
+
+    const headers = {};
+    if (!token) {
+      // If no token in global var, try to get it from cookie
+      const cookies = document.cookie.split(';');
+      for (const cookie of cookies) {
+        const [name, value] = cookie.trim().split('=');
+        if (name === 'romm_sfu_token' || name === 'sfu_token') {
+          headers['Authorization'] = `Bearer ${decodeURIComponent(value)}`;
+          break;
+        }
+      }
+    }
+
+    const response = await fetch(url, { headers });
+    console.log(`[NetplayEngine] Room list response status: ${response.status}`);
+
+    if (!response.ok) {
+      console.warn(`[NetplayEngine] Room list fetch failed with status ${response.status}`);
+      return [];
+    }
+
+    const data = await response.json();
+    console.log("[NetplayEngine] Raw server response:", data);
+
+    // Convert server response format to expected format (same as netplayGetRoomList)
+    const rooms = [];
+    if (data && typeof data === "object") {
+      console.log("[NetplayEngine] Processing server data entries:", Object.keys(data));
+      Object.entries(data).forEach(([roomId, roomInfo]) => {
+        console.log(`[NetplayEngine] Processing room ${roomId}:`, roomInfo);
+        if (roomInfo && roomInfo.room_name) {
+          const room = {
+            id: roomId,
+            name: roomInfo.room_name,
+            current: roomInfo.current || 0,
+            max: roomInfo.max || 4,
+            hasPassword: roomInfo.hasPassword || false,
+            netplay_mode: roomInfo.netplay_mode || 0,
+            sync_config: roomInfo.sync_config || null,
+            spectator_mode: roomInfo.spectator_mode || 1,
+            rom_hash: roomInfo.rom_hash || null,
+            core_type: roomInfo.core_type || null,
+          };
+          console.log(`[NetplayEngine] Added room to list:`, room);
+          rooms.push(room);
+        } else {
+          console.log(`[NetplayEngine] Skipping room ${roomId} - missing room_name:`, roomInfo);
+        }
+      });
+    } else {
+      console.log("[NetplayEngine] Server data is not an object:", data);
+    }
+
+    console.log("[NetplayEngine] Final parsed rooms array:", rooms);
+    return rooms;
+  }
+
+  /**
+   * Initialize SFU transports for host (create send transport).
+   * @returns {Promise<void>}
+   */
+  async initializeHostTransports() {
+    if (!this.sfuTransport) {
+      throw new Error("NetplayEngine not initialized");
+    }
+
+    if (!this.sessionState?.isHostRole()) {
+      throw new Error("Only host can initialize send transports");
+    }
+
+    await this.sfuTransport.createTransports(true); // isHost = true
+  }
+
+  /**
+   * Initialize SFU transports for client (create recv transport).
+   * @returns {Promise<void>}
+   */
+  async initializeClientTransports() {
+    if (!this.sfuTransport) {
+      throw new Error("NetplayEngine not initialized");
+    }
+
+    if (this.sessionState?.isHostRole()) {
+      throw new Error("Host should use initializeHostTransports");
+    }
+
+    await this.sfuTransport.createTransports(false); // isHost = false
+  }
+
+  /**
+   * Create video producer (host only).
+   * @param {MediaStreamTrack} videoTrack - Video track from canvas/screen capture
+   * @returns {Promise<Object>} Video producer
+   */
+  async createVideoProducer(videoTrack) {
+    if (!this.sfuTransport) {
+      throw new Error("NetplayEngine not initialized");
+    }
+
+    if (!this.sessionState?.isHostRole()) {
+      throw new Error("Only host can create video producer");
+    }
+
+    return await this.sfuTransport.createVideoProducer(videoTrack);
+  }
+
+  /**
+   * Create audio producer (host only).
+   * @param {MediaStreamTrack} audioTrack - Audio track
+   * @returns {Promise<Object>} Audio producer
+   */
+  async createAudioProducer(audioTrack) {
+    if (!this.sfuTransport) {
+      throw new Error("NetplayEngine not initialized");
+    }
+
+    if (!this.sessionState?.isHostRole()) {
+      throw new Error("Only host can create audio producer");
+    }
+
+    return await this.sfuTransport.createAudioProducer(audioTrack);
+  }
+
+  /**
+   * Create data producer for input relay (host only).
+   * @returns {Promise<Object>} Data producer
+   */
+  async createDataProducer() {
+    if (!this.sfuTransport) {
+      throw new Error("NetplayEngine not initialized");
+    }
+
+    if (!this.sessionState?.isHostRole()) {
+      throw new Error("Only host can create data producer");
+    }
+
+    return await this.sfuTransport.createDataProducer();
+  }
+
+  /**
+   * Create consumer for remote media (client only).
+   * @param {string} producerId - Producer ID to consume
+   * @param {string} kind - "video" or "audio"
+   * @returns {Promise<Object>} Consumer
+   */
+  async createConsumer(producerId, kind) {
+    if (!this.sfuTransport) {
+      throw new Error("NetplayEngine not initialized");
+    }
+
+    if (this.sessionState?.isHostRole()) {
+      throw new Error("Host should not create consumers");
+    }
+
+    return await this.sfuTransport.createConsumer(producerId, kind);
   }
 
   /**

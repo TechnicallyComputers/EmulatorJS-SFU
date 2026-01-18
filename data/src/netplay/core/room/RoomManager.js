@@ -84,10 +84,10 @@ class RoomManager {
 
     return new Promise((resolve, reject) => {
       this.socket.emit(
-        "create-room",
+        "open-room",
         {
           extra: extra,
-          max_players: maxPlayers,
+          maxPlayers: maxPlayers,
           password: password,
         },
         (error, result) => {
@@ -181,7 +181,7 @@ class RoomManager {
         extra: extra,
         password: password,
       },
-      (error, users) => {
+      (error, response) => {
         if (error) {
           // Handle auth errors specially
           if (
@@ -201,14 +201,14 @@ class RoomManager {
         }
 
         // Update players list
-        if (this.sessionState) {
-          Object.entries(users || {}).forEach(([playerId, playerData]) => {
+        if (this.sessionState && response && response.users) {
+          Object.entries(response.users || {}).forEach(([playerId, playerData]) => {
             this.sessionState.addPlayer(playerId, playerData);
           });
         }
 
-        // Room joined successfully
-        resolve();
+        // Room joined successfully - return the response with room info
+        resolve(response);
       }
     );
   }

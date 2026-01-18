@@ -255,7 +255,11 @@ IF EXIST AUTORUN.BAT AUTORUN.BAT
     }
     simulateInput(player, index, value) {
         if (this.EJS.isNetplay) {
-            this.EJS.netplay.simulateInput(player, index, value);
+            if (this.EJS.netplay && typeof this.EJS.netplay.simulateInput === 'function') {
+                this.EJS.netplay.simulateInput(player, index, value);
+            } else {
+                console.warn('[GameManager] Netplay simulateInput not available yet');
+            }
             return;
         }
         if ([24, 25, 26, 27, 28, 29].includes(index)) {

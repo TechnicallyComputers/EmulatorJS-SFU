@@ -20,6 +20,7 @@ class SocketTransport {
     this.socket = null;
     this.connected = false;
     this.callbacks = config.callbacks || {};
+    this.pendingListeners = []; // Queue listeners registered before socket connection
   }
 
   /**
@@ -63,6 +64,16 @@ class SocketTransport {
     this.socket.on("connect", () => {
       console.log("[SocketTransport] Socket.IO connected:", this.socket.id);
       this.connected = true;
+
+      // Register any pending listeners
+      if (this.pendingListeners.length > 0) {
+        console.log("[SocketTransport] Registering", this.pendingListeners.length, "pending listeners");
+        this.pendingListeners.forEach(({ event, callback }) => {
+          this.socket.on(event, callback);
+        });
+        this.pendingListeners = []; // Clear queue
+      }
+
       if (this.callbacks.onConnect) {
         this.callbacks.onConnect(this.socket.id);
       }
@@ -155,7 +166,9 @@ class SocketTransport {
    */
   on(event, callback) {
     if (!this.socket) {
-      console.error("[SocketTransport] Cannot register listener: Socket not initialized");
+      // Queue listener for when socket connects
+      console.log("[SocketTransport] Queueing listener for", event, "(socket not yet connected)");
+      this.pendingListeners.push({ event, callback });
       return;
     }
     this.socket.on(event, callback);

@@ -7,6 +7,7 @@
     "gamepad.js",
     "GameManager.js",
     "socket.io.min.js",
+    "vendor/mediasoup-client-umd.js",
     "compression.js",
   ];
 

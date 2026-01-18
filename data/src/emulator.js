@@ -8688,6 +8688,10 @@ class EmulatorJS {
       // Always populate slot UI from current preference, and wire live switching once.
       try {
         if (this.netplay && this.netplay.slotSelect) {
+          // Check if user was previously in spectator mode
+          if (this.settings && this.settings.netplayPreferredSlot === "spectator") {
+            this.netplayEnterSpectatorMode();
+          } else {
           const s =
             typeof this.netplay.localSlot === "number"
               ? this.netplay.localSlot
@@ -8695,22 +8699,30 @@ class EmulatorJS {
               ? this.netplayPreferredSlot
               : 0;
           this.netplay.slotSelect.value = String(Math.max(0, Math.min(3, s)));
+          }
 
           if (!this.netplay._slotSelectWired) {
             this.netplay._slotSelectWired = true;
             this.addEventListener(this.netplay.slotSelect, "change", () => {
-              const raw = parseInt(this.netplay.slotSelect.value, 10);
-              const slot = isNaN(raw) ? 0 : Math.max(0, Math.min(3, raw));
+              const value = this.netplay.slotSelect.value;
+
+              if (value === "spectator") {
+                // Enter spectator mode
+                this.netplayEnterSpectatorMode();
+              } else {
+                // Switch to player slot
+                const slot = parseInt(value, 10);
               this.netplay.localSlot = slot;
               this.netplayPreferredSlot = slot;
               window.EJS_NETPLAY_PREFERRED_SLOT = slot;
               if (this.netplay.extra) {
                 this.netplay.extra.player_slot = slot;
               }
-              // Update player table with new slot
-              this.netplayUpdatePlayerSlot(slot);
+                // Update player table with new slot
+                this.netplayUpdatePlayerSlot(slot);
               if (this.settings) {
                 this.settings.netplayPreferredSlot = String(slot);
+                }
               }
               this.saveSettings();
             });
@@ -8719,9 +8731,12 @@ class EmulatorJS {
       } catch (e) {
         // ignore
       }
+      console.log("[Netplay] Opening netplay menu, checking updateList...");
       if (!this.netplay || typeof this.netplay.updateList !== "function") {
+        console.log("[Netplay] updateList not found, calling defineNetplayFunctions...");
         this.defineNetplayFunctions();
       }
+      console.log("[Netplay] Calling updateList.start()...");
       this.netplay.updateList.start();
     };
   }
@@ -8750,12 +8765,44 @@ class EmulatorJS {
       this.netplay = {};
     }
 
+    // Initialize NetplayEngine if available (for room listing)
+    if (!this.netplay.engine && NetplayEngineClass && EmulatorJSAdapterClass) {
+      console.log("[Netplay] Initializing NetplayEngine for room listing...");
+
+      try {
+        const adapter = new EmulatorJSAdapterClass(this);
+
+        // Create minimal config for room listing
+        const engineConfig = {
+          netplayUrl: window.EJS_netplayUrl || this.config?.netplayUrl,
+          gameId: this.config?.gameId || "",
+          callbacks: {
+            onSocketConnect: (socketId) => {
+              console.log("[Netplay] Engine socket connected for room listing:", socketId);
+            },
+            onSocketError: (error) => {
+              console.warn("[Netplay] Engine socket error:", error);
+            },
+            onSocketDisconnect: (reason) => {
+              console.log("[Netplay] Engine socket disconnected:", reason);
+            },
+          }
+        };
+
+        this.netplay.engine = new NetplayEngineClass(adapter, engineConfig);
+        console.log("[Netplay] NetplayEngine created for room listing");
+      } catch (error) {
+        console.warn("[Netplay] Failed to initialize NetplayEngine for room listing:", error);
+        // Continue without engine - updateList will fail gracefully
+      }
+    }
 
     // Define updateList function for refreshing room lists
     if (!this.netplay.updateList) {
       let updateInterval = null;
       this.netplay.updateList = {
         start: () => {
+          console.log("[Netplay] Starting room list updates...");
           // Stop any existing interval
           this.netplay.updateList.stop();
 
@@ -8763,12 +8810,29 @@ class EmulatorJS {
           const updateRooms = async () => {
             if (!this.netplay || !this.netplay.table) return;
 
+            console.log("[Netplay] updateRooms called, fetching room list...");
+
             try {
-              // Get room list from SFU server
-              const rooms = await this.netplayGetRoomList();
+              // Use NetplayEngine for room listing
+              if (!this.netplay.engine) {
+                console.error("[Netplay] NetplayEngine not available for room listing");
+                this.netplayUpdateRoomTable([]); // Show empty list
+                return;
+              }
+
+              console.log("[Netplay] Using NetplayEngine.listRooms()");
+              const rooms = await this.netplay.engine.listRooms();
+              console.log("[Netplay] NetplayEngine returned rooms:", rooms);
+
+              // Log room metadata for debugging
+              rooms.forEach(room => {
+                console.log(`[Netplay] Room ${room.name}: core=${room.core_type}, rom=${room.rom_hash}, players=${room.current}/${room.max}`);
+              });
               this.netplayUpdateRoomTable(rooms);
             } catch (error) {
               console.error("[Netplay] Failed to update room list:", error);
+              // Show empty list on error
+              this.netplayUpdateRoomTable([]);
             }
           };
 
@@ -8990,12 +9054,37 @@ class EmulatorJS {
 
     // Define leaveRoom function
     if (!this.netplay.leaveRoom) {
-      this.netplay.leaveRoom = () => {
+      this.netplay.leaveRoom = async () => {
         console.log("[Netplay] Leaving room");
-        // This would normally call the NetplayEngine's leaveRoom method
-        // For now, we'll show a placeholder implementation
-        alert("Leaving room not fully implemented yet.");
-        // TODO: Integrate with actual NetplayEngine room leaving logic
+
+        try {
+          // Use NetplayEngine if available
+          if (this.netplay.engine) {
+            console.log("[Netplay] Using NetplayEngine.leaveRoom()");
+            await this.netplay.engine.leaveRoom();
+            console.log("[Netplay] Successfully left room via NetplayEngine");
+          } else {
+            console.log("[Netplay] NetplayEngine not available, falling back to netplayLeaveRoom()");
+            await this.netplayLeaveRoom();
+          }
+
+          // Reset UI state
+          this.isNetplay = false;
+          this.netplay.currentRoomId = null;
+          this.netplay.currentRoom = null;
+
+          // Stop room list updates
+          if (this.netplay.updateList) {
+            this.netplay.updateList.stop();
+          }
+
+          // Restore normal bottom bar buttons
+          // (This logic is already in netplayLeaveRoom)
+
+        } catch (error) {
+          console.error("[Netplay] Failed to leave room:", error);
+          alert("Failed to leave room: " + error.message);
+        }
       };
     }
 
@@ -9268,12 +9357,23 @@ class EmulatorJS {
   // Helper method to get room list from SFU server
   async netplayGetRoomList() {
     try {
+      console.log("[Netplay] Attempting to fetch room list...");
+
       // Build URL with authentication token
       const token = window.EJS_netplayToken;
-      let url = `${window.EJS_netplayUrl || this.config.netplayUrl}/list?domain=${window.location.host}&game_id=${this.config.gameId || ""}`;
+      const baseUrl = window.EJS_netplayUrl || this.config.netplayUrl;
+
+      if (!baseUrl) {
+        console.error("[Netplay] No netplay URL configured (window.EJS_netplayUrl or this.config.netplayUrl)");
+        return [];
+      }
+
+      let url = `${baseUrl}/list?domain=${window.location.host}&game_id=${this.config.gameId || ""}`;
       if (token) {
         url += `&token=${encodeURIComponent(token)}`;
       }
+
+      console.log("[Netplay] Fetching room list from:", url);
 
       const headers = {};
       if (!token) {
@@ -9289,19 +9389,24 @@ class EmulatorJS {
       }
 
       const response = await fetch(url, { headers });
+      console.log(`[Netplay] Room list response status: ${response.status}`);
+
       if (!response.ok) {
         console.warn(`Room list fetch failed with status ${response.status}`);
         return [];
       }
 
       const data = await response.json();
+      console.log("[Netplay] Raw server response:", data);
 
       // Convert server response format to expected format
       const rooms = [];
       if (data && typeof data === "object") {
+        console.log("[Netplay] Processing server data entries:", Object.keys(data));
         Object.entries(data).forEach(([roomId, roomInfo]) => {
+          console.log(`[Netplay] Processing room ${roomId}:`, roomInfo);
           if (roomInfo && roomInfo.room_name) {
-            rooms.push({
+            const room = {
               id: roomId,
               name: roomInfo.room_name,
               current: roomInfo.current || 0,
@@ -9312,11 +9417,18 @@ class EmulatorJS {
               spectator_mode: roomInfo.spectator_mode || 1,
               rom_hash: roomInfo.rom_hash || null,
               core_type: roomInfo.core_type || null,
-            });
+            };
+            console.log(`[Netplay] Added room to list:`, room);
+            rooms.push(room);
+          } else {
+            console.log(`[Netplay] Skipping room ${roomId} - missing room_name:`, roomInfo);
           }
         });
+      } else {
+        console.log("[Netplay] Server data is not an object:", data);
       }
 
+      console.log("[Netplay] Final parsed rooms array:", rooms);
       return rooms;
     } catch (error) {
       console.error("[Netplay] Failed to get room list:", error);
@@ -9431,6 +9543,83 @@ class EmulatorJS {
       throw new Error("Player name not set");
     }
 
+    // Use NetplayEngine if available
+    if (this.netplay.engine) {
+      console.log("[Netplay] Creating room via NetplayEngine:", {
+        roomName,
+        maxPlayers,
+        password,
+        allowSpectators,
+        roomType
+      });
+
+      // Initialize engine if not already initialized
+      if (!this.netplay.engine.isInitialized()) {
+        console.log("[Netplay] Engine not initialized, initializing now...");
+        try {
+          await this.netplay.engine.initialize();
+          console.log("[Netplay] Engine initialized successfully");
+        } catch (initError) {
+          console.error("[Netplay] Engine initialization failed:", initError);
+          throw new Error(`NetplayEngine initialization failed: ${initError.message}`);
+        }
+      }
+
+      // Prepare player info for engine
+      const playerInfo = {
+        player_name: this.netplay.name,
+        player_slot: this.netplay.localSlot || 0,
+        domain: window.location.host,
+        game_id: this.config.gameId || "",
+        rom_hash: this.config.romHash || this.config.romName || null,
+        core_type: this.config.system || this.config.core || null,
+        netplay_mode: roomType === "delay_sync" ? 1 : 0,
+        allow_spectators: allowSpectators,
+        spectator_mode: allowSpectators ? 1 : 0,
+      };
+
+      // Add sync config for delay sync rooms
+      if (roomType === "delay_sync") {
+        playerInfo.sync_config = {
+          frameDelay: frameDelay,
+          syncMode: syncMode
+        };
+      }
+
+      try {
+        const result = await this.netplay.engine.createRoom(roomName, maxPlayers, password, playerInfo);
+        console.log("[Netplay] Room creation successful via engine:", result);
+
+        // Store room info for later use
+        this.netplay.currentRoomId = result.room_id || result.id;
+        this.netplay.currentRoom = result;
+
+        // Switch to appropriate room UI and setup based on room type
+        if (roomType === "live_stream") {
+          this.netplaySwitchToLiveStreamRoom(roomName, password);
+
+          // LIVESTREAM ROOM: Set up WebRTC producer transports for host
+          // Only hosts need to create producers for video/audio streaming
+          console.log("[Netplay] Setting up WebRTC producer transports for livestream host");
+          setTimeout(() => this.netplaySetupProducers(), 1000);
+        } else if (roomType === "delay_sync") {
+          this.netplaySwitchToDelaySyncRoom(roomName, password, maxPlayers);
+
+          // DELAY SYNC ROOM: Different setup needed for input synchronization
+          // TODO: Add delay sync specific setup (state synchronization, etc.)
+          // No WebRTC producers needed for delay sync - uses different sync mechanism
+        }
+
+        return result;
+      } catch (error) {
+        console.error("[Netplay] Room creation failed via engine:", error);
+        throw error;
+      }
+    }
+
+    // Fallback to old direct HTTP method if engine not available
+    console.log("[Netplay] NetplayEngine not available, falling back to direct HTTP");
+
     // Determine netplay mode
     const netplayMode = roomType === "delay_sync" ? 1 : 0;
 
@@ -9457,17 +9646,201 @@ class EmulatorJS {
       spectatorMode
     });
 
-    // Here we would typically integrate with the NetplayEngine to create a room
-    // For now, we'll show a placeholder implementation
+    // Request a write token from RomM for room creation
+    console.log("[Netplay] Requesting write token for room creation...");
+    let writeToken = null;
+    try {
+      // Try to get a write token from RomM
+      const tokenResponse = await fetch('/api/sfu/token', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          // Include auth headers if available
+        },
+        body: JSON.stringify({ token_type: 'write' })
+      });
+
+      if (tokenResponse.ok) {
+        const tokenData = await tokenResponse.json();
+        writeToken = tokenData.token;
+        console.log("[Netplay] Obtained write token for room creation");
+      } else {
+        console.warn("[Netplay] Failed to get write token, falling back to existing token");
+      }
+    } catch (error) {
+      console.warn("[Netplay] Error requesting write token:", error);
+    }
+
+    // Send room creation request to SFU server
+    const baseUrl = window.EJS_netplayUrl || this.config.netplayUrl;
+    if (!baseUrl) {
+      throw new Error("No netplay URL configured");
+    }
+
+    const createUrl = `${baseUrl}/create`;
+    console.log("[Netplay] Sending room creation request to:", createUrl);
+
+    const headers = {
+      'Content-Type': 'application/json'
+    };
+
+    // Add authentication - prefer write token, fallback to existing token
+    const token = writeToken || window.EJS_netplayToken;
+    if (token) {
+      headers['Authorization'] = `Bearer ${token}`;
+    } else {
+      // Try to get token from cookie
+      const cookies = document.cookie.split(';');
+      for (const cookie of cookies) {
+        const [name, value] = cookie.trim().split('=');
+        if (name === 'romm_sfu_token' || name === 'sfu_token') {
+          headers['Authorization'] = `Bearer ${decodeURIComponent(value)}`;
+          break;
+        }
+      }
+    }
+
+    const roomData = {
+      room_name: roomName,
+      max_players: maxPlayers,
+      password: password,
+      allow_spectators: allowSpectators,
+      netplay_mode: netplayMode,
+      sync_config: syncConfig,
+      spectator_mode: spectatorMode,
+      domain: window.location.host,
+      game_id: this.config.gameId || "",
+      rom_hash: this.config.romHash || this.config.romName || null,
+      core_type: this.config.system || this.config.core || null
+    };
+
+    console.log("[Netplay] Room creation payload:", roomData);
+
+    const response = await fetch(createUrl, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify(roomData)
+    });
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      console.error(`[Netplay] Room creation failed with status ${response.status}:`, errorText);
+      throw new Error(`Room creation failed: ${response.status} ${errorText}`);
+    }
+
+    const result = await response.json();
+    console.log("[Netplay] Room creation successful:", result);
+
+    // Store room info for later use
+    this.netplay.currentRoomId = result.room_id || result.id;
+    this.netplay.currentRoom = result;
+
+    // Switch to appropriate room UI
     if (roomType === "live_stream") {
-      // Switch to live stream room UI
       this.netplaySwitchToLiveStreamRoom(roomName, password);
     } else if (roomType === "delay_sync") {
-      // Switch to delay sync room UI
       this.netplaySwitchToDelaySyncRoom(roomName, password, maxPlayers);
     }
 
-    // TODO: Integrate with actual NetplayEngine room creation logic
+    // Note: Producer setup only available with NetplayEngine
+  }
+
+  // Helper method to attach consumer tracks to media elements for display
+  netplayAttachConsumerTrack(track, kind) {
+    try {
+      console.log(`[Netplay] Attaching ${kind} consumer track to display`);
+
+      // Create or get media element for displaying streams
+      let mediaElement;
+
+      if (kind === 'video') {
+        // Create video element for host stream
+        if (!this.netplay.hostVideoElement) {
+          this.netplay.hostVideoElement = document.createElement('video');
+          this.netplay.hostVideoElement.style.width = '100%';
+          this.netplay.hostVideoElement.style.maxWidth = '640px';
+          this.netplay.hostVideoElement.autoplay = true;
+          this.netplay.hostVideoElement.muted = true; // Avoid autoplay restrictions
+
+          // Add to netplay UI if it exists
+          if (this.netplayMenu) {
+            const videoContainer = document.createElement('div');
+            videoContainer.style.marginTop = '10px';
+            videoContainer.style.textAlign = 'center';
+            videoContainer.appendChild(this.netplay.hostVideoElement);
+            this.netplayMenu.appendChild(videoContainer);
+          }
+        }
+        mediaElement = this.netplay.hostVideoElement;
+      } else if (kind === 'audio') {
+        // Create audio element for host stream
+        if (!this.netplay.hostAudioElement) {
+          this.netplay.hostAudioElement = document.createElement('audio');
+          this.netplay.hostAudioElement.autoplay = true;
+
+          // Add to document body (audio doesn't need to be visible)
+          document.body.appendChild(this.netplay.hostAudioElement);
+        }
+        mediaElement = this.netplay.hostAudioElement;
+      }
+
+      if (mediaElement) {
+        // Create stream from track and attach to element
+        const stream = new MediaStream([track]);
+        mediaElement.srcObject = stream;
+        console.log(`[Netplay] ${kind} stream attached to media element`);
+      }
+    } catch (error) {
+      console.error(`[Netplay] Failed to attach ${kind} consumer track:`, error);
+    }
+  }
+
+  // Helper method to set up WebRTC consumer transports for LIVESTREAM clients
+  // Only called for livestream rooms where user is NOT the host
+  async netplaySetupConsumers() {
+    if (!this.netplay.engine) {
+      console.warn("[Netplay] No engine available for consumer setup");
+      return;
+    }
+
+    try {
+      console.log("[Netplay] Setting up consumer transports for client...");
+
+      // Create receive transport for client
+      await this.netplay.engine.initializeClientTransports();
+      console.log("[Netplay] Client receive transport created");
+
+      // Listen for new producers from the host
+      if (this.netplay.engine.socketTransport) {
+        this.netplay.engine.socketTransport.on("new-producer", async (data) => {
+          console.log("[Netplay] New producer available:", data);
+          try {
+            const producerId = data.id;
+            const producerKind = data.kind; // Now provided by SFU server
+
+            if (!producerKind) {
+              console.warn("[Netplay] Producer kind not provided, skipping");
+              return;
+            }
+
+            const consumer = await this.netplay.engine.createConsumer(producerId, producerKind);
+            console.log(`[Netplay] Created ${producerKind} consumer:`, consumer.id);
+
+            if (consumer.track) {
+              console.log(`[Netplay] Consumer track ready: ${producerKind}`, consumer.track);
+              // TODO: Attach consumer tracks to video/audio elements for display
+              this.netplayAttachConsumerTrack(consumer.track, producerKind);
+            }
+          } catch (error) {
+            console.warn("[Netplay] Failed to create consumer for new producer:", error);
+          }
+        });
+      }
+
+      console.log("[Netplay] Consumer setup complete - listening for new producers");
+    } catch (error) {
+      console.error("[Netplay] Consumer setup failed:", error);
+    }
   }
 
   // Helper method to join a room
@@ -9482,13 +9855,155 @@ class EmulatorJS {
       if (!password) return; // User cancelled
     }
 
+    // Use NetplayEngine if available
+    if (this.netplay.engine) {
+      console.log("[Netplay] Joining room via NetplayEngine:", { roomId, password });
+
+      // Initialize engine if not already initialized
+      if (!this.netplay.engine.isInitialized()) {
+        console.log("[Netplay] Engine not initialized, initializing now...");
+        try {
+          await this.netplay.engine.initialize();
+          console.log("[Netplay] Engine initialized successfully");
+        } catch (initError) {
+          console.error("[Netplay] Engine initialization failed:", initError);
+          throw new Error(`NetplayEngine initialization failed: ${initError.message}`);
+        }
+      }
+
+      // Prepare player info for engine
+      const playerInfo = {
+        player_name: this.netplay.name,
+        player_slot: this.netplay.localSlot || 0,
+        domain: window.location.host
+      };
+
+      try {
+        const result = await this.netplay.engine.joinRoom(null, roomId, 4, password, playerInfo);
+        console.log("[Netplay] Room join successful via engine:", result);
+
+        // Store room info
+        this.netplay.currentRoomId = roomId;
+        this.netplay.currentRoom = result;
+
+        // Switch to appropriate room UI and setup based on room type
+        const roomType = result.netplay_mode === 1 ? "delay_sync" : "live_stream";
+        if (roomType === "live_stream") {
+          this.netplaySwitchToLiveStreamRoom(roomId, password);
+
+          // LIVESTREAM ROOM: Set up WebRTC consumer transports for clients
+          // Clients need to consume host's video/audio streams via WebRTC
+          if (this.netplay.engine && !this.netplay.engine.sessionState?.isHostRole()) {
+            console.log("[Netplay] Setting up WebRTC consumer transports for livestream client");
+            setTimeout(() => this.netplaySetupConsumers(), 1000);
+          }
+          // Hosts don't need consumers - they create producers
+        } else if (roomType === "delay_sync") {
+          this.netplaySwitchToDelaySyncRoom(roomId, password, 4); // max players not returned, default to 4
+
+          // DELAY SYNC ROOM: Different setup needed
+          // TODO: Add delay sync specific setup (input synchronization, state sync, etc.)
+          // This would be different from livestream consumer setup
+        }
+
+        return result;
+      } catch (error) {
+        console.error("[Netplay] Room join failed via engine:", error);
+        throw error;
+      }
+    }
+
+    // Fallback to old direct HTTP method if engine not available
+    console.log("[Netplay] NetplayEngine not available, falling back to direct HTTP");
+
     console.log("[Netplay] Joining room:", { roomId, password });
 
-    // This would normally call the NetplayEngine's joinRoom method
-    // For now, we'll show a placeholder implementation
-    alert(`Room joining not fully implemented yet. Would join room "${roomId}".`);
+    // Request a write token from RomM for room joining
+    console.log("[Netplay] Requesting write token for room joining...");
+    let writeToken = null;
+    try {
+      const tokenResponse = await fetch('/api/sfu/token', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ token_type: 'write' })
+      });
 
-    // TODO: Integrate with actual NetplayEngine room joining logic
+      if (tokenResponse.ok) {
+        const tokenData = await tokenResponse.json();
+        writeToken = tokenData.token;
+        console.log("[Netplay] Obtained write token for room joining");
+      } else {
+        console.warn("[Netplay] Failed to get write token, falling back to existing token");
+      }
+    } catch (error) {
+      console.warn("[Netplay] Error requesting write token:", error);
+    }
+
+    // Send room join request to SFU server
+    const baseUrl = window.EJS_netplayUrl || this.config.netplayUrl;
+    if (!baseUrl) {
+      throw new Error("No netplay URL configured");
+    }
+
+    const joinUrl = `${baseUrl}/join/${roomId}`;
+    console.log("[Netplay] Sending room join request to:", joinUrl);
+
+    const headers = {
+      'Content-Type': 'application/json'
+    };
+
+    // Add authentication - prefer write token, fallback to existing token
+    const token = writeToken || window.EJS_netplayToken;
+    if (token) {
+      headers['Authorization'] = `Bearer ${token}`;
+    } else {
+      // Try to get token from cookie
+      const cookies = document.cookie.split(';');
+      for (const cookie of cookies) {
+        const [name, value] = cookie.trim().split('=');
+        if (name === 'romm_sfu_token' || name === 'sfu_token') {
+          headers['Authorization'] = `Bearer ${decodeURIComponent(value)}`;
+          break;
+        }
+      }
+    }
+
+    const joinData = {
+      password: password,
+      player_name: this.netplay.name,
+      domain: window.location.host
+    };
+
+    console.log("[Netplay] Room join payload:", joinData);
+
+    const response = await fetch(joinUrl, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify(joinData)
+    });
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      console.error(`[Netplay] Room join failed with status ${response.status}:`, errorText);
+      throw new Error(`Room join failed: ${response.status} ${errorText}`);
+    }
+
+    const result = await response.json();
+    console.log("[Netplay] Room join successful:", result);
+
+    // Store room info
+    this.netplay.currentRoomId = roomId;
+    this.netplay.currentRoom = result.room || result;
+
+    // Switch to appropriate room UI based on room type
+    const roomType = result.room?.netplay_mode === 1 ? "delay_sync" : "live_stream";
+    if (roomType === "live_stream") {
+      this.netplaySwitchToLiveStreamRoom(result.room?.room_name || "Unknown Room", password);
+    } else if (roomType === "delay_sync") {
+      this.netplaySwitchToDelaySyncRoom(result.room?.room_name || "Unknown Room", password, result.room?.max || 4);
+    }
   }
 
   // Switch to live stream room UI
@@ -9561,6 +10076,9 @@ class EmulatorJS {
 
     // Initialize live stream player table (just host for now)
     this.netplayInitializeLiveStreamPlayers();
+
+    // Initialize netplay engine for real-time communication
+    this.netplayInitializeEngine(roomName);
 
     // Hide create button and show leave/close buttons
     const buttons = this.netplayMenu.querySelectorAll("a.ejs_button");
@@ -9659,6 +10177,9 @@ class EmulatorJS {
     // Initialize player list (host is always player 1)
     this.netplayInitializeDelaySyncPlayers(maxPlayers);
 
+    // Initialize netplay engine for real-time communication
+    this.netplayInitializeEngine(roomName);
+
     // Hide create button
     const buttons = this.netplayMenu.querySelectorAll("a.ejs_button");
     buttons.forEach(btn => {
@@ -9677,11 +10198,8 @@ class EmulatorJS {
     const tbody = this.netplay.delaySyncPlayerTable;
     tbody.innerHTML = "";
 
-    // Initialize taken slots tracking
-    if (!this.netplay.takenSlots) {
-      this.netplay.takenSlots = new Set();
-    }
-    this.netplay.takenSlots.clear();
+    // Initialize player slot selector (shared between modes)
+    this.netplayInitializePlayerSlots();
 
     // Initialize player list - only show host initially as P1
     this.netplay.joinedPlayers = [{
@@ -9690,23 +10208,12 @@ class EmulatorJS {
       ready: true
     }];
 
-    // Host is always P1
-    this.netplay.takenSlots.add(0);
-    this.netplay.localSlot = 0;
-    this.netplayPreferredSlot = 0;
-    if (this.netplay.slotSelect) {
-      this.netplay.slotSelect.value = "0";
-    }
-
     // Create row for host only
     this.netplayAddPlayerToTable(0);
 
     // Initialize ready states array for maxPlayers
     this.netplay.playerReadyStates = new Array(maxPlayers).fill(false);
     this.netplay.playerReadyStates[0] = true; // Host starts ready
-
-    // Update slot selector to remove taken slots
-    this.netplayUpdateSlotSelector();
   }
 
   // Add a player to the delay sync table
@@ -9717,29 +10224,29 @@ class EmulatorJS {
     if (!player) return;
 
     const tbody = this.netplay.delaySyncPlayerTable;
-    const row = this.createElement("tr");
+      const row = this.createElement("tr");
 
-    // Player column
-    const playerCell = this.createElement("td");
+      // Player column
+      const playerCell = this.createElement("td");
     playerCell.innerText = `P${slot + 1}`;
-    playerCell.style.textAlign = "center";
-    row.appendChild(playerCell);
+      playerCell.style.textAlign = "center";
+      row.appendChild(playerCell);
 
-    // Name column
-    const nameCell = this.createElement("td");
+      // Name column
+      const nameCell = this.createElement("td");
     nameCell.innerText = player.name;
-    nameCell.style.textAlign = "center";
-    row.appendChild(nameCell);
+      nameCell.style.textAlign = "center";
+      row.appendChild(nameCell);
 
-    // Ready column
-    const readyCell = this.createElement("td");
+      // Ready column
+      const readyCell = this.createElement("td");
     readyCell.innerText = player.ready ? "✅" : "⛔";
-    readyCell.style.textAlign = "right"; // Align to the right
-    readyCell.classList.add("ready-status");
-    row.appendChild(readyCell);
+      readyCell.style.textAlign = "right"; // Align to the right
+      readyCell.classList.add("ready-status");
+      row.appendChild(readyCell);
 
-    tbody.appendChild(row);
-  }
+      tbody.appendChild(row);
+    }
 
   // Initialize live stream player table
   netplayInitializeLiveStreamPlayers() {
@@ -9748,49 +10255,377 @@ class EmulatorJS {
     const tbody = this.netplay.liveStreamPlayerTable;
     tbody.innerHTML = "";
 
-    // Initialize taken slots tracking
+    // Initialize player slot selector (shared between modes)
+    this.netplayInitializePlayerSlots();
+
+    // Show current user initially
+    this.netplayUpdatePlayerList({
+      players: {
+        [this.netplay.name || "local"]: {
+          userid: this.netplay.name || "local",
+          player_name: this.netplay.name || "You",
+          isSpectator: false
+        }
+      }
+    });
+  }
+
+  // Initialize player slot selector (shared between Live Stream and Delay Sync modes)
+  netplayInitializePlayerSlots() {
+    // Initialize taken slots tracking (only for OTHER players)
     if (!this.netplay.takenSlots) {
       this.netplay.takenSlots = new Set();
     }
     this.netplay.takenSlots.clear();
 
-    // Host is always P1
-    this.netplay.takenSlots.add(0);
+    // Host starts as P1 (but this doesn't go in takenSlots since it's the local user)
     this.netplay.localSlot = 0;
     this.netplayPreferredSlot = 0;
     if (this.netplay.slotSelect) {
       this.netplay.slotSelect.value = "0";
     }
 
-    // Just show host for now
-    const row = this.createElement("tr");
-
-    // Player column
-    const playerCell = this.createElement("td");
-    playerCell.innerText = "P1";
-    playerCell.style.textAlign = "center";
-    row.appendChild(playerCell);
-
-    // Name column
-    const nameCell = this.createElement("td");
-    nameCell.innerText = this.netplay.name || "Host";
-    nameCell.style.textAlign = "center";
-    row.appendChild(nameCell);
-
-    // Status column
-    const statusCell = this.createElement("td");
-    statusCell.innerText = "Host";
-    statusCell.style.textAlign = "center";
-    row.appendChild(statusCell);
-
-    tbody.appendChild(row);
-
-    // Update slot selector to remove taken slots
+    // Update slot selector to show available slots
     this.netplayUpdateSlotSelector();
   }
 
+  // Enter spectator mode
+  netplayEnterSpectatorMode() {
+    this.netplay.isSpectator = true;
+    this.netplay.localSlot = null;
+    this.netplayPreferredSlot = null;
+    window.EJS_NETPLAY_PREFERRED_SLOT = null;
+
+    if (this.netplay.extra) {
+      this.netplay.extra.player_slot = null;
+    }
+
+    if (this.settings) {
+      this.settings.netplayPreferredSlot = "spectator";
+    }
+
+    // Update UI to show spectator status
+    if (this.netplay.liveStreamPlayerTable) {
+      const tbody = this.netplay.liveStreamPlayerTable;
+      if (tbody.children[0]) {
+        const playerCell = tbody.children[0].querySelector("td:first-child");
+        const nameCell = tbody.children[0].querySelector("td:nth-child(2)");
+        const statusCell = tbody.children[0].querySelector("td:nth-child(3)");
+
+        if (playerCell) playerCell.innerText = "Spectator";
+        if (nameCell) nameCell.innerText = this.netplay.name || "You";
+        if (statusCell) statusCell.innerText = "Watching";
+      }
+    }
+
+    if (this.netplay.delaySyncPlayerTable) {
+      // In delay sync, spectators don't appear in the player table
+      // The table only shows active players
+      // For now, clear the table since the host is now spectating
+      const tbody = this.netplay.delaySyncPlayerTable;
+      tbody.innerHTML = "";
+    }
+
+    // TODO: Implement actual spectator video/audio transport
+    console.log("[Netplay] Entered spectator mode - video/audio transport not yet implemented");
+  }
+
+  // Initialize the netplay engine for real-time communication
+  async netplayInitializeEngine(roomName) {
+    console.log("[Netplay] Initializing netplay engine for room:", roomName);
+
+    // If NetplayEngine is already initialized and connected, skip legacy socket setup
+    if (this.netplay.engine && this.netplay.engine.isInitialized()) {
+      console.log("[Netplay] NetplayEngine already initialized, skipping legacy socket setup");
+      return;
+    }
+
+    try {
+      // Netplay modules should already be loaded globally
+
+      // Get netplay classes
+      const NetplayEngineClass =
+        typeof NetplayEngine !== "undefined"
+          ? NetplayEngine
+          : typeof window !== "undefined" && window.NetplayEngine
+          ? window.NetplayEngine
+          : null;
+
+      const EmulatorJSAdapterClass =
+        typeof EmulatorJSAdapter !== "undefined"
+          ? EmulatorJSAdapter
+          : typeof window !== "undefined" && window.EmulatorJSAdapter
+          ? window.EmulatorJSAdapter
+          : null;
+
+      const SocketTransportClass =
+        typeof SocketTransport !== "undefined"
+          ? SocketTransport
+          : typeof window !== "undefined" && window.SocketTransport
+          ? window.SocketTransport
+          : null;
+
+      if (!NetplayEngineClass || !EmulatorJSAdapterClass || !SocketTransportClass) {
+        console.error("[Netplay] CRITICAL: Netplay classes not found!");
+        console.error("[Netplay] The emulator files served by RomM do not include netplay support.");
+        console.error("[Netplay] You need to:");
+        console.error("[Netplay] 1. Build EmulatorJS with netplay: cd EmulatorJS-SFU && npm run minify");
+        console.error("[Netplay] 2. Copy the built files to RomM:");
+        console.error("[Netplay]    cp EmulatorJS-SFU/data/emulator.min.js RomM/frontend/public/assets/emulatorjs/");
+        console.error("[Netplay]    cp EmulatorJS-SFU/data/emulator.hybrid.min.js RomM/frontend/public/assets/emulatorjs/");
+        console.error("[Netplay]    cp EmulatorJS-SFU/data/emulator.min.css RomM/frontend/public/assets/emulatorjs/");
+        console.error("[Netplay] 3. Restart RomM");
+        console.log("[Netplay] Available globals:",
+          Object.keys(typeof window !== "undefined" ? window : global));
+        return;
+      }
+
+      // Create socket transport
+      const socketUrl = this.config.netplayUrl || window.EJS_netplayUrl;
+      if (!socketUrl) {
+        console.error("[Netplay] No socket URL available for netplay engine");
+        return;
+      }
+
+      // Extract base URL for WebSocket connection (remove protocol and path)
+      let socketBaseUrl = socketUrl;
+      if (socketBaseUrl.startsWith('http://')) {
+        socketBaseUrl = socketBaseUrl.substring(7);
+      } else if (socketBaseUrl.startsWith('https://')) {
+        socketBaseUrl = socketBaseUrl.substring(8);
+      }
+      // Remove any path after the domain
+      const pathIndex = socketBaseUrl.indexOf('/');
+      if (pathIndex > 0) {
+        socketBaseUrl = socketBaseUrl.substring(0, pathIndex);
+      }
+
+      // Create emulator adapter
+      const adapter = new EmulatorJSAdapterClass(this);
+
+      // Create netplay engine (let it create its own transport)
+      const engine = new NetplayEngineClass(adapter, {
+        sfuUrl: socketUrl, // Pass the SFU URL so the engine can create the transport
+        roomName,
+        playerIndex: this.netplay.localSlot || 0,
+        callbacks: {
+          onSocketConnect: (socketId) => {
+            console.log("[Netplay] Socket connected:", socketId);
+
+            // Set up event listeners now that socket is connected (only if engine is initialized)
+            if (engineInitialized) {
+              const transport = engine.socketTransport;
+              if (transport) {
+                transport.on("users-updated", (data) => {
+                  console.log("[Netplay] Users updated event received:", data);
+                  // SFU sends: { roomName, userCount, users }
+                  if (data.users) {
+                    this.netplayUpdatePlayerList({ players: data.users });
+                  }
+                });
+
+                transport.on("data-message", (data) => {
+                  console.log("[Netplay] Data message received:", data);
+                });
+              }
+            }
+
+            // Now join the room via Socket.IO
+            setTimeout(() => this.netplayJoinRoomViaSocket(roomName), 100);
+          },
+          onSocketError: (error) => {
+            console.error("[Netplay] Socket error:", error);
+          },
+          onSocketDisconnect: (reason) => {
+            console.log("[Netplay] Socket disconnected:", reason);
+          },
+          onUsersUpdated: (users) => {
+            console.log("[Netplay] Users updated:", users);
+            this.netplayUpdatePlayerList({ players: users });
+          },
+          onRoomClosed: (data) => {
+            console.log("[Netplay] Room closed:", data);
+          }
+        }
+      });
+
+      // Initialize the engine (sets up all subsystems including InputSync and transport)
+      console.log("[Netplay] Initializing NetplayEngine...");
+      let engineInitialized = false;
+      try {
+        await engine.initialize();
+        engineInitialized = true;
+        console.log("[Netplay] NetplayEngine initialized successfully");
+      } catch (error) {
+        console.warn("[Netplay] NetplayEngine initialization failed, using basic transport:", error);
+
+        // Fall back to basic transport without NetplayEngine
+        this.netplay.transport = new SocketTransportClass({
+          callbacks: {
+            onConnect: (socketId) => {
+              console.log("[Netplay] Basic socket connected:", socketId);
+
+              // Set up event listeners for basic functionality
+              this.netplay.transport.on("users-updated", (data) => {
+                console.log("[Netplay] Users updated event received:", data);
+                if (data.users) {
+                  this.netplayUpdatePlayerList({ players: data.users });
+                }
+              });
+
+              // Join the room
+              setTimeout(() => this.netplayJoinRoomViaSocket(roomName), 100);
+            },
+            onConnectError: (error) => {
+              console.error("[Netplay] Basic socket connection error:", error);
+            },
+            onDisconnect: (reason) => {
+              console.log("[Netplay] Basic socket disconnected:", reason);
+            }
+          }
+        });
+
+        // Connect the basic transport
+        await this.netplay.transport.connect(`wss://${socketBaseUrl}`);
+      }
+
+      // Store references
+      if (engineInitialized) {
+        this.netplay.transport = engine.socketTransport;
+        this.netplay.adapter = adapter;
+        this.netplay.engine = engine;
+        // NetplayEngine handles its own transport connection
+      } else {
+        // Connect the basic transport (fallback case)
+        console.log("[Netplay] Connecting basic SocketTransport...");
+        await this.netplay.transport.connect(`wss://${socketBaseUrl}`);
+      }
+
+      // Set up simulateInput function for the game manager
+      if (!this.netplay.simulateInput) {
+        this.netplay.simulateInput = (playerIndex, inputIndex, value) => {
+          if (this.netplay.engine && this.netplay.engine.inputSync) {
+            this.netplay.engine.inputSync.sendInput(playerIndex, inputIndex, value);
+          } else {
+            console.warn("[Netplay] InputSync not available, input ignored");
+          }
+        };
+      }
+
+      // The socket connection will be established by the NetplayEngine
+      // Room joining happens in the onSocketConnect callback
+
+      console.log("[Netplay] Netplay engine initialized successfully");
+
+    } catch (error) {
+      console.error("[Netplay] Failed to initialize netplay engine:", error);
+    }
+  }
+
+  // Update room display with current data
+  netplayUpdateRoomDisplay(data) {
+    // Update player count, core name, ROM info, etc.
+    if (data.players) {
+      // Update player table with current player list
+      this.netplayUpdatePlayerList({ players: data.players });
+    }
+
+    if (data.room_info) {
+      // Update room metadata display
+      if (this.netplay.liveStreamPlayerTable) {
+        // Update core and ROM display in live stream table
+        const tbody = this.netplay.liveStreamPlayerTable;
+        if (tbody.children.length > 0) {
+          // Could add additional rows for core/ROM info
+        }
+      }
+    }
+  }
+
+  // Join room via Socket.IO (called after socket connects)
+  netplayJoinRoomViaSocket(roomName) {
+    if (!this.netplay.transport) {
+      console.error("[Netplay] No transport available for room join");
+      return;
+    }
+
+    console.log("[Netplay] Joining room via Socket.IO:", roomName);
+    this.netplay.transport.emit("join-room", {
+      extra: {
+        room_name: roomName,
+        player_name: this.netplay.name || "Anonymous",
+        netplay_mode: this.netplay.currentRoom?.netplay_mode || 0,
+        // Include other room metadata
+      }
+    }, (error, result) => {
+      if (error) {
+        console.error("[Netplay] Failed to join room via Socket.IO:", error);
+        // Fall back to HTTP room data
+        this.netplayUpdateRoomDisplay({ room_info: this.netplay.currentRoom });
+        } else {
+          console.log("[Netplay] Successfully joined room via Socket.IO:", result);
+          // Update room display with joined state
+          if (result && result.room_info) {
+            this.netplayUpdateRoomDisplay(result);
+          } else {
+            // Use stored room data if no result
+            this.netplayUpdateRoomDisplay({ room_info: this.netplay.currentRoom });
+          }
+        }
+    });
+  }
+
+  // Update player list display
+  netplayUpdatePlayerList(data) {
+    if (data.players && this.netplay.delaySyncPlayerTable) {
+      // Update Delay Sync player table
+      const tbody = this.netplay.delaySyncPlayerTable;
+      // Re-render player list
+      this.netplayInitializeDelaySyncPlayers(this.netplay.maxPlayers || 4);
+    }
+
+    if (this.netplay.liveStreamPlayerTable && data.players) {
+      // Update Live Stream player table with all connected users
+      const tbody = this.netplay.liveStreamPlayerTable;
+      tbody.innerHTML = ""; // Clear existing
+
+      // Show all connected users as spectators/participants
+      Object.values(data.players).forEach((player, index) => {
+        const row = this.createElement("tr");
+
+        // Player/Spectator indicator
+        const playerCell = this.createElement("td");
+        if (player.userid === this.netplay.name || player.player_name === this.netplay.name) {
+          playerCell.innerText = "You";
+        } else {
+          playerCell.innerText = player.isSpectator ? "Spectator" : "Player";
+        }
+        playerCell.style.textAlign = "center";
+        row.appendChild(playerCell);
+
+        // Name
+        const nameCell = this.createElement("td");
+        nameCell.innerText = player.player_name || player.userid || "Unknown";
+        nameCell.style.textAlign = "center";
+        row.appendChild(nameCell);
+
+        // Status
+        const statusCell = this.createElement("td");
+        statusCell.innerText = player.isSpectator ? "Watching" : "Playing";
+        statusCell.style.textAlign = "center";
+        row.appendChild(statusCell);
+
+        tbody.appendChild(row);
+      });
+    }
+  }
+
+
   // Update player slot in table
   netplayUpdatePlayerSlot(slot) {
+    // Exit spectator mode if we were in it
+    this.netplay.isSpectator = false;
+
     // Update Delay Sync table if it exists
     if (this.netplay.delaySyncPlayerTable && this.netplay.joinedPlayers) {
       const hostPlayer = this.netplay.joinedPlayers.find(p => p.slot === 0);
@@ -9799,10 +10634,7 @@ class EmulatorJS {
         const oldSlot = hostPlayer.slot;
         hostPlayer.slot = slot;
 
-        // Update taken slots
-        if (!this.netplay.takenSlots) this.netplay.takenSlots = new Set();
-        this.netplay.takenSlots.delete(oldSlot);
-        this.netplay.takenSlots.add(slot);
+        // Note: takenSlots only tracks OTHER players' slots, not the local user's slot
 
         // Re-render the table
         this.netplayInitializeDelaySyncPlayers(this.netplay.maxPlayers || 4);
@@ -9814,9 +10646,12 @@ class EmulatorJS {
       const tbody = this.netplay.liveStreamPlayerTable;
       if (tbody.children[0]) {
         const playerCell = tbody.children[0].querySelector("td:first-child");
-        if (playerCell) {
-          playerCell.innerText = `P${slot + 1}`;
-        }
+        const nameCell = tbody.children[0].querySelector("td:nth-child(2)");
+        const statusCell = tbody.children[0].querySelector("td:nth-child(3)");
+
+        if (playerCell) playerCell.innerText = `P${slot + 1}`;
+        if (nameCell) nameCell.innerText = this.netplay.name || "Host";
+        if (statusCell) statusCell.innerText = "Host";
       }
     }
 
@@ -9824,17 +10659,18 @@ class EmulatorJS {
     this.netplayUpdateSlotSelector();
   }
 
-  // Update slot selector dropdown to remove taken slots
+  // Update slot selector dropdown to show available slots
   netplayUpdateSlotSelector() {
     if (!this.netplay.slotSelect) return;
 
     const select = this.netplay.slotSelect;
     const currentValue = select.value;
+    const userSlot = this.netplay.localSlot || 0;
 
     // Clear all options
     select.innerHTML = "";
 
-    // Add available slots (not taken)
+    // Add player slots (P1-P4) - available if not taken by others
     for (let i = 0; i < 4; i++) {
       if (!this.netplay.takenSlots || !this.netplay.takenSlots.has(i)) {
         const opt = this.createElement("option");
@@ -9844,14 +10680,27 @@ class EmulatorJS {
       }
     }
 
-    // Try to restore the current selection, or select the first available
-    if (select.querySelector(`option[value="${currentValue}"]`)) {
-      select.value = currentValue;
+    // Add Spectator option (always available)
+    const spectatorOpt = this.createElement("option");
+    spectatorOpt.value = "spectator";
+    spectatorOpt.innerText = "Spectator";
+    select.appendChild(spectatorOpt);
+
+    // Ensure the user's current slot/mode is selected
+    const desiredValue = currentValue === "spectator" ? "spectator" : String(userSlot);
+    if (select.querySelector(`option[value="${desiredValue}"]`)) {
+      select.value = desiredValue;
     } else if (select.options.length > 0) {
+      // Fallback to first available option
       select.value = select.options[0].value;
-      const newSlot = parseInt(select.value, 10);
-      this.netplay.localSlot = newSlot;
-      this.netplayPreferredSlot = newSlot;
+      if (select.value === "spectator") {
+        this.netplayEnterSpectatorMode();
+      } else {
+        const newSlot = parseInt(select.value, 10);
+        this.netplay.localSlot = newSlot;
+        this.netplayPreferredSlot = newSlot;
+        this.netplayUpdatePlayerSlot(newSlot);
+      }
     }
   }
 
@@ -9966,10 +10815,103 @@ class EmulatorJS {
   }
 
   // Leave room
-  netplayLeaveRoom() {
+  async netplayLeaveRoom() {
     console.log("[Netplay] Leaving room...");
+
+    // Clean up netplay engine
+    if (this.netplay.engine) {
+      try {
+        await this.netplay.engine.leaveRoom();
+        console.log("[Netplay] Netplay engine left room");
+      } catch (error) {
+        console.error("[Netplay] Error leaving netplay engine:", error);
+      }
+    }
+
+    if (this.netplay.transport) {
+      try {
+        await this.netplay.transport.disconnect();
+        console.log("[Netplay] Socket transport disconnected");
+      } catch (error) {
+        console.error("[Netplay] Error disconnecting transport:", error);
+      }
+    }
+
+    // Clear netplay references
+    this.netplay.engine = null;
+    this.netplay.transport = null;
+    this.netplay.adapter = null;
+    this.netplay.simulateInput = null;
+
+    // Send leave request to SFU server if we have a current room
+    if (this.netplay.currentRoomId) {
+      try {
+        // Request a write token from RomM for room leaving
+        console.log("[Netplay] Requesting write token for room leaving...");
+        let writeToken = null;
+        try {
+          const tokenResponse = await fetch('/api/sfu/token', {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({ token_type: 'write' })
+          });
+
+          if (tokenResponse.ok) {
+            const tokenData = await tokenResponse.json();
+            writeToken = tokenData.token;
+            console.log("[Netplay] Obtained write token for room leaving");
+          } else {
+            console.warn("[Netplay] Failed to get write token, falling back to existing token");
+          }
+        } catch (error) {
+          console.warn("[Netplay] Error requesting write token:", error);
+        }
+
+        const baseUrl = window.EJS_netplayUrl || this.config.netplayUrl;
+        if (baseUrl) {
+          const leaveUrl = `${baseUrl}/leave/${this.netplay.currentRoomId}`;
+          console.log("[Netplay] Sending leave request to:", leaveUrl);
+
+          const headers = {};
+
+          // Add authentication - prefer write token, fallback to existing token
+          const token = writeToken || window.EJS_netplayToken;
+          if (token) {
+            headers['Authorization'] = `Bearer ${token}`;
+          } else {
+            // Try to get token from cookie
+            const cookies = document.cookie.split(';');
+            for (const cookie of cookies) {
+              const [name, value] = cookie.trim().split('=');
+              if (name === 'romm_sfu_token' || name === 'sfu_token') {
+                headers['Authorization'] = `Bearer ${decodeURIComponent(value)}`;
+                break;
+              }
+            }
+          }
+
+          const response = await fetch(leaveUrl, {
+            method: 'POST',
+            headers
+          });
+
+          if (response.ok) {
+            console.log("[Netplay] Leave request successful");
+          } else {
+            console.warn(`[Netplay] Leave request failed with status ${response.status}`);
+          }
+        }
+      } catch (error) {
+        console.error("[Netplay] Error sending leave request:", error);
+      }
+    }
+
     // Reset netplay state
     this.isNetplay = false;
+    this.netplay.currentRoomId = null;
+    this.netplay.currentRoom = null;
 
     // Restore normal bottom bar buttons
     this.restoreNormalBottomBar();
@@ -10003,6 +10945,115 @@ class EmulatorJS {
     });
 
     // TODO: Implement actual room leaving logic
+  }
+
+  // Setup WebRTC video/audio producers for LIVESTREAM hosts only
+  // Called only for livestream rooms where user is the host
+  async netplaySetupProducers() {
+    if (!this.netplay.engine || !this.netplay.engine.sessionState?.isHostRole()) {
+      console.log("[Netplay] Not host or engine not available, skipping producer setup");
+      return;
+    }
+
+    try {
+      console.log("[Netplay] Setting up video/audio producers...");
+
+      // Initialize SFU transports for host
+      await this.netplay.engine.initializeHostTransports();
+
+      // Capture canvas video
+      const videoTrack = await this.netplayCaptureCanvasVideo();
+      if (videoTrack) {
+        await this.netplay.engine.createVideoProducer(videoTrack);
+        console.log("[Netplay] Video producer created");
+      }
+
+      // Capture audio (if available)
+      const audioTrack = await this.netplayCaptureAudio();
+      if (audioTrack) {
+        await this.netplay.engine.createAudioProducer(audioTrack);
+        console.log("[Netplay] Audio producer created");
+      }
+
+      // Create data producer for input relay
+      await this.netplay.engine.createDataProducer();
+      console.log("[Netplay] Data producer created");
+
+    } catch (error) {
+      console.error("[Netplay] Failed to setup producers:", error);
+    }
+  }
+
+  // Capture canvas as video track for netplay streaming
+  async netplayCaptureCanvasVideo() {
+    try {
+      // Get the canvas element
+      const canvas = this.canvas || document.querySelector('canvas');
+      if (!canvas) {
+        console.warn("[Netplay] No canvas found for video capture");
+        return null;
+      }
+
+      // Create a video stream from canvas
+      const stream = canvas.captureStream(30); // 30 FPS
+      const videoTrack = stream.getVideoTracks()[0];
+
+      if (videoTrack) {
+        console.log("[Netplay] Canvas video captured:", {
+          width: canvas.width,
+          height: canvas.height,
+          frameRate: 30
+        });
+        return videoTrack;
+      } else {
+        console.warn("[Netplay] No video track available from canvas");
+        return null;
+      }
+    } catch (error) {
+      console.error("[Netplay] Failed to capture canvas video:", error);
+      return null;
+    }
+  }
+
+  // Capture audio for netplay streaming
+  async netplayCaptureAudio() {
+    try {
+      // Try to capture system audio (may not be available in all browsers)
+      const stream = await navigator.mediaDevices.getDisplayMedia({
+        video: false,
+        audio: true
+      });
+
+      const audioTrack = stream.getAudioTracks()[0];
+      if (audioTrack) {
+        console.log("[Netplay] Audio captured from display");
+        return audioTrack;
+      }
+    } catch (error) {
+      console.log("[Netplay] Display audio capture not available, using emulator audio if possible");
+    }
+
+    // Fallback: try to create a silent audio track or use emulator audio
+    try {
+      const audioContext = new (window.AudioContext || window.webkitAudioContext)();
+      const oscillator = audioContext.createOscillator();
+      const destination = audioContext.createMediaStreamDestination();
+
+      oscillator.connect(destination);
+      oscillator.start();
+
+      const audioTrack = destination.stream.getAudioTracks()[0];
+      if (audioTrack) {
+        // Stop the oscillator immediately - we just needed it to create the track
+        oscillator.stop();
+        console.log("[Netplay] Created silent audio track");
+        return audioTrack;
+      }
+    } catch (error) {
+      console.warn("[Netplay] Could not create audio track:", error);
+    }
+
+    return null;
   }
 
   createCheatsMenu() {

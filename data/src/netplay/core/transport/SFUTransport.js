@@ -13,14 +13,19 @@ class SFUTransport {
   /**
    * @param {Object} config - Configuration
    * @param {Object} socketTransport - SocketTransport instance
+   * @param {Object} dataChannelManager - DataChannelManager instance
    */
-  constructor(config = {}, socketTransport) {
+  constructor(config = {}, socketTransport, dataChannelManager = null) {
     this.config = config;
     this.socket = socketTransport;
+    this.dataChannelManager = dataChannelManager;
     this.device = null;
     this.mediasoupClient = null;
     this.routerRtpCapabilities = null;
     this.useSFU = false;
+
+    // SFU state - undefined means not initialized yet
+    this.useSFU = undefined;
 
     // Transports
     this.sendTransport = null;
@@ -43,32 +48,54 @@ class SFUTransport {
    * @returns {Promise<boolean>} True if SFU is available and initialized
    */
   async initialize() {
+    console.log("[SFUTransport] initialize() called, useSFU:", this.useSFU);
     if (this.useSFU !== undefined) {
+      console.log("[SFUTransport] Already initialized, returning cached result:", this.useSFU);
       return this.useSFU;
     }
 
+    console.log("[SFUTransport] Checking socket connection...");
     if (!this.socket || !this.socket.isConnected()) {
       console.warn("[SFUTransport] Cannot initialize: Socket not connected");
       this.useSFU = false;
       return false;
     }
+    console.log("[SFUTransport] Socket is connected, proceeding with SFU initialization");
 
     try {
       // Check if SFU is available
+      console.log("[SFUTransport] Checking SFU availability...");
       const available = await new Promise((resolve) => {
-        this.socket.emit("sfu-available", {}, (resp) =>
-          resolve(resp && resp.available)
-        );
+        const timeout = setTimeout(() => {
+          console.warn("[SFUTransport] SFU availability check timed out");
+          resolve(false);
+        }, 5000); // 5 second timeout
+
+        this.socket.emit("sfu-available", {}, (resp) => {
+          clearTimeout(timeout);
+          console.log("[SFUTransport] SFU availability response:", resp);
+          resolve(resp && resp.available);
+        });
       });
 
       if (!available) {
+        console.warn("[SFUTransport] SFU server reports not available");
         this.useSFU = false;
         return false;
       }
+      console.log("[SFUTransport] SFU server reports available");
 
-      // Get mediasoup client from window (must be loaded separately)
+      // Get mediasoup client from window or global scope (must be loaded separately)
+      console.log("[SFUTransport] Checking for mediasoup-client...");
+      console.log("[SFUTransport] window.mediasoupClient:", typeof window.mediasoupClient);
+      console.log("[SFUTransport] window.mediasoup:", typeof window.mediasoup);
+      console.log("[SFUTransport] global mediasoupClient:", typeof mediasoupClient);
+
       this.mediasoupClient =
-        window.mediasoupClient || window.mediasoup || null;
+        window.mediasoupClient ||
+        window.mediasoup ||
+        (typeof mediasoupClient !== "undefined" ? mediasoupClient : null);
+
       if (!this.mediasoupClient) {
         console.warn(
           "[SFUTransport] mediasoup-client not available in browser; SFU disabled."
@@ -76,6 +103,7 @@ class SFUTransport {
         this.useSFU = false;
         return false;
       }
+      console.log("[SFUTransport] Found mediasoup-client:", typeof this.mediasoupClient);
 
       // Create device
       this.device = new this.mediasoupClient.Device();
@@ -99,7 +127,8 @@ class SFUTransport {
       console.log("[SFUTransport] SFU available and mediasoup-client initialized");
       return true;
     } catch (err) {
-      console.warn("[SFUTransport] SFU initialization failed:", err);
+      console.error("[SFUTransport] SFU initialization failed:", err);
+      console.error("[SFUTransport] Error stack:", err.stack);
       this.useSFU = false;
       return false;
     }
@@ -192,25 +221,45 @@ class SFUTransport {
    * @returns {Promise<void>}
    */
   async createTransports(isHost) {
+    // Check if we need to re-initialize SFU
     if (!this.useSFU || !this.device || !this.socket.isConnected()) {
-      console.warn("[SFUTransport] Cannot create transports: Not ready");
-      return;
+      console.log("[SFUTransport] Not ready, attempting to re-initialize SFU...");
+
+      // Try to re-initialize if socket is connected
+      if (this.socket && this.socket.isConnected()) {
+        const reInitSuccess = await this.initialize();
+        if (!reInitSuccess) {
+          console.warn("[SFUTransport] SFU re-initialization failed");
+          return;
+        }
+        console.log("[SFUTransport] SFU re-initialized successfully");
+      } else {
+        console.warn("[SFUTransport] Cannot create transports: Socket not connected");
+        return;
+      }
     }
 
     const role = isHost ? "send" : "recv";
 
-    // Wait for readiness
+    // Wait for readiness (with re-init capability)
     const ready = await this.waitFor(
-      () =>
-        this.useSFU &&
-        this.device &&
-        this.socket.isConnected(),
+      () => {
+        // If we become unready during wait, try to re-init
+        if (!this.useSFU || !this.device || !this.socket.isConnected()) {
+          console.log("[SFUTransport] Lost readiness during wait, re-initializing...");
+          this.initialize().catch(err =>
+            console.warn("[SFUTransport] Re-init during wait failed:", err)
+          );
+          return false;
+        }
+        return true;
+      },
       5000,
       200
     );
 
     if (!ready) {
-      console.warn("[SFUTransport] Not ready for transport creation");
+      console.warn("[SFUTransport] Not ready for transport creation after wait");
       return;
     }
 
@@ -452,6 +501,145 @@ class SFUTransport {
    */
   isAvailable() {
     return this.useSFU === true;
+  }
+
+  /**
+   * Set DataChannelManager instance.
+   * @param {Object} dataChannelManager - DataChannelManager instance
+   */
+  setDataChannelManager(dataChannelManager) {
+    this.dataChannelManager = dataChannelManager;
+  }
+
+  /**
+   * Create video producer (host only).
+   * @param {MediaStreamTrack} videoTrack - Video track from canvas/screen capture
+   * @returns {Promise<Object>} Video producer
+   */
+  async createVideoProducer(videoTrack) {
+    if (!this.useSFU || !this.sendTransport || !this.device) {
+      throw new Error("SFU not available or send transport not created");
+    }
+
+    try {
+      // Pick codec
+      const codec = this.pickVideoCodec();
+      if (!codec) {
+        throw new Error("No supported video codec available");
+      }
+
+      // Create producer
+      this.videoProducer = await this.sendTransport.produce({
+        track: videoTrack,
+        codec: codec,
+      });
+
+      console.log("[SFUTransport] Created video producer:", {
+        id: this.videoProducer.id,
+        codec: codec.mimeType,
+      });
+
+      return this.videoProducer;
+    } catch (error) {
+      console.error("[SFUTransport] Failed to create video producer:", error);
+      throw error;
+    }
+  }
+
+  /**
+   * Create audio producer (host only).
+   * @param {MediaStreamTrack} audioTrack - Audio track
+   * @returns {Promise<Object>} Audio producer
+   */
+  async createAudioProducer(audioTrack) {
+    if (!this.useSFU || !this.sendTransport || !this.device) {
+      throw new Error("SFU not available or send transport not created");
+    }
+
+    try {
+      // Create producer
+      this.audioProducer = await this.sendTransport.produce({
+        track: audioTrack,
+        codecOptions: {
+          opusStereo: true,
+          opusDtx: true,
+        },
+      });
+
+      console.log("[SFUTransport] Created audio producer:", {
+        id: this.audioProducer.id,
+      });
+
+      return this.audioProducer;
+    } catch (error) {
+      console.error("[SFUTransport] Failed to create audio producer:", error);
+      throw error;
+    }
+  }
+
+  /**
+   * Create data producer for input relay (host only).
+   * @returns {Promise<Object>} Data producer
+   */
+  async createDataProducer() {
+    if (!this.useSFU || !this.sendTransport || !this.device) {
+      throw new Error("SFU not available or send transport not created");
+    }
+
+    try {
+      // Create data producer
+      this.dataProducer = await this.sendTransport.produceData({
+        ordered: false, // Unordered for better performance
+        maxPacketLifeTime: 3000, // 3 second TTL for reliability
+      });
+
+      console.log("[SFUTransport] Created data producer:", {
+        id: this.dataProducer.id,
+      });
+
+      // Set up data producer in DataChannelManager
+      if (this.dataChannelManager) {
+        this.dataChannelManager.setDataProducer(this.dataProducer);
+      }
+
+      return this.dataProducer;
+    } catch (error) {
+      console.error("[SFUTransport] Failed to create data producer:", error);
+      throw error;
+    }
+  }
+
+  /**
+   * Create consumers for remote video/audio (clients only).
+   * @param {string} producerId - Producer ID to consume
+   * @param {string} kind - "video" or "audio"
+   * @returns {Promise<Object>} Consumer
+   */
+  async createConsumer(producerId, kind) {
+    if (!this.useSFU || !this.recvTransport || !this.device) {
+      throw new Error("SFU not available or recv transport not created");
+    }
+
+    try {
+      // Create consumer
+      const consumer = await this.recvTransport.consume({
+        producerId: producerId,
+        rtpCapabilities: this.device.rtpCapabilities,
+      });
+
+      // Store consumer
+      this.consumers.set(producerId, consumer);
+
+      console.log(`[SFUTransport] Created ${kind} consumer:`, {
+        producerId,
+        consumerId: consumer.id,
+      });
+
+      return consumer;
+    } catch (error) {
+      console.error(`[SFUTransport] Failed to create ${kind} consumer:`, error);
+      throw error;
+    }
   }
 
   /**
