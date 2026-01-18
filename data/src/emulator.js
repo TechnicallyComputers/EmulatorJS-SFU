@@ -8765,37 +8765,8 @@ class EmulatorJS {
       this.netplay = {};
     }
 
-    // Initialize NetplayEngine if available (for room listing)
-    if (!this.netplay.engine && NetplayEngineClass && EmulatorJSAdapterClass) {
-      console.log("[Netplay] Initializing NetplayEngine for room listing...");
-
-      try {
-        const adapter = new EmulatorJSAdapterClass(this);
-
-        // Create minimal config for room listing
-        const engineConfig = {
-          netplayUrl: window.EJS_netplayUrl || this.config?.netplayUrl,
-          gameId: this.config?.gameId || "",
-          callbacks: {
-            onSocketConnect: (socketId) => {
-              console.log("[Netplay] Engine socket connected for room listing:", socketId);
-            },
-            onSocketError: (error) => {
-              console.warn("[Netplay] Engine socket error:", error);
-            },
-            onSocketDisconnect: (reason) => {
-              console.log("[Netplay] Engine socket disconnected:", reason);
-            },
-          }
-        };
-
-        this.netplay.engine = new NetplayEngineClass(adapter, engineConfig);
-        console.log("[Netplay] NetplayEngine created for room listing");
-      } catch (error) {
-        console.warn("[Netplay] Failed to initialize NetplayEngine for room listing:", error);
-        // Continue without engine - updateList will fail gracefully
-      }
-    }
+    // NetplayEngine for room listing will be created on-demand in updateList
+    // Don't create it here to avoid conflicts with main netplay engine
 
     // Define updateList function for refreshing room lists
     if (!this.netplay.updateList) {
@@ -8813,15 +8784,54 @@ class EmulatorJS {
             console.log("[Netplay] updateRooms called, fetching room list...");
 
             try {
-              // Use NetplayEngine for room listing
-              if (!this.netplay.engine) {
-                console.error("[Netplay] NetplayEngine not available for room listing");
-                this.netplayUpdateRoomTable([]); // Show empty list
-                return;
+              // Use existing engine if available, otherwise create room listing engine
+              let targetEngine;
+              if (this.netplay.engine) {
+                // Use existing engine for room listing
+                console.log("[Netplay] Using existing engine for room listing");
+                targetEngine = this.netplay.engine;
+              } else {
+                // No engine exists, create room listing engine
+                console.log("[Netplay] Creating NetplayEngine for room listing...");
+                if (!NetplayEngineClass || !EmulatorJSAdapterClass) {
+                  console.error("[Netplay] NetplayEngine classes not available for room listing");
+                  this.netplayUpdateRoomTable([]); // Show empty list
+                  return;
+                }
+
+                try {
+                  const adapter = new EmulatorJSAdapterClass(this);
+
+                  // Create minimal config for room listing
+                  const engineConfig = {
+                    netplayUrl: window.EJS_netplayUrl || this.config?.netplayUrl,
+                    gameId: this.config?.gameId || "",
+                    isRoomListing: true, // Flag to indicate this is for room listing only
+                    callbacks: {
+                      onSocketConnect: (socketId) => {
+                        console.log("[Netplay] Engine socket connected for room listing:", socketId);
+                      },
+                      onSocketError: (error) => {
+                        console.warn("[Netplay] Engine socket error:", error);
+                      },
+                      onSocketDisconnect: (reason) => {
+                        console.log("[Netplay] Engine socket disconnected:", reason);
+                      },
+                    }
+                  };
+
+                  targetEngine = new NetplayEngineClass(adapter, engineConfig);
+                  this.netplay.engine = targetEngine;
+                  console.log(`[Netplay] NetplayEngine:${targetEngine.id} created for room listing`);
+                } catch (error) {
+                  console.warn("[Netplay] Failed to create NetplayEngine for room listing:", error);
+                  this.netplayUpdateRoomTable([]); // Show empty list
+                  return;
+                }
               }
 
               console.log("[Netplay] Using NetplayEngine.listRooms()");
-              const rooms = await this.netplay.engine.listRooms();
+              const rooms = await targetEngine.listRooms();
               console.log("[Netplay] NetplayEngine returned rooms:", rooms);
 
               // Log room metadata for debugging
@@ -9589,6 +9599,8 @@ class EmulatorJS {
       try {
         const result = await this.netplay.engine.createRoom(roomName, maxPlayers, password, playerInfo);
         console.log("[Netplay] Room creation successful via engine:", result);
+
+        // Keep the room listing engine - it will be upgraded to a main engine
 
         // Store room info for later use
         this.netplay.currentRoomId = result.room_id || result.id;
@@ -10533,9 +10545,60 @@ class EmulatorJS {
       console.log("[Netplay] Set up netplay.simulateInput");
     }
 
-    // If NetplayEngine is already initialized and connected, skip legacy socket setup
-    if (this.netplay.engine && this.netplay.engine.isInitialized()) {
-      console.log("[Netplay] NetplayEngine already initialized, skipping legacy socket setup");
+    // Check if we have an existing engine that can be upgraded
+    const hasExistingEngine = this.netplay.engine && this.netplay.engine.isInitialized();
+    const existingIsRoomListing = this.netplay.engine?.config?.isRoomListing === true;
+    const existingIsMain = this.netplay.engine?.config?.isRoomListing === false;
+
+    console.log(`[Netplay] Checking existing engine: exists=${!!this.netplay.engine}, initialized=${hasExistingEngine}, isRoomListing=${existingIsRoomListing}, isMain=${existingIsMain}`);
+
+    if (existingIsMain) {
+      console.log("[Netplay] Main NetplayEngine already initialized, skipping setup");
+      return;
+    }
+
+    // If we have a room listing engine, upgrade it to a main engine
+    if (hasExistingEngine && existingIsRoomListing) {
+      console.log("[Netplay] Upgrading room listing engine to main engine");
+      // Update the engine's config to main engine settings
+      this.netplay.engine.config.isRoomListing = false;
+      this.netplay.engine.config.callbacks = {
+        onSocketConnect: (socketId) => {
+          console.log("[Netplay] Socket connected:", socketId);
+        },
+        onSocketError: (error) => {
+          console.error("[Netplay] Socket error:", error);
+        },
+        onSocketDisconnect: (reason) => {
+          console.log("[Netplay] Socket disconnected:", reason);
+        },
+        onUsersUpdated: (users) => {
+          console.log("[Netplay] 🔔 CALLBACK onUsersUpdated triggered:", Object.keys(users || {}));
+          console.log("[Netplay] Calling netplayUpdatePlayerList with users");
+          this.netplayUpdatePlayerList({ players: users });
+          console.log("[Netplay] netplayUpdatePlayerList called");
+        },
+        onRoomClosed: (data) => {
+          console.log("[Netplay] Room closed:", data);
+        }
+      };
+
+      // Update the RoomManager's config as well
+      if (this.netplay.engine.roomManager) {
+        console.log("[Netplay] Updating RoomManager config for main engine");
+        console.log(`[Netplay] RoomManager config before update: isRoomListing=${this.netplay.engine.roomManager.config.isRoomListing}`);
+        this.netplay.engine.roomManager.config.isRoomListing = false;
+        this.netplay.engine.roomManager.config.callbacks = this.netplay.engine.config.callbacks;
+        console.log(`[Netplay] RoomManager config after update: isRoomListing=${this.netplay.engine.roomManager.config.isRoomListing}`);
+      }
+
+      // Re-setup event listeners with the new config
+      if (this.netplay.engine.roomManager) {
+        console.log("[Netplay] Re-setting up room manager event listeners for main engine");
+        this.netplay.engine.roomManager.setupEventListeners();
+      }
+
+      console.log("[Netplay] Engine upgraded to main engine successfully");
       return;
     }
 
@@ -10607,27 +10670,13 @@ class EmulatorJS {
         sfuUrl: socketUrl, // Pass the SFU URL so the engine can create the transport
         roomName,
         playerIndex: this.netplay.localSlot || 0,
+        isRoomListing: false, // This is the main netplay engine
         callbacks: {
           onSocketConnect: (socketId) => {
             console.log("[Netplay] Socket connected:", socketId);
 
-            // Set up event listeners now that socket is connected (only if engine is initialized)
-            if (engineInitialized) {
-              const transport = engine.socketTransport;
-              if (transport) {
-                transport.on("users-updated", (data) => {
-                  console.log("[Netplay] Users updated event received:", data);
-                  // SFU sends: { roomName, userCount, users }
-                  if (data.users) {
-                    this.netplayUpdatePlayerList({ players: data.users });
-                  }
-                });
-
-                transport.on("data-message", (data) => {
-                  console.log("[Netplay] Data message received:", data);
-                });
-              }
-            }
+            // Event listeners are now handled by NetplayEngine's callback system
+            // The onUsersUpdated callback in the engine config will handle player table updates
 
             // Now join the room via Socket.IO
             setTimeout(() => this.netplayJoinRoomViaSocket(roomName), 100);
@@ -10642,6 +10691,7 @@ class EmulatorJS {
             console.log("[Netplay] 🔔 CALLBACK onUsersUpdated triggered:", Object.keys(users || {}));
             console.log("[Netplay] Calling netplayUpdatePlayerList with users");
             this.netplayUpdatePlayerList({ players: users });
+            console.log("[Netplay] netplayUpdatePlayerList called");
           },
           onRoomClosed: (data) => {
             console.log("[Netplay] Room closed:", data);
@@ -10689,11 +10739,12 @@ class EmulatorJS {
         await this.netplay.transport.connect(`wss://${socketBaseUrl}`);
       }
 
-      // Store references
+      // Store references - assign the main engine if initialized (overwrites room listing engine)
       if (engineInitialized) {
+        this.netplay.engine = engine;
         this.netplay.transport = engine.socketTransport;
         this.netplay.adapter = adapter;
-        this.netplay.engine = engine;
+        console.log(`[Netplay] Assigned main NetplayEngine:${engine.id} (initialized: ${engineInitialized})`);
         // NetplayEngine handles its own transport connection
       } else {
         // Connect the basic transport (fallback case)
@@ -10766,6 +10817,7 @@ class EmulatorJS {
 
   // Update player list display
   netplayUpdatePlayerList(data) {
+    console.log("[Netplay] === netplayUpdatePlayerList CALLED ===");
     console.log("[Netplay] netplayUpdatePlayerList called with:", {
       hasPlayers: !!data.players,
       playerCount: data.players ? Object.keys(data.players).length : 0,

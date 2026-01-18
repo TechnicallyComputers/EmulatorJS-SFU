@@ -291,7 +291,7 @@ class RoomManager {
    * Setup Socket.IO event listeners for room events.
    */
   setupEventListeners() {
-    console.log("[RoomManager] Setting up event listeners");
+    console.log(`[RoomManager] Setting up event listeners, isRoomListing=${this.config.isRoomListing}`);
 
     // Listen for player join/leave events
     this.socket.on("users-updated", (users) => {
@@ -322,6 +322,8 @@ class RoomManager {
       if (this.config.callbacks?.onUsersUpdated) {
         console.log("[RoomManager] Calling onUsersUpdated callback");
         this.config.callbacks.onUsersUpdated(users);
+      } else {
+        console.log("[RoomManager] No onUsersUpdated callback available, skipping UI update");
       }
     });
 

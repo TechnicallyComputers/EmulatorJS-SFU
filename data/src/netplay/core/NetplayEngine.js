@@ -33,6 +33,12 @@ class NetplayEngine {
   constructor(emulatorAdapter, config = {}) {
     this.emulator = emulatorAdapter;
     this.config = config || {};
+    this.id = Math.random().toString(36).substr(2, 9); // Add unique ID for debugging
+    console.log(`[NetplayEngine:${this.id}] Constructor called with config:`, {
+      hasCallbacks: !!config.callbacks,
+      callbackKeys: config.callbacks ? Object.keys(config.callbacks) : [],
+      hasOnUsersUpdated: !!(config.callbacks?.onUsersUpdated)
+    });
 
     // Subsystems (initialized in initialize())
     this.configManager = null;
@@ -203,7 +209,7 @@ class NetplayEngine {
       // 13. Room Manager
       const roomCallbacks = {
         onUsersUpdated: (users) => {
-          console.log("[NetplayEngine] roomCallbacks.onUsersUpdated called with users:", Object.keys(users || {}));
+          console.log(`[NetplayEngine:${this.id}] roomCallbacks.onUsersUpdated called with users:`, Object.keys(users || {}));
 
           // Update player manager
           if (this.playerManager) {
@@ -213,10 +219,10 @@ class NetplayEngine {
           }
 
           if (this.config.callbacks?.onUsersUpdated) {
-            console.log("[NetplayEngine] Calling config.callbacks.onUsersUpdated");
+            console.log(`[NetplayEngine:${this.id}] Calling config.callbacks.onUsersUpdated with users:`, Object.keys(users || {}));
             this.config.callbacks.onUsersUpdated(users);
           } else {
-            console.warn("[NetplayEngine] config.callbacks.onUsersUpdated not available");
+            console.warn(`[NetplayEngine:${this.id}] config.callbacks.onUsersUpdated not available`);
           }
         },
         onRoomClosed: (data) => {
