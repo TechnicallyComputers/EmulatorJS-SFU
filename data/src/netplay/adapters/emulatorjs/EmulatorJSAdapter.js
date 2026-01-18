@@ -11,12 +11,10 @@
 
 // #region agent log
 try {
-  fetch("http://127.0.0.1:7242/ingest/22e800bc-6bc6-4492-ae2b-c74b05fdebc4",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({location:"EmulatorJSAdapter.js:11",message:"EmulatorJSAdapter.js script executing",data:{},timestamp:Date.now(),sessionId:"debug-session",runId:"run1",hypothesisId:"C"})}).catch((e)=>{console.error("Fetch error:",e)});
 } catch(e) {
   console.error("Error in EmulatorJSAdapter.js instrumentation:", e);
 }
 // #endregion
-console.log("[EmulatorJSAdapter] Script loaded and executing");
 
 class EmulatorJSAdapter {
   /**
@@ -242,7 +240,6 @@ class EmulatorJSAdapter {
 // Direct assignment - browser environment always has window
 // #region agent log
 try {
-  fetch('http://127.0.0.1:7242/ingest/22e800bc-6bc6-4492-ae2b-c74b05fdebc4',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'EmulatorJSAdapter.js:233',message:'BEFORE assignment - class exists check',data:{classExists:typeof EmulatorJSAdapter!=='undefined',classType:typeof EmulatorJSAdapter},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'A'})}).catch((e)=>{console.error('Fetch error:',e)});
 } catch(e) {
   console.error('Error before assignment:', e);
 }
@@ -250,7 +247,6 @@ try {
 window.EmulatorJSAdapter = EmulatorJSAdapter;
 // #region agent log
 try {
-  fetch('http://127.0.0.1:7242/ingest/22e800bc-6bc6-4492-ae2b-c74b05fdebc4',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'EmulatorJSAdapter.js:236',message:'AFTER assignment - verification',data:{assigned:typeof window.EmulatorJSAdapter!=='undefined',assignedType:typeof window.EmulatorJSAdapter},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'A'})}).catch((e)=>{console.error('Fetch error:',e)});
 } catch(e) {
   console.error('Error after assignment:', e);
 }

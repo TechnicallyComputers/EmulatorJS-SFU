@@ -135,7 +135,7 @@ function hideOverlay(type) {}
  * - MediaStream becomes platform-specific stream interface
  * - Callbacks use language-native patterns (function pointers, interfaces, closures)
  */
-export default {
+window.IEmulator = {
   simulateInput,
   getCurrentFrame,
   setCurrentFrame,

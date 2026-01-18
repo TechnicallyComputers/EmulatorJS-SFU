@@ -20,12 +20,10 @@
 
 // #region agent log
 try {
-  fetch('http://127.0.0.1:7242/ingest/22e800bc-6bc6-4492-ae2b-c74b05fdebc4',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'NetplayEngine.js:21',message:'NetplayEngine.js script executing',data:{},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'C'})}).catch((e)=>{console.error('Fetch error:',e)});
 } catch(e) {
   console.error('Error in NetplayEngine.js instrumentation:', e);
 }
 // #endregion
-console.log('[NetplayEngine] Script loaded and executing');
 
 class NetplayEngine {
   /**
@@ -395,7 +393,6 @@ class NetplayEngine {
 // Direct assignment - browser environment always has window
 // #region agent log
 try {
-  fetch('http://127.0.0.1:7242/ingest/22e800bc-6bc6-4492-ae2b-c74b05fdebc4',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'NetplayEngine.js:387',message:'BEFORE assignment - class exists check',data:{classExists:typeof NetplayEngine!=='undefined',classType:typeof NetplayEngine,windowExists:typeof window!=='undefined'},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'A'})}).catch((e)=>{console.error('Fetch error:',e)});
 } catch(e) {
   console.error('Error before assignment:', e);
 }
@@ -403,13 +400,11 @@ try {
 window.NetplayEngine = NetplayEngine;
 // #region agent log
 try {
-  fetch('http://127.0.0.1:7242/ingest/22e800bc-6bc6-4492-ae2b-c74b05fdebc4',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'NetplayEngine.js:390',message:'AFTER assignment - verification',data:{assigned:typeof window.NetplayEngine!=='undefined',assignedType:typeof window.NetplayEngine},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'A'})}).catch((e)=>{console.error('Fetch error:',e)});
 } catch(e) {
   console.error('Error after assignment:', e);
 }
 // #endregion
 // #region agent log
-fetch('http://127.0.0.1:7242/ingest/22e800bc-6bc6-4492-ae2b-c74b05fdebc4',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'NetplayEngine.js:389',message:'window.NetplayEngine assigned',data:{assigned:typeof window.NetplayEngine!=='undefined'},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'A'})}).catch(()=>{});
 // #endregion
 
 // Also support CommonJS for Node.js environments (if needed)

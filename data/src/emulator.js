@@ -8608,13 +8608,8 @@ class EmulatorJS {
       opt.innerText = "P" + (i + 1);
       slotSelect.appendChild(opt);
     }
-    const slotCurrent = this.createElement("span");
-    slotCurrent.style.opacity = "0.85";
-    slotCurrent.style.marginLeft = "4px";
-
     joinedControls.appendChild(slotLabel);
     joinedControls.appendChild(slotSelect);
-    joinedControls.appendChild(slotCurrent);
 
     joined.appendChild(title2);
     joined.appendChild(password);
@@ -8637,6 +8632,10 @@ class EmulatorJS {
         }
       }
       if (this.netplayMenu) this.netplayMenu.style.display = "";
+      // Hide player slot selector in lobby view
+      if (this.netplay && this.netplay.slotSelect && this.netplay.slotSelect.parentElement) {
+        this.netplay.slotSelect.parentElement.style.display = "none";
+      }
       if (!this.netplay || (this.netplay && !this.netplay.name)) {
         this.netplay = {
           table: tbody,
@@ -8645,7 +8644,6 @@ class EmulatorJS {
           createButton: createButton,
           tabs: [rooms, joined],
           slotSelect: slotSelect,
-          slotCurrent: slotCurrent,
           ...this.netplay,
         };
         const popups = this.createSubPopup();
@@ -8697,10 +8695,6 @@ class EmulatorJS {
               ? this.netplayPreferredSlot
               : 0;
           this.netplay.slotSelect.value = String(Math.max(0, Math.min(3, s)));
-          if (this.netplay.slotCurrent) {
-            this.netplay.slotCurrent.innerText =
-              "(" + "P" + (Math.max(0, Math.min(3, s)) + 1) + ")";
-          }
 
           if (!this.netplay._slotSelectWired) {
             this.netplay._slotSelectWired = true;
@@ -8710,13 +8704,11 @@ class EmulatorJS {
               this.netplay.localSlot = slot;
               this.netplayPreferredSlot = slot;
               window.EJS_NETPLAY_PREFERRED_SLOT = slot;
-              if (this.netplay.slotCurrent) {
-                this.netplay.slotCurrent.innerText =
-                  "(" + "P" + (slot + 1) + ")";
-              }
               if (this.netplay.extra) {
                 this.netplay.extra.player_slot = slot;
               }
+              // Update player table with new slot
+              this.netplayUpdatePlayerSlot(slot);
               if (this.settings) {
                 this.settings.netplayPreferredSlot = String(slot);
               }
@@ -8758,11 +8750,6 @@ class EmulatorJS {
       this.netplay = {};
     }
 
-    // Only log once when netplay functions are first defined
-    if (!this.netplay._functionsDefined) {
-      console.log("[EmulatorJS] Netplay functions initialized");
-      this.netplay._functionsDefined = true;
-    }
 
     // Define updateList function for refreshing room lists
     if (!this.netplay.updateList) {
@@ -8820,8 +8807,8 @@ class EmulatorJS {
         content.appendChild(header);
 
         // Create form content using proper CSS classes
-        const main = this.createElement("div");
-        main.classList.add("ejs_netplay_header");
+        const form = this.createElement("form");
+        form.classList.add("ejs_netplay_header");
 
         // Room name input
         const nameHead = this.createElement("strong");
@@ -8852,6 +8839,7 @@ class EmulatorJS {
         passInput.type = "password";
         passInput.name = "password";
         passInput.placeholder = "Leave empty for public room";
+        passInput.autocomplete = "off";
 
         // Spectators
         const spectatorHead = this.createElement("strong");
@@ -8904,13 +8892,21 @@ class EmulatorJS {
           syncModeSelect.appendChild(option);
         });
 
-        delaySyncOptions.appendChild(frameDelayHead);
-        delaySyncOptions.appendChild(this.createElement("br"));
-        delaySyncOptions.appendChild(frameDelaySelect);
-        delaySyncOptions.appendChild(this.createElement("br"));
-        delaySyncOptions.appendChild(syncModeHead);
-        delaySyncOptions.appendChild(this.createElement("br"));
-        delaySyncOptions.appendChild(syncModeSelect);
+        // Add Frame Delay field with consistent spacing
+        const frameDelayContainer = this.createElement("div");
+        frameDelayContainer.style.marginBottom = "8px";
+        frameDelayContainer.appendChild(frameDelayHead);
+        frameDelayContainer.appendChild(this.createElement("br"));
+        frameDelayContainer.appendChild(frameDelaySelect);
+        delaySyncOptions.appendChild(frameDelayContainer);
+
+        // Add Sync Mode field with consistent spacing
+        const syncModeContainer = this.createElement("div");
+        syncModeContainer.style.marginBottom = "8px";
+        syncModeContainer.appendChild(syncModeHead);
+        syncModeContainer.appendChild(this.createElement("br"));
+        syncModeContainer.appendChild(syncModeSelect);
+        delaySyncOptions.appendChild(syncModeContainer);
 
         // Add form elements with tighter spacing
         const addField = (label, element) => {
@@ -8919,7 +8915,7 @@ class EmulatorJS {
           fieldContainer.appendChild(label);
           fieldContainer.appendChild(this.createElement("br"));
           fieldContainer.appendChild(element);
-          main.appendChild(fieldContainer);
+          form.appendChild(fieldContainer);
         };
 
         addField(nameHead, nameInput);
@@ -8927,9 +8923,9 @@ class EmulatorJS {
         addField(passHead, passInput);
         addField(spectatorHead, spectatorSelect);
         addField(roomTypeHead, roomTypeSelect);
-        main.appendChild(delaySyncOptions);
+        form.appendChild(delaySyncOptions);
 
-        content.appendChild(main);
+        content.appendChild(form);
 
         // Add buttons at the bottom with proper spacing (like other netplay menus)
         content.appendChild(this.createElement("br"));
@@ -9132,6 +9128,35 @@ class EmulatorJS {
     this.netplay.isInDelaySyncLobby = false;
   }
 
+  // Restore normal bottom bar buttons (hide Delay Sync buttons)
+  restoreNormalBottomBar() {
+    if (!this.elements.bottomBar) return;
+
+    // Hide Delay Sync buttons
+    const bar = this.elements.bottomBar;
+    if (bar.delaySyncReady && bar.delaySyncReady[0]) {
+      bar.delaySyncReady[0].remove();
+      delete bar.delaySyncReady;
+    }
+    if (bar.delaySyncLaunch && bar.delaySyncLaunch[0]) {
+      bar.delaySyncLaunch[0].remove();
+      delete bar.delaySyncLaunch;
+    }
+    if (bar.delaySyncLeave && bar.delaySyncLeave[0]) {
+      bar.delaySyncLeave[0].remove();
+      delete bar.delaySyncLeave;
+    }
+
+    // Show normal buttons
+    Object.keys(this.elements.bottomBar).forEach(key => {
+      if (this.elements.bottomBar[key] && Array.isArray(this.elements.bottomBar[key])) {
+        this.elements.bottomBar[key].forEach(btn => {
+          if (btn && btn.style) btn.style.display = "";
+        });
+      }
+    });
+  }
+
   // Setup bottom bar buttons for Delay Sync mode
   setupDelaySyncBottomBar() {
     if (!this.elements.bottomBar) return;
@@ -9140,7 +9165,7 @@ class EmulatorJS {
     Object.keys(this.elements.bottomBar).forEach(key => {
       if (this.elements.bottomBar[key] && Array.isArray(this.elements.bottomBar[key])) {
         this.elements.bottomBar[key].forEach(btn => {
-          if (btn) btn.style.display = "none";
+          if (btn && btn.style) btn.style.display = "none";
         });
       }
     });
@@ -9155,7 +9180,7 @@ class EmulatorJS {
       readyBtn.innerText = "Ready";
       readyBtn.style.whiteSpace = "nowrap";
       readyBtn.onclick = () => this.netplayToggleReady();
-      this.elements.bottomBar.appendChild(readyBtn);
+      this.elements.menu.appendChild(readyBtn);
       bar.delaySyncReady = [readyBtn];
       this.netplay.readyButton = readyBtn;
     } else {
@@ -9170,7 +9195,7 @@ class EmulatorJS {
       launchBtn.style.whiteSpace = "nowrap";
       launchBtn.disabled = true;
       launchBtn.onclick = () => this.netplayLaunchGame();
-      this.elements.bottomBar.appendChild(launchBtn);
+      this.elements.menu.appendChild(launchBtn);
       bar.delaySyncLaunch = [launchBtn];
       this.netplay.launchButton = launchBtn;
     } else {
@@ -9184,7 +9209,7 @@ class EmulatorJS {
       leaveBtn.innerText = "Leave Room";
       leaveBtn.style.whiteSpace = "nowrap";
       leaveBtn.onclick = () => this.netplayLeaveRoom();
-      this.elements.bottomBar.appendChild(leaveBtn);
+      this.elements.menu.appendChild(leaveBtn);
       bar.delaySyncLeave = [leaveBtn];
     } else {
       bar.delaySyncLeave[0].style.display = "";
@@ -9491,31 +9516,51 @@ class EmulatorJS {
       this.netplay.passwordElem.style.display = password ? "" : "none";
     }
 
-    // Add player slot selector
-    if (!this.netplay.playerSlotSelect) {
-      const slotContainer = this.createElement("div");
-      slotContainer.classList.add("ejs_netplay_header");
+    // Show the existing player slot selector (centered)
+    if (this.netplay.slotSelect && this.netplay.slotSelect.parentElement) {
+      const slotContainer = this.netplay.slotSelect.parentElement;
+      slotContainer.style.display = "";
       slotContainer.style.marginTop = "10px";
+      slotContainer.style.marginBottom = "10px";
+      slotContainer.style.display = "flex";
+      slotContainer.style.justifyContent = "center";
+      slotContainer.style.alignItems = "center";
+    }
 
-      const slotLabel = this.createElement("strong");
-      slotLabel.innerText = "Player Slot: ";
-      const slotSelect = this.createElement("select");
-      for (let i = 1; i <= 4; i++) {
-        const option = this.createElement("option");
-        option.value = String(i - 1);
-        option.innerText = `P${i}`;
-        slotSelect.appendChild(option);
-      }
+    // Create player table for live stream
+    if (!this.netplay.liveStreamPlayerTable) {
+      const table = this.createElement("table");
+      table.classList.add("ejs_netplay_table");
+      table.style.width = "100%";
+      table.setAttribute("cellspacing", "0");
 
-      slotContainer.appendChild(slotLabel);
-      slotContainer.appendChild(slotSelect);
-      this.netplay.playerSlotSelect = slotSelect;
+      // Table header
+      const thead = this.createElement("thead");
+      const headerRow = this.createElement("tr");
+      ["Player", "Name", "Status"].forEach(text => {
+        const th = this.createElement("td");
+        th.innerText = text;
+        th.style.fontWeight = "bold"; // Make headers bold
+        th.style.textAlign = "center";
+        if (text === "Player" || text === "Status") th.style.width = "60px";
+        headerRow.appendChild(th);
+      });
+      thead.appendChild(headerRow);
+      table.appendChild(thead);
 
-      // Insert after password element
-      if (this.netplay.passwordElem && this.netplay.passwordElem.parentElement) {
-        this.netplay.passwordElem.parentElement.insertBefore(slotContainer, this.netplay.passwordElem.nextSibling);
+      // Table body
+      const tbody = this.createElement("tbody");
+      this.netplay.liveStreamPlayerTable = tbody;
+      table.appendChild(tbody);
+
+      // Insert table after player slot selector
+      if (this.netplay.slotSelect && this.netplay.slotSelect.parentElement) {
+        this.netplay.slotSelect.parentElement.parentElement.insertBefore(table, this.netplay.slotSelect.parentElement.nextSibling);
       }
     }
+
+    // Initialize live stream player table (just host for now)
+    this.netplayInitializeLiveStreamPlayers();
 
     // Hide create button and show leave/close buttons
     const buttons = this.netplayMenu.querySelectorAll("a.ejs_button");
@@ -9555,33 +9600,15 @@ class EmulatorJS {
       this.netplay.passwordElem.style.display = password ? "" : "none";
     }
 
-    // Add player slot selector above the table (inline layout)
-    if (!this.netplay.delaySyncPlayerSlotSelect) {
-      const slotContainer = this.createElement("div");
-      slotContainer.classList.add("ejs_netplay_header");
-      slotContainer.style.textAlign = "center";
+    // Show the existing player slot selector (centered)
+    if (this.netplay.slotSelect && this.netplay.slotSelect.parentElement) {
+      const slotContainer = this.netplay.slotSelect.parentElement;
+      slotContainer.style.display = "";
       slotContainer.style.marginTop = "10px";
       slotContainer.style.marginBottom = "10px";
-
-      const slotLabel = this.createElement("strong");
-      slotLabel.innerText = "Player Slot: ";
-      slotLabel.style.marginRight = "10px";
-      const slotSelect = this.createElement("select");
-      for (let i = 1; i <= 4; i++) {
-        const option = this.createElement("option");
-        option.value = String(i - 1);
-        option.innerText = `P${i}`;
-        slotSelect.appendChild(option);
-      }
-
-      slotContainer.appendChild(slotLabel);
-      slotContainer.appendChild(slotSelect);
-      this.netplay.delaySyncPlayerSlotSelect = slotSelect;
-
-      // Insert after password element
-      if (this.netplay.passwordElem && this.netplay.passwordElem.parentElement) {
-        this.netplay.passwordElem.parentElement.insertBefore(slotContainer, this.netplay.passwordElem.nextSibling);
-      }
+      slotContainer.style.display = "flex";
+      slotContainer.style.justifyContent = "center";
+      slotContainer.style.alignItems = "center";
     }
 
     // Create player table for delay sync
@@ -9600,6 +9627,7 @@ class EmulatorJS {
         th.style.fontWeight = "bold"; // Make headers bold
         if (text === "Ready") {
           th.style.textAlign = "right"; // Align Ready column to the right
+          th.style.width = "60px"; // Status column width
         } else {
           th.style.textAlign = "center";
         }
@@ -9615,8 +9643,8 @@ class EmulatorJS {
       table.appendChild(tbody);
 
       // Insert table after player slot selector
-      if (this.netplay.delaySyncPlayerSlotSelect && this.netplay.delaySyncPlayerSlotSelect.parentElement) {
-        this.netplay.delaySyncPlayerSlotSelect.parentElement.insertBefore(table, this.netplay.delaySyncPlayerSlotSelect.nextSibling);
+      if (this.netplay.slotSelect && this.netplay.slotSelect.parentElement) {
+        this.netplay.slotSelect.parentElement.parentElement.insertBefore(table, this.netplay.slotSelect.parentElement.nextSibling);
       }
     }
 
@@ -9649,56 +9677,273 @@ class EmulatorJS {
     const tbody = this.netplay.delaySyncPlayerTable;
     tbody.innerHTML = "";
 
-    // Host is always player 1 and ready by default
-    for (let i = 0; i < maxPlayers; i++) {
-      const row = this.createElement("tr");
+    // Initialize taken slots tracking
+    if (!this.netplay.takenSlots) {
+      this.netplay.takenSlots = new Set();
+    }
+    this.netplay.takenSlots.clear();
 
-      // Player column
-      const playerCell = this.createElement("td");
-      playerCell.innerText = `P${i + 1}`;
-      playerCell.style.textAlign = "center";
-      row.appendChild(playerCell);
+    // Initialize player list - only show host initially as P1
+    this.netplay.joinedPlayers = [{
+      slot: 0,
+      name: this.netplay.name || "Host",
+      ready: true
+    }];
 
-      // Name column
-      const nameCell = this.createElement("td");
-      nameCell.innerText = i === 0 ? (this.netplay.name || "Host") : "Waiting...";
-      nameCell.style.textAlign = "center";
-      row.appendChild(nameCell);
-
-      // Ready column
-      const readyCell = this.createElement("td");
-      readyCell.innerText = i === 0 ? "✅" : "⛔"; // Host starts ready
-      readyCell.style.textAlign = "right"; // Align to the right
-      readyCell.classList.add("ready-status");
-      row.appendChild(readyCell);
-
-      tbody.appendChild(row);
+    // Host is always P1
+    this.netplay.takenSlots.add(0);
+    this.netplay.localSlot = 0;
+    this.netplayPreferredSlot = 0;
+    if (this.netplay.slotSelect) {
+      this.netplay.slotSelect.value = "0";
     }
 
-    // Store ready states
+    // Create row for host only
+    this.netplayAddPlayerToTable(0);
+
+    // Initialize ready states array for maxPlayers
     this.netplay.playerReadyStates = new Array(maxPlayers).fill(false);
     this.netplay.playerReadyStates[0] = true; // Host starts ready
+
+    // Update slot selector to remove taken slots
+    this.netplayUpdateSlotSelector();
+  }
+
+  // Add a player to the delay sync table
+  netplayAddPlayerToTable(slot) {
+    if (!this.netplay.delaySyncPlayerTable) return;
+
+    const player = this.netplay.joinedPlayers.find(p => p.slot === slot);
+    if (!player) return;
+
+    const tbody = this.netplay.delaySyncPlayerTable;
+    const row = this.createElement("tr");
+
+    // Player column
+    const playerCell = this.createElement("td");
+    playerCell.innerText = `P${slot + 1}`;
+    playerCell.style.textAlign = "center";
+    row.appendChild(playerCell);
+
+    // Name column
+    const nameCell = this.createElement("td");
+    nameCell.innerText = player.name;
+    nameCell.style.textAlign = "center";
+    row.appendChild(nameCell);
+
+    // Ready column
+    const readyCell = this.createElement("td");
+    readyCell.innerText = player.ready ? "✅" : "⛔";
+    readyCell.style.textAlign = "right"; // Align to the right
+    readyCell.classList.add("ready-status");
+    row.appendChild(readyCell);
+
+    tbody.appendChild(row);
+  }
+
+  // Initialize live stream player table
+  netplayInitializeLiveStreamPlayers() {
+    if (!this.netplay.liveStreamPlayerTable) return;
+
+    const tbody = this.netplay.liveStreamPlayerTable;
+    tbody.innerHTML = "";
+
+    // Initialize taken slots tracking
+    if (!this.netplay.takenSlots) {
+      this.netplay.takenSlots = new Set();
+    }
+    this.netplay.takenSlots.clear();
+
+    // Host is always P1
+    this.netplay.takenSlots.add(0);
+    this.netplay.localSlot = 0;
+    this.netplayPreferredSlot = 0;
+    if (this.netplay.slotSelect) {
+      this.netplay.slotSelect.value = "0";
+    }
+
+    // Just show host for now
+    const row = this.createElement("tr");
+
+    // Player column
+    const playerCell = this.createElement("td");
+    playerCell.innerText = "P1";
+    playerCell.style.textAlign = "center";
+    row.appendChild(playerCell);
+
+    // Name column
+    const nameCell = this.createElement("td");
+    nameCell.innerText = this.netplay.name || "Host";
+    nameCell.style.textAlign = "center";
+    row.appendChild(nameCell);
+
+    // Status column
+    const statusCell = this.createElement("td");
+    statusCell.innerText = "Host";
+    statusCell.style.textAlign = "center";
+    row.appendChild(statusCell);
+
+    tbody.appendChild(row);
+
+    // Update slot selector to remove taken slots
+    this.netplayUpdateSlotSelector();
+  }
+
+  // Update player slot in table
+  netplayUpdatePlayerSlot(slot) {
+    // Update Delay Sync table if it exists
+    if (this.netplay.delaySyncPlayerTable && this.netplay.joinedPlayers) {
+      const hostPlayer = this.netplay.joinedPlayers.find(p => p.slot === 0);
+      if (hostPlayer) {
+        // Move from old slot to new slot
+        const oldSlot = hostPlayer.slot;
+        hostPlayer.slot = slot;
+
+        // Update taken slots
+        if (!this.netplay.takenSlots) this.netplay.takenSlots = new Set();
+        this.netplay.takenSlots.delete(oldSlot);
+        this.netplay.takenSlots.add(slot);
+
+        // Re-render the table
+        this.netplayInitializeDelaySyncPlayers(this.netplay.maxPlayers || 4);
+      }
+    }
+
+    // Update Live Stream table if it exists
+    if (this.netplay.liveStreamPlayerTable) {
+      const tbody = this.netplay.liveStreamPlayerTable;
+      if (tbody.children[0]) {
+        const playerCell = tbody.children[0].querySelector("td:first-child");
+        if (playerCell) {
+          playerCell.innerText = `P${slot + 1}`;
+        }
+      }
+    }
+
+    // Update slot selector to reflect taken slots
+    this.netplayUpdateSlotSelector();
+  }
+
+  // Update slot selector dropdown to remove taken slots
+  netplayUpdateSlotSelector() {
+    if (!this.netplay.slotSelect) return;
+
+    const select = this.netplay.slotSelect;
+    const currentValue = select.value;
+
+    // Clear all options
+    select.innerHTML = "";
+
+    // Add available slots (not taken)
+    for (let i = 0; i < 4; i++) {
+      if (!this.netplay.takenSlots || !this.netplay.takenSlots.has(i)) {
+        const opt = this.createElement("option");
+        opt.value = String(i);
+        opt.innerText = "P" + (i + 1);
+        select.appendChild(opt);
+      }
+    }
+
+    // Try to restore the current selection, or select the first available
+    if (select.querySelector(`option[value="${currentValue}"]`)) {
+      select.value = currentValue;
+    } else if (select.options.length > 0) {
+      select.value = select.options[0].value;
+      const newSlot = parseInt(select.value, 10);
+      this.netplay.localSlot = newSlot;
+      this.netplayPreferredSlot = newSlot;
+    }
+  }
+
+  // Get the lowest available player slot
+  netplayGetLowestAvailableSlot() {
+    if (!this.netplay.takenSlots) {
+      this.netplay.takenSlots = new Set();
+    }
+    for (let i = 0; i < 4; i++) {
+      if (!this.netplay.takenSlots.has(i)) {
+        return i;
+      }
+    }
+    return -1; // No slots available
+  }
+
+  // Add a joining player with auto-assigned slot
+  netplayAddJoiningPlayer(name) {
+    const availableSlot = this.netplayGetLowestAvailableSlot();
+    if (availableSlot === -1) return null; // No slots available
+
+    const newPlayer = {
+      slot: availableSlot,
+      name: name,
+      ready: false
+    };
+
+    if (!this.netplay.joinedPlayers) {
+      this.netplay.joinedPlayers = [];
+    }
+    this.netplay.joinedPlayers.push(newPlayer);
+    this.netplay.takenSlots.add(availableSlot);
+
+    // Add to Delay Sync table if it exists
+    if (this.netplay.delaySyncPlayerTable) {
+      this.netplayAddPlayerToTable(availableSlot);
+      // Update ready states array
+      if (this.netplay.playerReadyStates && availableSlot < this.netplay.playerReadyStates.length) {
+        this.netplay.playerReadyStates[availableSlot] = false;
+      }
+    }
+
+    // Update slot selector to remove the taken slot
+    this.netplayUpdateSlotSelector();
+
+    return newPlayer;
+  }
+
+  // Remove a player (when they leave)
+  netplayRemovePlayer(slot) {
+    if (!this.netplay.joinedPlayers) return;
+
+    // Remove from joined players
+    this.netplay.joinedPlayers = this.netplay.joinedPlayers.filter(p => p.slot !== slot);
+
+    // Free up the slot
+    if (this.netplay.takenSlots) {
+      this.netplay.takenSlots.delete(slot);
+    }
+
+    // Remove from Delay Sync table
+    if (this.netplay.delaySyncPlayerTable) {
+      // Re-render the entire table
+      this.netplayInitializeDelaySyncPlayers(this.netplay.maxPlayers || 4);
+    }
+
+    // Update slot selector to remove the taken slot
+    this.netplayUpdateSlotSelector();
   }
 
   // Toggle ready status
   netplayToggleReady() {
     if (!this.netplay.readyButton) return;
 
-    // For now, just toggle the host's ready status (index 0)
-    const currentReady = this.netplay.playerReadyStates[0];
-    this.netplay.playerReadyStates[0] = !currentReady;
+    // Toggle the host's ready status (slot 0)
+    const hostPlayer = this.netplay.joinedPlayers.find(p => p.slot === 0);
+    if (hostPlayer) {
+      hostPlayer.ready = !hostPlayer.ready;
+      this.netplay.playerReadyStates[0] = hostPlayer.ready;
+    }
 
     // Update UI
     const tbody = this.netplay.delaySyncPlayerTable;
     if (tbody && tbody.children[0]) {
       const readyCell = tbody.children[0].querySelector(".ready-status");
       if (readyCell) {
-        readyCell.innerText = this.netplay.playerReadyStates[0] ? "✅" : "⛔";
+        readyCell.innerText = hostPlayer.ready ? "✅" : "⛔";
       }
     }
 
     // Update button text
-    this.netplay.readyButton.innerText = this.netplay.playerReadyStates[0] ? "Not Ready" : "Ready";
+    this.netplay.readyButton.innerText = hostPlayer.ready ? "Not Ready" : "Ready";
 
     // Check if all players are ready to enable launch button
     this.netplayUpdateLaunchButton();
@@ -9706,9 +9951,10 @@ class EmulatorJS {
 
   // Update launch game button state
   netplayUpdateLaunchButton() {
-    if (!this.netplay.launchButton || !this.netplay.playerReadyStates) return;
+    if (!this.netplay.launchButton || !this.netplay.joinedPlayers) return;
 
-    const allReady = this.netplay.playerReadyStates.every(ready => ready);
+    // Check if all joined players are ready
+    const allReady = this.netplay.joinedPlayers.every(player => player.ready);
     this.netplay.launchButton.disabled = !allReady;
   }
 

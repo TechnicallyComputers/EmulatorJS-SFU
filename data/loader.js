@@ -1,7 +1,4 @@
 (async function () {
-  console.log("[Loader] ========================================");
-  console.log("[Loader] loader.js executing - START");
-  console.log("[Loader] ========================================");
   const scripts = [
     // Netplay modules first (in dependency order)
     "netplay/core/input/frameworks/SimpleController.js",
@@ -60,37 +57,10 @@
       })();
       // Debug logging for netplay modules
       if (file.includes("netplay")) {
-        console.log("[Loader] 📦 About to load netplay script:", file);
-        console.log("[Loader] 📦 Full URL will be:", script.src);
       }
       script.onload = () => {
         if (file.includes("netplay")) {
-          console.log("[Loader] ✅ Netplay script loaded successfully:", file);
           // Verify critical globals after loading key files
-          if (file === "netplay/core/NetplayEngine.js") {
-            const exists = typeof window.NetplayEngine !== "undefined";
-            console.log(
-              "[Loader] 🔍 NetplayEngine global check:",
-              exists ? "✅ EXISTS" : "❌ MISSING"
-            );
-            if (!exists) {
-              console.error(
-                "[Loader] ⚠️ WARNING: NetplayEngine.js loaded but window.NetplayEngine is undefined!"
-              );
-            }
-          }
-          if (file === "netplay/adapters/emulatorjs/EmulatorJSAdapter.js") {
-            const exists = typeof window.EmulatorJSAdapter !== "undefined";
-            console.log(
-              "[Loader] 🔍 EmulatorJSAdapter global check:",
-              exists ? "✅ EXISTS" : "❌ MISSING"
-            );
-            if (!exists) {
-              console.error(
-                "[Loader] ⚠️ WARNING: EmulatorJSAdapter.js loaded but window.EmulatorJSAdapter is undefined!"
-              );
-            }
-          }
         }
         resolve();
       };
@@ -157,18 +127,8 @@
     }
   }
 
-  console.log("[Loader] About to start loading", scripts.length, "scripts");
   if ("undefined" != typeof EJS_DEBUG_XX && true === EJS_DEBUG_XX) {
-    console.log("[Loader] Using DEBUG mode");
     for (let i = 0; i < scripts.length; i++) {
-      console.log(
-        "[Loader] Loading script",
-        i + 1,
-        "of",
-        scripts.length,
-        ":",
-        scripts[i]
-      );
       await loadScript(scripts[i]);
     }
     await loadStyle("emulator.css");
@@ -176,31 +136,11 @@
     // RomM uses the SFU fork primarily for netplay; it does not bundle cores.
     // Always load the non-minified runtime so core CDN fallbacks can be patched
     // without touching huge single-line minified bundles.
-    console.log("[Loader] Using non-minified mode (RomM default)");
     for (let i = 0; i < scripts.length; i++) {
-      console.log(
-        "[Loader] Loading script",
-        i + 1,
-        "of",
-        scripts.length,
-        ":",
-        scripts[i]
-      );
       await loadScript(scripts[i]);
     }
     await loadStyle("emulator.css");
   }
-  console.log("[Loader] ========================================");
-  console.log("[Loader] All scripts loaded, initializing EmulatorJS");
-  console.log(
-    "[Loader] Checking for NetplayEngine:",
-    typeof window.NetplayEngine
-  );
-  console.log(
-    "[Loader] Checking for EmulatorJSAdapter:",
-    typeof window.EmulatorJSAdapter
-  );
-  console.log("[Loader] ========================================");
   const config = {};
   config.gameUrl = window.EJS_gameUrl;
   config.dataPath = scriptPath;
