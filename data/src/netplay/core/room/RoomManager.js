@@ -18,7 +18,6 @@ class RoomManager {
     this.socket = socketTransport;
     this.config = config;
     this.sessionState = sessionState;
-    this.callbacks = config.callbacks || {};
   }
 
   /**
@@ -148,20 +147,27 @@ class RoomManager {
     this.sessionState.setHost(false);
     this.sessionState.setLocalPlayer(playerId, extra.player_name, playerId);
 
+    console.log(`[RoomManager] joinRoom called: roomName=${roomName}, playerId=${playerId}`);
+    console.log(`[RoomManager] Socket connected: ${this.socket.isConnected()}`);
+
     return new Promise((resolve, reject) => {
       // Ensure socket is connected
       if (!this.socket.isConnected()) {
+        console.warn("[RoomManager] Socket not connected, waiting for connection...");
         // Wait for connection (if callback is provided)
-        if (this.callbacks.onSocketReady) {
-          this.callbacks.onSocketReady(() => {
+        if (this.config.callbacks?.onSocketReady) {
+          this.config.callbacks.onSocketReady(() => {
+            console.log("[RoomManager] Socket ready, proceeding with join");
             this.emitJoinRoom(extra, password, resolve, reject);
           });
           return;
         }
+        console.error("[RoomManager] Socket not connected and no onSocketReady callback");
         reject(new Error("Socket not connected"));
         return;
       }
 
+      console.log("[RoomManager] Socket connected, proceeding with join");
       this.emitJoinRoom(extra, password, resolve, reject);
     });
   }
@@ -175,6 +181,12 @@ class RoomManager {
    * @param {Function} reject - Promise reject
    */
   emitJoinRoom(extra, password, resolve, reject) {
+    console.log("[RoomManager] Emitting join-room event:", {
+      roomName: extra.room_name,
+      playerName: extra.player_name,
+      playerId: extra.userid
+    });
+
     this.socket.emit(
       "join-room",
       {
@@ -182,6 +194,7 @@ class RoomManager {
         password: password,
       },
       (error, response) => {
+        console.log("[RoomManager] join-room callback received:", { error, responseKeys: response ? Object.keys(response) : null });
         if (error) {
           // Handle auth errors specially
           if (
@@ -278,32 +291,44 @@ class RoomManager {
    * Setup Socket.IO event listeners for room events.
    */
   setupEventListeners() {
+    console.log("[RoomManager] Setting up event listeners");
+
     // Listen for player join/leave events
     this.socket.on("users-updated", (users) => {
+      console.log("[RoomManager] 🔔 RECEIVED users-updated event:", Object.keys(users || {}));
+
       if (this.sessionState) {
         // Clear existing players
         const currentPlayers = this.sessionState.getPlayers();
-        currentPlayers.forEach((playerId) => {
+        console.log("[RoomManager] Current players before update:", Array.from(currentPlayers.keys()));
+
+        // Remove players that are no longer in the room
+        for (const [playerId, playerData] of currentPlayers) {
           if (!users[playerId]) {
+            console.log(`[RoomManager] Removing player: ${playerId}`);
             this.sessionState.removePlayer(playerId);
           }
-        });
+        }
 
         // Add/update players
         Object.entries(users || {}).forEach(([playerId, playerData]) => {
+          console.log(`[RoomManager] Adding/updating player: ${playerId}`, playerData);
           this.sessionState.addPlayer(playerId, playerData);
         });
+
+        console.log("[RoomManager] Players after update:", Array.from(this.sessionState.getPlayers().keys()));
       }
 
-      if (this.callbacks.onUsersUpdated) {
-        this.callbacks.onUsersUpdated(users);
+      if (this.config.callbacks?.onUsersUpdated) {
+        console.log("[RoomManager] Calling onUsersUpdated callback");
+        this.config.callbacks.onUsersUpdated(users);
       }
     });
 
     // Listen for room close event
     this.socket.on("room-closed", (data) => {
-      if (this.callbacks.onRoomClosed) {
-        this.callbacks.onRoomClosed(data);
+      if (this.config.callbacks?.onRoomClosed) {
+        this.config.callbacks.onRoomClosed(data);
       }
     });
   }

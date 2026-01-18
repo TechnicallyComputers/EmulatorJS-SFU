@@ -310,6 +310,87 @@ class SFUTransport {
   }
 
   /**
+   * Create send transport for data producers (can be called by any client).
+   * @returns {Promise<void>}
+   */
+  async createSendTransport() {
+    // Check if we need to re-initialize SFU
+    if (!this.useSFU || !this.device || !this.socket.isConnected()) {
+      console.log("[SFUTransport] Not ready, attempting to re-initialize SFU...");
+
+      // Try to re-initialize if socket is connected
+      if (this.socket && this.socket.isConnected()) {
+        const reInitSuccess = await this.initialize();
+        if (!reInitSuccess) {
+          console.warn("[SFUTransport] SFU re-initialization failed");
+          return;
+        }
+        console.log("[SFUTransport] SFU re-initialized successfully");
+      } else {
+        console.warn("[SFUTransport] Cannot create send transport: Socket not connected");
+        return;
+      }
+    }
+
+    // If send transport already exists, return
+    if (this.sendTransport) {
+      console.log("[SFUTransport] Send transport already exists");
+      return;
+    }
+
+    // Wait for readiness
+    const ready = await this.waitFor(
+      () => {
+        if (!this.useSFU || !this.device || !this.socket.isConnected()) {
+          console.log("[SFUTransport] Lost readiness during wait, re-initializing...");
+          this.initialize().catch(err =>
+            console.warn("[SFUTransport] Re-init during wait failed:", err)
+          );
+          return false;
+        }
+        return true;
+      },
+      5000,
+      200
+    );
+
+    if (!ready) {
+      console.warn("[SFUTransport] Not ready for send transport creation after wait");
+      return;
+    }
+
+    try {
+      const transportInfo = await new Promise((resolve, reject) => {
+        this.socket.emit(
+          "sfu-create-transport",
+          { direction: "send" },
+          (err, info) => {
+            if (err) return reject(err);
+            resolve(info);
+          }
+        );
+      });
+
+      // Create send transport
+      this.sendTransport = this.device.createSendTransport(transportInfo);
+
+      // Setup connection state handlers (ICE restart on failure)
+      this.setupTransportEventHandlers(
+        this.sendTransport,
+        transportInfo.id,
+        "send"
+      );
+
+      console.log("[SFUTransport] Created sendTransport for data producers:", {
+        id: transportInfo.id,
+      });
+    } catch (error) {
+      console.error("[SFUTransport] Failed to create send transport:", error);
+      throw error;
+    }
+  }
+
+  /**
    * Setup transport event handlers (connect, produce, connection state).
    * @private
    * @param {Object} transport - mediasoup Transport
@@ -337,6 +418,21 @@ class SFUTransport {
           this.socket.emit(
             "sfu-produce",
             { transportId, kind, rtpParameters },
+            (err, id) => {
+              if (err) return errback(err);
+              callback({ id });
+            }
+          );
+        }
+      );
+
+      // Produce data handler (send transport only)
+      transport.on(
+        "producedata",
+        async ({ sctpStreamParameters, label, protocol, appData }, callback, errback) => {
+          this.socket.emit(
+            "producedata",
+            { transportId, sctpStreamParameters, label, protocol, appData },
             (err, id) => {
               if (err) return errback(err);
               callback({ id });
@@ -586,6 +682,12 @@ class SFUTransport {
       throw new Error("SFU not available or send transport not created");
     }
 
+    // Check if transport supports data channels
+    if (typeof this.sendTransport.produceData !== 'function') {
+      console.warn("[SFUTransport] Transport does not support data channels");
+      return null;
+    }
+
     try {
       // Create data producer
       this.dataProducer = await this.sendTransport.produceData({
@@ -621,11 +723,43 @@ class SFUTransport {
     }
 
     try {
-      // Create consumer
-      const consumer = await this.recvTransport.consume({
-        producerId: producerId,
-        rtpCapabilities: this.device.rtpCapabilities,
+      console.log(`[SFUTransport] Requesting consumer for producer ${producerId}, kind: ${kind}`);
+
+      // Send sfu-consume request to SFU server
+      const consumerParams = await new Promise((resolve, reject) => {
+        this.socket.emit("sfu-consume", {
+          producerId: producerId,
+          transportId: this.recvTransport.id,
+          rtpCapabilities: this.device.rtpCapabilities,
+        }, (error, params) => {
+          if (error) {
+            console.error(`[SFUTransport] SFU consume request failed for producer ${producerId}:`, error);
+            reject(error);
+          } else {
+            console.log(`[SFUTransport] Received consumer params from SFU for producer ${producerId}:`, params);
+            resolve(params);
+          }
+        });
       });
+
+      // Create consumer locally using parameters from SFU
+      let consumer;
+      if (kind === 'data') {
+        // Data consumers use consumeData
+        consumer = await this.recvTransport.consumeData(consumerParams);
+        console.log(`[SFUTransport] Created data consumer:`, consumer.id);
+
+        // Set up message handling for data consumers
+        if (this.dataChannelManager) {
+          consumer.on('message', (message) => {
+            // For SFU, we don't have the socketId mapping, so pass null
+            this.dataChannelManager.handleIncomingMessage(message, null);
+          });
+        }
+      } else {
+        // Audio/video consumers use consume
+        consumer = await this.recvTransport.consume(consumerParams);
+      }
 
       // Store consumer
       this.consumers.set(producerId, consumer);

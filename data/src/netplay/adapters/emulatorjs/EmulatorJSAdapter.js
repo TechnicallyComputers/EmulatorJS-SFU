@@ -69,16 +69,64 @@ class EmulatorJSAdapter {
   }
 
   /**
-   * Subscribe to frame changes (stub for now).
+   * Subscribe to frame changes.
    * @param {function(number): void} callback - Frame callback
    * @returns {function(): void} Unsubscribe function
    */
   onFrame(callback) {
-    // TODO: Implement frame callback subscription in Phase 2
     this._frameCallbacks.add(callback);
+
+    // Start frame loop if this is the first callback
+    if (this._frameCallbacks.size === 1) {
+      this._startFrameLoop();
+    }
+
     return () => {
       this._frameCallbacks.delete(callback);
+      if (this._frameCallbacks.size === 0) {
+        this._stopFrameLoop();
+      }
     };
+  }
+
+  /**
+   * Start the frame callback loop.
+   * @private
+   */
+  _startFrameLoop() {
+    if (this._frameLoopRunning) return;
+
+    this._frameLoopRunning = true;
+    this._lastFrame = this.getCurrentFrame();
+
+    const frameLoop = () => {
+      if (!this._frameLoopRunning) return;
+
+      const currentFrame = this.getCurrentFrame();
+      if (currentFrame !== this._lastFrame) {
+        this._lastFrame = currentFrame;
+        // Call all frame callbacks
+        this._frameCallbacks.forEach(callback => {
+          try {
+            callback(currentFrame);
+          } catch (error) {
+            console.error("[EmulatorJSAdapter] Frame callback error:", error);
+          }
+        });
+      }
+
+      requestAnimationFrame(frameLoop);
+    };
+
+    requestAnimationFrame(frameLoop);
+  }
+
+  /**
+   * Stop the frame callback loop.
+   * @private
+   */
+  _stopFrameLoop() {
+    this._frameLoopRunning = false;
   }
 
   /**

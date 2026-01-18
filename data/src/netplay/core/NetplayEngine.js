@@ -203,6 +203,8 @@ class NetplayEngine {
       // 13. Room Manager
       const roomCallbacks = {
         onUsersUpdated: (users) => {
+          console.log("[NetplayEngine] roomCallbacks.onUsersUpdated called with users:", Object.keys(users || {}));
+
           // Update player manager
           if (this.playerManager) {
             Object.entries(users || {}).forEach(([playerId, playerData]) => {
@@ -211,7 +213,10 @@ class NetplayEngine {
           }
 
           if (this.config.callbacks?.onUsersUpdated) {
+            console.log("[NetplayEngine] Calling config.callbacks.onUsersUpdated");
             this.config.callbacks.onUsersUpdated(users);
+          } else {
+            console.warn("[NetplayEngine] config.callbacks.onUsersUpdated not available");
           }
         },
         onRoomClosed: (data) => {
@@ -286,6 +291,19 @@ class NetplayEngine {
       // Setup spectator chat listeners
       if (this.spectatorManager) {
         this.spectatorManager.setupChatListeners();
+      }
+
+      // Setup frame callback for input processing
+      if (this.emulator && typeof this.emulator.onFrame === 'function') {
+        this._frameUnsubscribe = this.emulator.onFrame((frame) => {
+          // Process frame inputs (host only)
+          if (this.sessionState?.isHostRole()) {
+            this.processFrameInputs();
+          }
+        });
+        console.log("[NetplayEngine] Frame callback set up for input processing");
+      } else {
+        console.warn("[NetplayEngine] Frame callback not available - input processing may not work");
       }
 
       this._initialized = true;
@@ -511,10 +529,6 @@ class NetplayEngine {
       throw new Error("NetplayEngine not initialized");
     }
 
-    if (!this.sessionState?.isHostRole()) {
-      throw new Error("Only host can initialize send transports");
-    }
-
     await this.sfuTransport.createTransports(true); // isHost = true
   }
 
@@ -527,11 +541,19 @@ class NetplayEngine {
       throw new Error("NetplayEngine not initialized");
     }
 
-    if (this.sessionState?.isHostRole()) {
-      throw new Error("Host should use initializeHostTransports");
+    await this.sfuTransport.createTransports(false); // isHost = false
+  }
+
+  /**
+   * Initialize SFU send transport for data producers (needed by all clients).
+   * @returns {Promise<void>}
+   */
+  async initializeSendTransport() {
+    if (!this.sfuTransport) {
+      throw new Error("NetplayEngine not initialized");
     }
 
-    await this.sfuTransport.createTransports(false); // isHost = false
+    await this.sfuTransport.createSendTransport();
   }
 
   /**
@@ -569,16 +591,12 @@ class NetplayEngine {
   }
 
   /**
-   * Create data producer for input relay (host only).
+   * Create data producer for input relay.
    * @returns {Promise<Object>} Data producer
    */
   async createDataProducer() {
     if (!this.sfuTransport) {
       throw new Error("NetplayEngine not initialized");
-    }
-
-    if (!this.sessionState?.isHostRole()) {
-      throw new Error("Only host can create data producer");
     }
 
     return await this.sfuTransport.createDataProducer();
@@ -642,6 +660,12 @@ class NetplayEngine {
 
       if (this.sessionState) {
         this.sessionState.reset();
+      }
+
+      // Cleanup frame callback
+      if (this._frameUnsubscribe) {
+        this._frameUnsubscribe();
+        this._frameUnsubscribe = null;
       }
     } catch (error) {
       console.error("[NetplayEngine] Shutdown error:", error);

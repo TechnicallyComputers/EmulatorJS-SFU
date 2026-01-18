@@ -9795,46 +9795,190 @@ class EmulatorJS {
     }
   }
 
-  // Helper method to set up WebRTC consumer transports for LIVESTREAM clients
-  // Only called for livestream rooms where user is NOT the host
+  // Helper method to set up WebRTC consumer transports
+  // Called for all users to consume from other users' producers
   async netplaySetupConsumers() {
+    console.log("[Netplay] 🎥 netplaySetupConsumers() called");
+    console.log("[Netplay] Current user is host:", this.netplay.engine?.sessionState?.isHostRole());
+    console.log("[Netplay] Engine available:", !!this.netplay.engine);
+
     if (!this.netplay.engine) {
       console.warn("[Netplay] No engine available for consumer setup");
       return;
     }
 
     try {
-      console.log("[Netplay] Setting up consumer transports for client...");
+      console.log("[Netplay] Setting up consumer transports...");
 
-      // Create receive transport for client
-      await this.netplay.engine.initializeClientTransports();
-      console.log("[Netplay] Client receive transport created");
+      // Ensure receive transport exists (both hosts and clients need this for bidirectional communication)
+      const isHost = this.netplay.engine.sessionState?.isHostRole();
+      if (isHost) {
+        // Hosts should already have receive transport from initializeHostTransports()
+        // But make sure it's available
+        await this.netplay.engine.initializeHostTransports();
+        console.log("[Netplay] ✅ Host receive transport ensured");
+      } else {
+        // Clients get receive transport
+        await this.netplay.engine.initializeClientTransports();
+        console.log("[Netplay] ✅ Client receive transport created");
+      }
 
-      // Listen for new producers from the host
+      // First, get existing producers in the room
+      console.log("[Netplay] Requesting existing producers...");
+      try {
+        if (this.netplay.engine.socketTransport) {
+          // Request existing video/audio producers
+          const existingVideoAudioProducers = await new Promise((resolve, reject) => {
+            this.netplay.engine.socketTransport.emit("sfu-get-producers", {}, (error, producers) => {
+              if (error) {
+                console.error("[Netplay] Failed to get existing video/audio producers:", error);
+                reject(error);
+                return;
+              }
+              console.log("[Netplay] Received existing video/audio producers:", producers);
+              resolve(producers || []);
+            });
+          });
+
+          // Request existing data producers
+          const existingDataProducers = await new Promise((resolve, reject) => {
+            this.netplay.engine.socketTransport.emit("sfu-get-data-producers", {}, (error, producers) => {
+              if (error) {
+                console.error("[Netplay] Failed to get existing data producers:", error);
+                reject(error);
+                return;
+              }
+              console.log("[Netplay] Received existing data producers:", producers);
+              resolve(producers || []);
+            });
+          });
+
+          // Combine all producers
+          const existingProducers = [
+            ...existingVideoAudioProducers.map(p => ({ ...p, source: 'video-audio', kind: p.kind || 'video' })),
+            ...existingDataProducers.map(p => ({ ...p, source: 'data', kind: p.kind || 'data' }))
+          ];
+          console.log("[Netplay] Combined existing producers:", existingProducers);
+
+          // Create consumers for existing producers
+          for (const producer of existingProducers) {
+            try {
+              console.log(`[Netplay] Creating consumer for existing producer:`, producer);
+
+              // Create consumer based on producer kind
+              const producerKind = producer.kind || 'unknown';
+              console.log(`[Netplay] Producer kind: ${producerKind}`);
+
+              if (producerKind === 'data') {
+                const consumer = await this.netplay.engine.createConsumer(producer.id, 'data');
+                console.log(`[Netplay] ✅ Created data consumer for existing producer:`, consumer.id);
+                // Data consumers don't have tracks, they handle messages directly
+              } else if (producerKind === 'video') {
+                const consumer = await this.netplay.engine.createConsumer(producer.id, 'video');
+                console.log(`[Netplay] ✅ Created video consumer for existing producer:`, consumer.id);
+                if (consumer.track) {
+                  this.netplayAttachConsumerTrack(consumer.track, 'video');
+                }
+              } else if (producerKind === 'audio') {
+                const consumer = await this.netplay.engine.createConsumer(producer.id, 'audio');
+                console.log(`[Netplay] ✅ Created audio consumer for existing producer:`, consumer.id);
+                if (consumer.track) {
+                  this.netplayAttachConsumerTrack(consumer.track, 'audio');
+                }
+              } else {
+                // Unknown kind, try fallback
+                console.warn(`[Netplay] Unknown producer kind ${producerKind}, skipping consumer creation`);
+              }
+            } catch (error) {
+              console.warn(`[Netplay] Failed to create consumer for existing producer ${producer.id}:`, error.message);
+            }
+          }
+        }
+      } catch (error) {
+        console.warn("[Netplay] Failed to get existing producers:", error);
+      }
+
+      // Listen for new producers from any user (for bidirectional communication)
+      console.log("[Netplay] Setting up new-producer event listener");
       if (this.netplay.engine.socketTransport) {
+        console.log("[Netplay] Socket is connected:", this.netplay.engine.socketTransport.isConnected());
+
         this.netplay.engine.socketTransport.on("new-producer", async (data) => {
-          console.log("[Netplay] New producer available:", data);
+          console.log("[Netplay] 📡 RECEIVED new-producer event:", data);
           try {
             const producerId = data.id;
             const producerKind = data.kind; // Now provided by SFU server
 
             if (!producerKind) {
-              console.warn("[Netplay] Producer kind not provided, skipping");
+              console.warn("[Netplay] Producer kind not provided, trying video, audio, then data");
+              // Try video first, then audio, then data if those fail
+              try {
+                const consumer = await this.netplay.engine.createConsumer(producerId, 'video');
+                console.log(`[Netplay] ✅ Created video consumer:`, consumer.id);
+                if (consumer.track) {
+                  this.netplayAttachConsumerTrack(consumer.track, 'video');
+                }
+              } catch (videoError) {
+                try {
+                  const consumer = await this.netplay.engine.createConsumer(producerId, 'audio');
+                  console.log(`[Netplay] ✅ Created audio consumer:`, consumer.id);
+                  if (consumer.track) {
+                    this.netplayAttachConsumerTrack(consumer.track, 'audio');
+                  }
+                } catch (audioError) {
+                  try {
+                    const consumer = await this.netplay.engine.createConsumer(producerId, 'data');
+                    console.log(`[Netplay] ✅ Created data consumer:`, consumer.id);
+                    // Data consumers don't have tracks, they handle messages directly
+                  } catch (dataError) {
+                    console.error("[Netplay] ❌ Failed to create consumer for new producer:", dataError);
+                  }
+                }
+              }
               return;
             }
 
+            console.log(`[Netplay] Creating ${producerKind} consumer for producer ${producerId}`);
             const consumer = await this.netplay.engine.createConsumer(producerId, producerKind);
-            console.log(`[Netplay] Created ${producerKind} consumer:`, consumer.id);
+            console.log(`[Netplay] ✅ Created ${producerKind} consumer:`, consumer.id);
 
-            if (consumer.track) {
-              console.log(`[Netplay] Consumer track ready: ${producerKind}`, consumer.track);
-              // TODO: Attach consumer tracks to video/audio elements for display
+            if (producerKind === 'data') {
+              console.log(`[Netplay] 🎮 Data consumer ready for input synchronization`);
+              // Data consumers don't have tracks, they handle messages directly
+              // The DataChannelManager should be set up to receive input data
+            } else if (consumer.track) {
+              console.log(`[Netplay] 🎵 Consumer track ready: ${producerKind}`, consumer.track);
               this.netplayAttachConsumerTrack(consumer.track, producerKind);
+            } else {
+              console.warn(`[Netplay] ⚠️ Consumer created but no track available: ${producerKind}`);
             }
           } catch (error) {
-            console.warn("[Netplay] Failed to create consumer for new producer:", error);
+            console.error("[Netplay] ❌ Failed to create consumer for new producer:", error);
           }
         });
+
+        // Listen for new data producers (separate event from SFU)
+        this.netplay.engine.socketTransport.on("new-data-producer", async (data) => {
+          console.log("[Netplay] 📡 RECEIVED new-data-producer event:", data);
+          try {
+            const producerId = data.id;
+
+            console.log(`[Netplay] Creating data consumer for producer ${producerId}`);
+            const consumer = await this.netplay.engine.createConsumer(producerId, 'data');
+            console.log(`[Netplay] ✅ Created data consumer:`, consumer.id);
+            // Data consumers don't have tracks, they handle messages directly
+            console.log(`[Netplay] 🎮 Data consumer ready for input synchronization`);
+          } catch (error) {
+            console.error("[Netplay] ❌ Failed to handle new-data-producer event:", error);
+          }
+        });
+
+        // Also listen for users-updated to track room changes
+        this.netplay.engine.socketTransport.on("users-updated", (users) => {
+          console.log("[Netplay] 👥 RECEIVED users-updated from consumer socket:", Object.keys(users || {}));
+        });
+      } else {
+        console.warn("[Netplay] No socket transport available for consumer setup");
       }
 
       console.log("[Netplay] Consumer setup complete - listening for new producers");
@@ -9891,19 +10035,33 @@ class EmulatorJS {
         if (roomType === "live_stream") {
           this.netplaySwitchToLiveStreamRoom(roomId, password);
 
-          // LIVESTREAM ROOM: Set up WebRTC consumer transports for clients
-          // Clients need to consume host's video/audio streams via WebRTC
-          if (this.netplay.engine && !this.netplay.engine.sessionState?.isHostRole()) {
-            console.log("[Netplay] Setting up WebRTC consumer transports for livestream client");
+          // LIVESTREAM ROOM: Set up WebRTC consumer transports
+          // Both hosts and clients need consumers for data channels
+          // Only clients need video/audio consumers from host
+          const isHost = this.netplay.engine?.sessionState?.isHostRole();
+          console.log("[Netplay] After joining livestream room - isHost:", isHost);
+
+          if (this.netplay.engine) {
+            console.log("[Netplay] Setting up WebRTC consumer transports for data channels");
             setTimeout(() => this.netplaySetupConsumers(), 1000);
+
+            // Set up data producers for input (both host and clients for bidirectional communication)
+            console.log("[Netplay] Setting up data producers for input");
+            setTimeout(() => this.netplaySetupDataProducers(), 1500);
           }
-          // Hosts don't need consumers - they create producers
+          // Note: Video/audio consumption is handled by new-producer events
         } else if (roomType === "delay_sync") {
           this.netplaySwitchToDelaySyncRoom(roomId, password, 4); // max players not returned, default to 4
 
-          // DELAY SYNC ROOM: Different setup needed
-          // TODO: Add delay sync specific setup (input synchronization, state sync, etc.)
-          // This would be different from livestream consumer setup
+          // DELAY SYNC ROOM: Set up bidirectional WebRTC communication
+          if (this.netplay.engine) {
+            console.log("[Netplay] Setting up WebRTC transports for delay-sync bidirectional communication");
+            setTimeout(() => this.netplaySetupConsumers(), 1000);
+
+            // Set up data producers for input (everyone needs to send inputs)
+            console.log("[Netplay] Setting up data producers for input");
+            setTimeout(() => this.netplaySetupDataProducers(), 1500);
+          }
         }
 
         return result;
@@ -10008,7 +10166,14 @@ class EmulatorJS {
 
   // Switch to live stream room UI
   netplaySwitchToLiveStreamRoom(roomName, password) {
-    if (!this.netplayMenu) return;
+    console.log("[Netplay] Switching to livestream room UI:", roomName);
+    if (!this.netplayMenu) {
+      console.warn("[Netplay] No netplayMenu available for livestream UI");
+      return;
+    }
+
+    // Show the netplay menu
+    this.netplayMenu.style.display = "";
 
     // Hide lobby tabs and show live stream room
     if (this.netplay.tabs && this.netplay.tabs[0] && this.netplay.tabs[1]) {
@@ -10043,6 +10208,7 @@ class EmulatorJS {
     }
 
     // Create player table for live stream
+    console.log("[Netplay] Creating livestream player table");
     if (!this.netplay.liveStreamPlayerTable) {
       const table = this.createElement("table");
       table.classList.add("ejs_netplay_table");
@@ -10068,6 +10234,8 @@ class EmulatorJS {
       this.netplay.liveStreamPlayerTable = tbody;
       table.appendChild(tbody);
 
+      console.log("[Netplay] Livestream player table created successfully");
+
       // Insert table after player slot selector
       if (this.netplay.slotSelect && this.netplay.slotSelect.parentElement) {
         this.netplay.slotSelect.parentElement.parentElement.insertBefore(table, this.netplay.slotSelect.parentElement.nextSibling);
@@ -10076,6 +10244,19 @@ class EmulatorJS {
 
     // Initialize live stream player table (just host for now)
     this.netplayInitializeLiveStreamPlayers();
+
+    // Update player list with current users (in case callbacks were called before UI was ready)
+    if (this.netplay.engine && this.netplay.engine.sessionState) {
+      const currentPlayers = this.netplay.engine.sessionState.getPlayers();
+      if (currentPlayers.size > 0) {
+        console.log("[Netplay] Updating player list with current session state players:", Array.from(currentPlayers.keys()));
+        const playersObj = {};
+        for (const [id, data] of currentPlayers) {
+          playersObj[id] = data;
+        }
+        this.netplayUpdatePlayerList({ players: playersObj });
+      }
+    }
 
     // Initialize netplay engine for real-time communication
     this.netplayInitializeEngine(roomName);
@@ -10096,6 +10277,9 @@ class EmulatorJS {
   // Switch to delay sync room UI
   netplaySwitchToDelaySyncRoom(roomName, password, maxPlayers) {
     if (!this.netplayMenu) return;
+
+    // Show the netplay menu
+    this.netplayMenu.style.display = "";
 
     // Hide lobby tabs and show delay sync room
     if (this.netplay.tabs && this.netplay.tabs[0] && this.netplay.tabs[1]) {
@@ -10334,6 +10518,21 @@ class EmulatorJS {
   async netplayInitializeEngine(roomName) {
     console.log("[Netplay] Initializing netplay engine for room:", roomName);
 
+    // Set up netplay simulateInput if not already done (always needed)
+    if (!this.netplay.simulateInput) {
+      this.netplay.simulateInput = (playerIndex, inputIndex, value) => {
+        console.log("[Netplay] Processing input via netplay.simulateInput:", { playerIndex, inputIndex, value });
+        if (this.netplay.engine && this.netplay.engine.inputSync) {
+          console.log("[Netplay] Sending input through InputSync");
+          return this.netplay.engine.inputSync.sendInput(playerIndex, inputIndex, value);
+        } else {
+          console.warn("[Netplay] InputSync not available, input ignored");
+          return false;
+        }
+      };
+      console.log("[Netplay] Set up netplay.simulateInput");
+    }
+
     // If NetplayEngine is already initialized and connected, skip legacy socket setup
     if (this.netplay.engine && this.netplay.engine.isInitialized()) {
       console.log("[Netplay] NetplayEngine already initialized, skipping legacy socket setup");
@@ -10440,7 +10639,8 @@ class EmulatorJS {
             console.log("[Netplay] Socket disconnected:", reason);
           },
           onUsersUpdated: (users) => {
-            console.log("[Netplay] Users updated:", users);
+            console.log("[Netplay] 🔔 CALLBACK onUsersUpdated triggered:", Object.keys(users || {}));
+            console.log("[Netplay] Calling netplayUpdatePlayerList with users");
             this.netplayUpdatePlayerList({ players: users });
           },
           onRoomClosed: (data) => {
@@ -10499,17 +10699,6 @@ class EmulatorJS {
         // Connect the basic transport (fallback case)
         console.log("[Netplay] Connecting basic SocketTransport...");
         await this.netplay.transport.connect(`wss://${socketBaseUrl}`);
-      }
-
-      // Set up simulateInput function for the game manager
-      if (!this.netplay.simulateInput) {
-        this.netplay.simulateInput = (playerIndex, inputIndex, value) => {
-          if (this.netplay.engine && this.netplay.engine.inputSync) {
-            this.netplay.engine.inputSync.sendInput(playerIndex, inputIndex, value);
-          } else {
-            console.warn("[Netplay] InputSync not available, input ignored");
-          }
-        };
       }
 
       // The socket connection will be established by the NetplayEngine
@@ -10577,6 +10766,17 @@ class EmulatorJS {
 
   // Update player list display
   netplayUpdatePlayerList(data) {
+    console.log("[Netplay] netplayUpdatePlayerList called with:", {
+      hasPlayers: !!data.players,
+      playerCount: data.players ? Object.keys(data.players).length : 0,
+      players: data.players ? Object.keys(data.players) : [],
+      hasDelaySyncTable: !!this.netplay.delaySyncPlayerTable,
+      hasLiveStreamTable: !!this.netplay.liveStreamPlayerTable
+    });
+
+    // Debug: always log that we're trying to update
+    console.log("[Netplay] Attempting to update player list UI");
+
     if (data.players && this.netplay.delaySyncPlayerTable) {
       // Update Delay Sync player table
       const tbody = this.netplay.delaySyncPlayerTable;
@@ -10585,27 +10785,38 @@ class EmulatorJS {
     }
 
     if (this.netplay.liveStreamPlayerTable && data.players) {
+      console.log("[Netplay] Updating livestream player table with", Object.keys(data.players).length, "players");
+      console.log("[Netplay] Table element exists:", !!this.netplay.liveStreamPlayerTable);
+      console.log("[Netplay] Table is in DOM:", document.contains(this.netplay.liveStreamPlayerTable));
+      console.log("[Netplay] Starting table update with players:", Object.keys(data.players));
+
       // Update Live Stream player table with all connected users
       const tbody = this.netplay.liveStreamPlayerTable;
       tbody.innerHTML = ""; // Clear existing
 
       // Show all connected users as spectators/participants
       Object.values(data.players).forEach((player, index) => {
+        console.log(`[Netplay] Adding player to UI: ${player.player_name} (${player.userid})`);
+        console.log(`[Netplay] Player data:`, player);
         const row = this.createElement("tr");
 
         // Player/Spectator indicator
         const playerCell = this.createElement("td");
         if (player.userid === this.netplay.name || player.player_name === this.netplay.name) {
-          playerCell.innerText = "You";
+          playerCell.innerText = "You (P" + (player.player_slot + 1) + ")";
         } else {
-          playerCell.innerText = player.isSpectator ? "Spectator" : "Player";
+          playerCell.innerText = "P" + (player.player_slot + 1);
         }
         playerCell.style.textAlign = "center";
         row.appendChild(playerCell);
 
         // Name
         const nameCell = this.createElement("td");
-        nameCell.innerText = player.player_name || player.userid || "Unknown";
+        // Use player_name if it's not generic, otherwise use userid
+        const displayName = (player.player_name && player.player_name !== "Player" && player.player_name !== "Anonymous")
+          ? player.player_name
+          : player.userid;
+        nameCell.innerText = displayName;
         nameCell.style.textAlign = "center";
         row.appendChild(nameCell);
 
@@ -10616,7 +10827,11 @@ class EmulatorJS {
         row.appendChild(statusCell);
 
         tbody.appendChild(row);
+        console.log(`[Netplay] Added row to table, tbody now has ${tbody.children.length} rows`);
       });
+      console.log(`[Netplay] Table update complete, tbody has ${tbody.children.length} total rows`);
+    } else {
+      console.log("[Netplay] No table update performed - missing table or players data");
     }
   }
 
@@ -10837,6 +11052,13 @@ class EmulatorJS {
       }
     }
 
+    // Restore original gameManager.simulateInput
+    if (this.gameManager && this.gameManager.originalSimulateInput) {
+      console.log("[Netplay] Restoring original gameManager.simulateInput");
+      this.gameManager.simulateInput = this.gameManager.originalSimulateInput;
+      delete this.gameManager.originalSimulateInput;
+    }
+
     // Clear netplay references
     this.netplay.engine = null;
     this.netplay.transport = null;
@@ -10975,12 +11197,83 @@ class EmulatorJS {
         console.log("[Netplay] Audio producer created");
       }
 
-      // Create data producer for input relay
-      await this.netplay.engine.createDataProducer();
-      console.log("[Netplay] Data producer created");
+      // Create data producer for input relay (only needed for certain room types)
+      // For livestream rooms, data producers are not needed since focus is on media streaming
+      // Data producers are used for real-time input synchronization in delay sync rooms
+      try {
+        const dataProducer = await this.netplay.engine.createDataProducer();
+        if (dataProducer) {
+          console.log("[Netplay] Data producer created");
+        } else {
+          console.log("[Netplay] Data producer not supported (optional for this room type)");
+        }
+      } catch (error) {
+        console.warn("[Netplay] Data producer creation failed (may not be needed for this room type):", error.message);
+        // Continue - data producers are optional for livestream rooms
+      }
 
     } catch (error) {
       console.error("[Netplay] Failed to setup producers:", error);
+    }
+  }
+
+  // Setup data producers for input synchronization (both host and clients)
+  async netplaySetupDataProducers() {
+    if (!this.netplay.engine) {
+      console.log("[Netplay] Engine not available, skipping data producer setup");
+      return;
+    }
+
+    try {
+      console.log("[Netplay] Setting up data producers for input...");
+
+      // Initialize transports if not already done
+      const isHost = this.netplay.engine.sessionState?.isHostRole();
+
+      // Everyone needs receive transport for consumers
+      if (isHost) {
+        await this.netplay.engine.initializeHostTransports(); // Creates send + recv for host
+      } else {
+        await this.netplay.engine.initializeClientTransports(); // Creates recv for client
+        // Clients also need send transport for data producers
+        await this.netplay.engine.initializeSendTransport();
+      }
+
+      // Create data producer for input synchronization
+      const dataProducer = await this.netplay.engine.createDataProducer();
+      if (dataProducer) {
+        console.log("[Netplay] Data producer created for input");
+
+        // Set up input forwarding via data channel
+        this.netplaySetupInputForwarding(dataProducer);
+      } else {
+        console.log("[Netplay] Data producer not supported");
+      }
+
+    } catch (error) {
+      console.error("[Netplay] Failed to setup data producers:", error);
+    }
+  }
+
+  // Set up input forwarding via data channels
+  netplaySetupInputForwarding(dataProducer) {
+    console.log("[Netplay] Setting up input forwarding via data channels");
+
+    // Replace gameManager.simulateInput with netplay version
+    // This ensures all input (keyboard, gamepad, virtual controls) goes through netplay
+    if (this.gameManager && this.netplay.simulateInput) {
+      console.log("[Netplay] Replacing gameManager.simulateInput with netplay version");
+      this.gameManager.originalSimulateInput = this.gameManager.simulateInput;
+      this.gameManager.simulateInput = this.netplay.simulateInput.bind(this);
+    } else {
+      console.warn("[Netplay] gameManager.simulateInput not available to replace or netplay.simulateInput not ready");
+    }
+
+    // Listen for input from other players
+    if (dataProducer) {
+      // Note: In a full implementation, we'd set up data consumers to receive input
+      // For now, this sets up the sending side
+      console.log("[Netplay] Input forwarding setup complete (sending only)");
     }
   }
 
