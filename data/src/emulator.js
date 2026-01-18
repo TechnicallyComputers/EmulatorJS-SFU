@@ -968,8 +968,10 @@ class EmulatorJS {
   }
   startGameError(message) {
     console.log(message);
-    this.textElem.innerText = message;
-    this.textElem.classList.add("ejs_error_text");
+    if (this.textElem) {
+      this.textElem.innerText = message;
+      this.textElem.classList.add("ejs_error_text");
+    }
 
     this.setupSettingsMenu();
     this.loadSettings();
@@ -2706,9 +2708,9 @@ class EmulatorJS {
   }
   isPopupOpen() {
     return (
-      this.cheatMenu.style.display !== "none" ||
-      this.netplayMenu.style.display !== "none" ||
-      this.controlMenu.style.display !== "none" ||
+      (this.cheatMenu && this.cheatMenu.style.display !== "none") ||
+      (this.netplayMenu && this.netplayMenu.style.display !== "none") ||
+      (this.controlMenu && this.controlMenu.style.display !== "none") ||
       this.currentPopup !== null
     );
   }
@@ -3052,10 +3054,10 @@ class EmulatorJS {
       }
     });
     const controlMenu = addButton(this.config.buttonOpts.gamepad, () => {
-      this.controlMenu.style.display = "";
+      if (this.controlMenu) this.controlMenu.style.display = "";
     });
     const cheatMenu = addButton(this.config.buttonOpts.cheat, () => {
-      this.cheatMenu.style.display = "";
+      if (this.cheatMenu) this.cheatMenu.style.display = "";
     });
 
     const cache = addButton(this.config.buttonOpts.cacheManager, () => {
@@ -3645,7 +3647,7 @@ class EmulatorJS {
           this.saveSettings();
         },
         Close: () => {
-          this.controlMenu.style.display = "none";
+          if (this.controlMenu) this.controlMenu.style.display = "none";
         },
       },
       true
@@ -6985,6 +6987,13 @@ class EmulatorJS {
       }
     }
   }
+  enableShader(value) {
+    // Store the shader setting - actual shader application would be implemented here
+    this.currentShader = value;
+    // TODO: Implement actual shader loading and application
+    console.log("Shader enabled:", value);
+  }
+
   handleSpecialOptions(option, value) {
     if (option === "shader") {
       this.enableShader(value);
@@ -8527,10 +8536,10 @@ class EmulatorJS {
 
   createNetplayMenu() {
     const body = this.createPopup(
-      "Netplay",
+      "Netplay Lobby",
       {
         "Create a Room": () => {
-          if (typeof this.netplay.updateList !== "function")
+          if (!this.netplay || typeof this.netplay.updateList !== "function")
             this.defineNetplayFunctions();
           if (this.isNetplay) {
             this.netplay.leaveRoom();
@@ -8539,8 +8548,8 @@ class EmulatorJS {
           }
         },
         Close: () => {
-          this.netplayMenu.style.display = "none";
-          if (this.netplay.updateList) {
+          if (this.netplayMenu) this.netplayMenu.style.display = "none";
+          if (this.netplay && this.netplay.updateList) {
             this.netplay.updateList.stop();
           }
         },
@@ -8550,8 +8559,6 @@ class EmulatorJS {
     this.netplayMenu = body.parentElement;
     const createButton = this.netplayMenu.getElementsByTagName("a")[0];
     const rooms = this.createElement("div");
-    const title = this.createElement("strong");
-    title.innerText = this.localization("Rooms");
     const table = this.createElement("table");
     table.classList.add("ejs_netplay_table");
     table.style.width = "100%";
@@ -8562,18 +8569,19 @@ class EmulatorJS {
       const item = this.createElement("td");
       item.innerText = text;
       item.style["text-align"] = "center";
+      item.style.fontWeight = "bold";
       row.appendChild(item);
       return item;
     };
     thead.appendChild(row);
-    addToHeader("Room Name").style["text-align"] = "left";
+    addToHeader("Room Type").style.width = "100px";
+    addToHeader("Room Name").style["text-align"] = "center";
     addToHeader("Players").style.width = "80px";
     addToHeader("").style.width = "80px";
     table.appendChild(thead);
     const tbody = this.createElement("tbody");
 
     table.appendChild(tbody);
-    rooms.appendChild(title);
     rooms.appendChild(table);
 
     const joined = this.createElement("div");
@@ -8608,30 +8616,9 @@ class EmulatorJS {
     joinedControls.appendChild(slotSelect);
     joinedControls.appendChild(slotCurrent);
 
-    const table2 = this.createElement("table");
-    table2.classList.add("ejs_netplay_table");
-    table2.style.width = "100%";
-    table2.setAttribute("cellspacing", "0");
-    const thead2 = this.createElement("thead");
-    const row2 = this.createElement("tr");
-    const addToHeader2 = (text) => {
-      const item = this.createElement("td");
-      item.innerText = text;
-      row2.appendChild(item);
-      return item;
-    };
-    thead2.appendChild(row2);
-    addToHeader2("Player").style.width = "80px";
-    addToHeader2("Name");
-    addToHeader2("").style.width = "80px";
-    table2.appendChild(thead2);
-    const tbody2 = this.createElement("tbody");
-
-    table2.appendChild(tbody2);
     joined.appendChild(title2);
     joined.appendChild(password);
     joined.appendChild(joinedControls);
-    joined.appendChild(table2);
 
     joined.style.display = "none";
     body.appendChild(rooms);
@@ -8649,11 +8636,10 @@ class EmulatorJS {
           this.netplayWarningShown = true;
         }
       }
-      this.netplayMenu.style.display = "";
+      if (this.netplayMenu) this.netplayMenu.style.display = "";
       if (!this.netplay || (this.netplay && !this.netplay.name)) {
         this.netplay = {
           table: tbody,
-          playerTable: tbody2,
           passwordElem: password,
           roomNameElem: title2,
           createButton: createButton,
@@ -8741,7 +8727,7 @@ class EmulatorJS {
       } catch (e) {
         // ignore
       }
-      if (typeof this.netplay.updateList !== "function") {
+      if (!this.netplay || typeof this.netplay.updateList !== "function") {
         this.defineNetplayFunctions();
       }
       this.netplay.updateList.start();
@@ -8767,7013 +8753,1019 @@ class EmulatorJS {
         ? window.EmulatorJSAdapter
         : undefined;
 
-    // Debug logging
-    // #region agent log
-    fetch("http://127.0.0.1:7242/ingest/22e800bc-6bc6-4492-ae2b-c74b05fdebc4", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        location: "emulator.js:8771",
-        message: "defineNetplayFunctions entry",
-        data: {
-          netplayExists: typeof this.netplay !== "undefined",
-          netplayIsObject: this.netplay instanceof Object,
-        },
-        timestamp: Date.now(),
-        sessionId: "debug-session",
-        runId: "run1",
-        hypothesisId: "B",
-      }),
-    }).catch(() => {});
-    // #endregion
-    console.log("[EmulatorJS] defineNetplayFunctions() called");
-    // #region agent log
-    fetch("http://127.0.0.1:7242/ingest/22e800bc-6bc6-4492-ae2b-c74b05fdebc4", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        location: "emulator.js:8773",
-        message: "Checking NetplayEngineClass",
-        data: {
-          netplayEngineClass: typeof NetplayEngineClass,
-          netplayEngine: typeof NetplayEngine,
-          windowNetplayEngine: typeof window.NetplayEngine,
-        },
-        timestamp: Date.now(),
-        sessionId: "debug-session",
-        runId: "run1",
-        hypothesisId: "A",
-      }),
-    }).catch(() => {});
-    // #endregion
-    console.log(
-      "[EmulatorJS] NetplayEngineClass:",
-      typeof NetplayEngineClass !== "undefined" ? "AVAILABLE" : "UNDEFINED"
-    );
-    console.log(
-      "[EmulatorJS] EmulatorJSAdapterClass:",
-      typeof EmulatorJSAdapterClass !== "undefined" ? "AVAILABLE" : "UNDEFINED"
-    );
-    console.log(
-      "[EmulatorJS] window.NetplayEngine:",
-      typeof window.NetplayEngine !== "undefined" ? "AVAILABLE" : "UNDEFINED"
-    );
-    console.log(
-      "[EmulatorJS] window.EmulatorJSAdapter:",
-      typeof window.EmulatorJSAdapter !== "undefined"
-        ? "AVAILABLE"
-        : "UNDEFINED"
-    );
-
-    if (NetplayEngineClass && EmulatorJSAdapterClass) {
-      console.log(
-        "[EmulatorJS] ✅ NetplayEngine classes available - initializing new netplay system"
-      );
-      try {
-        // Create adapter
-        if (!this._netplayAdapter) {
-          this._netplayAdapter = new EmulatorJSAdapterClass(this);
-        }
-
-        // Create NetplayEngine with configuration
-        const netplayConfig = {
-          netplayUrl: this.config.netplayUrl || window.EJS_netplayUrl,
-          gameId: this.config.gameId,
-          inputMode:
-            this.netplayInputMode ||
-            window.EJS_NETPLAY_INPUT_MODE ||
-            "unorderedRelay",
-          preferredSlot:
-            this.netplayPreferredSlot || window.EJS_NETPLAY_PREFERRED_SLOT || 0,
-          frameDelay: 20,
-          callbacks: {
-            onSocketConnect: (socketId) => {
-              // Socket connected callback
-            },
-            onSocketError: (error) => {
-              // Socket error callback
-            },
-            onSocketDisconnect: (reason) => {
-              // Socket disconnect callback
-            },
-            onUsersUpdated: (users) => {
-              // Users updated callback
-            },
-            onRoomClosed: (data) => {
-              // Room closed callback
-            },
-            onFrameData: (frameData) => {
-              // Frame data callback (for reconstruction)
-            },
-          },
-        };
-
-        if (!this._netplayEngine) {
-          this._netplayEngine = new NetplayEngineClass(
-            this._netplayAdapter,
-            netplayConfig
-          );
-
-          // Initialize engine (async, don't await here to avoid blocking)
-          this._netplayEngine
-            .initialize()
-            .then(() => {
-              console.log(
-                "[EmulatorJS] NetplayEngine initialized successfully"
-              );
-
-              // Populate this.netplay with state from engine (for backward compatibility)
-              if (this.netplay) {
-                Object.assign(
-                  this.netplay,
-                  this._netplayEngine.getStateObject()
-                );
-              }
-            })
-            .catch((err) => {
-              console.error(
-                "[EmulatorJS] NetplayEngine initialization failed:",
-                err
-              );
-            });
-        }
-      } catch (error) {
-        console.warn(
-          "[EmulatorJS] NetplayEngine integration failed (modules may not be loaded):",
-          error
-        );
-      }
-    } else {
-      console.log(
-        "[EmulatorJS] ⚠️ NetplayEngine classes NOT available - using legacy netplay code"
-      );
-    }
-
-    // SFU audio stability helpers.
-    // Keep these on `this` so nested callbacks can access them reliably.
-    if (typeof this._ejsExtractOutboundAudioBytesSent !== "function") {
-      this._ejsExtractOutboundAudioBytesSent = (stats) => {
-        try {
-          let best = null;
-          const consider = (s) => {
-            if (!s) return;
-            const type = typeof s.type === "string" ? s.type : "";
-            if (type && type !== "outbound-rtp") return;
-            const mediaType =
-              typeof s.mediaType === "string"
-                ? s.mediaType
-                : typeof s.kind === "string"
-                ? s.kind
-                : "";
-            if (mediaType && mediaType !== "audio") return;
-            const b =
-              typeof s.bytesSent === "number"
-                ? s.bytesSent
-                : typeof s.bytes === "number"
-                ? s.bytes
-                : null;
-            if (typeof b === "number") {
-              best = best === null ? b : Math.max(best, b);
-            }
-          };
-
-          if (!stats) return null;
-          if (Array.isArray(stats)) {
-            stats.forEach(consider);
-            return best;
-          }
-          if (typeof stats.forEach === "function") {
-            // RTCStatsReport
-            stats.forEach(consider);
-            return best;
-          }
-          if (typeof stats === "object") {
-            for (const k in stats) consider(stats[k]);
-            return best;
-          }
-          return null;
-        } catch (e) {
-          return null;
-        }
-      };
-    }
-
-    if (typeof this._ejsEnsureHostAudioProducerHealthMonitor !== "function") {
-      this._ejsEnsureHostAudioProducerHealthMonitor = () => {
-        try {
-          if (!this.netplay || !this.netplay.owner) return;
-          if (this.netplay._ejsHostAudioHealthTimer) return;
-
-          this.netplay._ejsHostAudioHealth = {
-            lastBytesSent: null,
-            lastChangeAt: Date.now(),
-            lastCheckedAt: 0,
-          };
-
-          this.netplay._ejsHostAudioHealthTimer = setInterval(async () => {
-            try {
-              if (!this.netplay || !this.netplay.owner || !this.netplay.useSFU)
-                return;
-              if (!this.netplay.audioProducer) return;
-              if (this.netplay.audioProducer.closed) return;
-
-              const audioTrack =
-                (this.netplay && this.netplay._ejsHostAudioTrack) ||
-                (this.netplay.localStream &&
-                this.netplay.localStream.getAudioTracks
-                  ? this.netplay.localStream.getAudioTracks()[0]
-                  : null);
-              if (!audioTrack) return;
-              if (audioTrack.enabled === false) return;
-
-              const p = this.netplay.audioProducer;
-              if (typeof p.getStats !== "function") return;
-
-              const now = Date.now();
-              const health = this.netplay._ejsHostAudioHealth;
-              if (
-                health &&
-                health.lastCheckedAt &&
-                now - health.lastCheckedAt < 2500
-              )
-                return;
-              if (health) health.lastCheckedAt = now;
-
-              const stats = await p.getStats().catch(() => null);
-              const bytes =
-                typeof this._ejsExtractOutboundAudioBytesSent === "function"
-                  ? this._ejsExtractOutboundAudioBytesSent(stats)
-                  : null;
-              if (typeof bytes !== "number") return;
-
-              if (health.lastBytesSent === null) {
-                health.lastBytesSent = bytes;
-                health.lastChangeAt = now;
-                return;
-              }
-
-              if (bytes > health.lastBytesSent) {
-                health.lastBytesSent = bytes;
-                health.lastChangeAt = now;
-                return;
-              }
-
-              // No progress for a while: attempt an automatic recovery.
-              if (now - health.lastChangeAt > 12000) {
-                console.warn(
-                  "[Netplay] Host audio producer appears stalled; attempting SFU audio recovery",
-                  {
-                    bytesSent: bytes,
-                    lastChangeAt: health.lastChangeAt,
-                  }
-                );
-                health.lastChangeAt = now;
-                if (typeof this.netplayReproduceHostAudioToSFU === "function") {
-                  this.netplayReproduceHostAudioToSFU(
-                    "host-audio-producer-stalled"
-                  );
-                } else if (
-                  typeof this.netplayReproduceHostVideoToSFU === "function"
-                ) {
-                  this.netplayReproduceHostVideoToSFU(
-                    "host-audio-producer-stalled"
-                  );
-                }
-              }
-            } catch (e) {
-              // ignore
-            }
-          }, 5000);
-        } catch (e) {
-          // ignore
-        }
-      };
-    }
-
-    if (typeof this._ejsAttachHostAudioRecoveryHandlers !== "function") {
-      this._ejsAttachHostAudioRecoveryHandlers = (mediaStream, origin) => {
-        try {
-          if (!this.netplay || !this.netplay.owner) return;
-          const at =
-            mediaStream && mediaStream.getAudioTracks
-              ? mediaStream.getAudioTracks()[0]
-              : null;
-          if (!at) return;
-          if (at._ejsHostAudioRecoveryInstalled) return;
-          at._ejsHostAudioRecoveryInstalled = true;
-
-          const tag = typeof origin === "string" ? origin : "unknown";
-          at.onended = () => {
-            console.warn("[Netplay] Host audio track ended", {
-              id: at.id,
-              origin: tag,
-            });
-            if (typeof this.netplayReproduceHostAudioToSFU === "function") {
-              this.netplayReproduceHostAudioToSFU("host-audio-track-ended");
-            } else if (
-              typeof this.netplayReproduceHostVideoToSFU === "function"
-            ) {
-              this.netplayReproduceHostVideoToSFU("host-audio-track-ended");
-            }
-          };
-          at.onmute = () => {
-            console.warn("[Netplay] Host audio track muted", {
-              id: at.id,
-              origin: tag,
-            });
-            if (typeof this.netplayReproduceHostAudioToSFU === "function") {
-              this.netplayReproduceHostAudioToSFU("host-audio-track-muted");
-            } else if (
-              typeof this.netplayReproduceHostVideoToSFU === "function"
-            ) {
-              this.netplayReproduceHostVideoToSFU("host-audio-track-muted");
-            }
-          };
-          at.onunmute = () => {
-            console.log("[Netplay] Host audio track unmuted", {
-              id: at.id,
-              origin: tag,
-            });
-          };
-        } catch (e) {
-          // ignore
-        }
-      };
-    }
-
-    // Client-side SFU audio recovery (spectator): detect stalled inbound audio and re-consume.
-    if (typeof this._ejsExtractInboundAudioBytesReceived !== "function") {
-      this._ejsExtractInboundAudioBytesReceived = (stats) => {
-        try {
-          let best = null;
-          const consider = (s) => {
-            if (!s) return;
-            const type = typeof s.type === "string" ? s.type : "";
-            if (type && type !== "inbound-rtp") return;
-
-            const mediaType =
-              typeof s.mediaType === "string"
-                ? s.mediaType
-                : typeof s.kind === "string"
-                ? s.kind
-                : "";
-            if (mediaType && mediaType !== "audio") return;
-
-            const b =
-              typeof s.bytesReceived === "number"
-                ? s.bytesReceived
-                : typeof s.bytes === "number"
-                ? s.bytes
-                : null;
-            if (typeof b === "number") {
-              best = best === null ? b : Math.max(best, b);
-            }
-          };
-
-          if (!stats) return null;
-          if (Array.isArray(stats)) {
-            stats.forEach(consider);
-            return best;
-          }
-          if (typeof stats.forEach === "function") {
-            // RTCStatsReport or mediasoup-client stats report
-            stats.forEach(consider);
-            return best;
-          }
-          if (typeof stats === "object") {
-            for (const k in stats) consider(stats[k]);
-            return best;
-          }
-          return null;
-        } catch (e) {
-          return null;
-        }
-      };
-    }
-
-    if (
-      typeof this._ejsEnsureClientSfuAudioConsumerHealthMonitor !== "function"
-    ) {
-      this._ejsEnsureClientSfuAudioConsumerHealthMonitor = () => {
-        try {
-          if (!this.netplay || !this.isNetplay) return;
-          if (this.netplay.owner) return;
-          if (!this.netplay.useSFU) return;
-          if (this.netplay._ejsClientAudioHealthTimer) return;
-
-          this.netplay._ejsClientAudioHealth = {
-            lastBytesReceived: null,
-            lastChangeAt: Date.now(),
-            lastCheckedAt: 0,
-            lastRecoverAt: 0,
-            recovering: false,
-          };
-
-          this.netplay._ejsAttemptClientSfuAudioRecovery = async (reason) => {
-            try {
-              if (!this.netplay || !this.isNetplay) return;
-              if (this.netplay.owner) return;
-              if (!this.netplay.useSFU) return;
-
-              const now = Date.now();
-              const health = this.netplay._ejsClientAudioHealth;
-              if (health && health.recovering) return;
-              if (
-                health &&
-                health.lastRecoverAt &&
-                now - health.lastRecoverAt < 15000
-              )
-                return;
-              if (health) {
-                health.recovering = true;
-                health.lastRecoverAt = now;
-              }
-
-              const producerId =
-                this.netplay._ejsSfuAudioProducerId ||
-                (this.netplay.audioConsumer &&
-                  this.netplay.audioConsumer.producerId) ||
-                null;
-
-              console.warn("[Netplay][SFU] Attempting client audio recovery", {
-                reason: reason || "unknown",
-                producerId,
-              });
-
-              // Close the existing consumer to force a fresh consume.
-              try {
-                if (this.netplay.audioConsumer) {
-                  this.netplay.audioConsumer.close();
-                }
-              } catch (e) {}
-              this.netplay.audioConsumer = null;
-
-              // Remove any existing audio tracks from the SFU MediaStream.
-              try {
-                if (this.netplay.sfuStream) {
-                  this.netplay.sfuStream.getTracks().forEach((t) => {
-                    if (t && t.kind === "audio") {
-                      try {
-                        this.netplay.sfuStream.removeTrack(t);
-                      } catch (e) {}
-                    }
-                  });
-                }
-              } catch (e) {}
-
-              // Allow re-consuming this producer id.
-              try {
-                if (producerId && this.netplay.sfuConsumedProducerIds) {
-                  this.netplay.sfuConsumedProducerIds.delete(producerId);
-                }
-              } catch (e) {}
-
-              // Re-consume the same producer id if we know it.
-              try {
-                if (
-                  producerId &&
-                  typeof this.netplayConsumeSFUProducer === "function"
-                ) {
-                  await this.netplayConsumeSFUProducer(producerId);
-                }
-              } catch (e) {
-                console.warn(
-                  "[Netplay][SFU] Client audio re-consume failed",
-                  e
-                );
-              }
-
-              // Nudge playback in case the element got stuck.
-              try {
-                const el =
-                  this.netplay && (this.netplay.audioEl || this.netplay.video);
-                if (el && typeof el.play === "function") {
-                  await el.play().catch(() => null);
-                }
-              } catch (e) {}
-            } finally {
-              try {
-                const health =
-                  this.netplay && this.netplay._ejsClientAudioHealth;
-                if (health) {
-                  health.recovering = false;
-                  health.lastBytesReceived = null;
-                  health.lastChangeAt = Date.now();
-                }
-              } catch (e) {}
-            }
-          };
-
-          this.netplay._ejsClientAudioHealthTimer = setInterval(async () => {
-            try {
-              if (!this.netplay || !this.isNetplay) return;
-              if (this.netplay.owner) return;
-              if (!this.netplay.useSFU) return;
-
-              const c = this.netplay.audioConsumer;
-              if (!c || c.closed) return;
-              if (typeof c.getStats !== "function") return;
-
-              // If the video element isn't playing yet (autoplay policies),
-              // don't treat this as an audio stall.
-              const v =
-                this.netplay && (this.netplay.audioEl || this.netplay.video);
-              if (v && v.paused && v.readyState >= 2) {
-                // Try a periodic play() nudge.
-                const now = Date.now();
-                if (
-                  !this.netplay._ejsLastPlayNudgeAt ||
-                  now - this.netplay._ejsLastPlayNudgeAt > 15000
-                ) {
-                  this.netplay._ejsLastPlayNudgeAt = now;
-                  try {
-                    await v.play();
-                  } catch (e) {}
-                }
-                return;
-              }
-
-              const now = Date.now();
-              const health = this.netplay._ejsClientAudioHealth;
-              if (
-                health &&
-                health.lastCheckedAt &&
-                now - health.lastCheckedAt < 2500
-              )
-                return;
-              if (health) health.lastCheckedAt = now;
-
-              const stats = await c.getStats().catch(() => null);
-              const bytes =
-                typeof this._ejsExtractInboundAudioBytesReceived === "function"
-                  ? this._ejsExtractInboundAudioBytesReceived(stats)
-                  : null;
-              if (typeof bytes !== "number") return;
-
-              if (health.lastBytesReceived === null) {
-                health.lastBytesReceived = bytes;
-                health.lastChangeAt = now;
-                return;
-              }
-
-              if (bytes > health.lastBytesReceived) {
-                health.lastBytesReceived = bytes;
-                health.lastChangeAt = now;
-                return;
-              }
-
-              // No inbound progress for a while: attempt recovery.
-              if (now - health.lastChangeAt > 12000) {
-                await this.netplay._ejsAttemptClientSfuAudioRecovery(
-                  "consumer-stalled"
-                );
-              }
-            } catch (e) {
-              // ignore
-            }
-          }, 5000);
-        } catch (e) {
-          // ignore
-        }
-      };
-    }
-
-    // Client-side SFU audio silence detection: bytes can keep flowing while the
-    // rendered audio gets stuck silent (common on some mobile browsers).
-    // Use an analyser to detect prolonged silence and trigger a re-consume.
-    if (typeof this._ejsEnsureClientSfuAudioSilenceMonitor !== "function") {
-      this._ejsEnsureClientSfuAudioSilenceMonitor = () => {
-        try {
-          if (!this.netplay || !this.isNetplay) return;
-          if (this.netplay.owner) return;
-          if (!this.netplay.useSFU) return;
-          if (this.netplay._ejsClientAudioSilenceTimer) return;
-
-          const silenceMs =
-            typeof window !== "undefined" &&
-            typeof window.EJS_NETPLAY_AUDIO_SILENCE_MS === "number" &&
-            window.EJS_NETPLAY_AUDIO_SILENCE_MS > 0
-              ? window.EJS_NETPLAY_AUDIO_SILENCE_MS
-              : 25000;
-          const rmsThreshold =
-            typeof window !== "undefined" &&
-            typeof window.EJS_NETPLAY_AUDIO_SILENCE_RMS === "number" &&
-            window.EJS_NETPLAY_AUDIO_SILENCE_RMS > 0
-              ? window.EJS_NETPLAY_AUDIO_SILENCE_RMS
-              : 0.003;
-
-          this.netplay._ejsClientAudioSilence = {
-            lastNonSilentAt: Date.now(),
-            lastRecoverAt: 0,
-            trackId: null,
-            ctx: null,
-            analyser: null,
-            data: null,
-            source: null,
-          };
-
-          const ensureGraph = (stream, trackId) => {
-            const st = this.netplay._ejsClientAudioSilence;
-            if (!st) return false;
-
-            if (st.trackId === trackId && st.ctx && st.analyser && st.data) {
-              return true;
-            }
-
-            // Tear down any prior graph.
-            try {
-              if (st.source) st.source.disconnect();
-            } catch (e) {}
-            try {
-              if (st.analyser) st.analyser.disconnect();
-            } catch (e) {}
-            st.source = null;
-            st.analyser = null;
-            st.data = null;
-            st.trackId = trackId;
-
-            try {
-              const AC = window.AudioContext || window.webkitAudioContext;
-              if (typeof AC !== "function") return false;
-              if (!st.ctx || st.ctx.state === "closed") {
-                st.ctx = new AC({ latencyHint: "interactive" });
-              }
-              st.analyser = st.ctx.createAnalyser();
-              st.analyser.fftSize = 2048;
-              st.data = new Uint8Array(st.analyser.fftSize);
-              st.source = st.ctx.createMediaStreamSource(stream);
-              st.source.connect(st.analyser);
-              st.lastNonSilentAt = Date.now();
-              return true;
-            } catch (e) {
-              return false;
-            }
-          };
-
-          const measureRms = () => {
-            const st = this.netplay._ejsClientAudioSilence;
-            if (!st || !st.analyser || !st.data) return null;
-            try {
-              st.analyser.getByteTimeDomainData(st.data);
-              let sumSq = 0;
-              for (let i = 0; i < st.data.length; i++) {
-                const v = (st.data[i] - 128) / 128;
-                sumSq += v * v;
-              }
-              return Math.sqrt(sumSq / st.data.length);
-            } catch (e) {
-              return null;
-            }
-          };
-
-          this.netplay._ejsClientAudioSilenceTimer = setInterval(async () => {
-            try {
-              if (!this.netplay || !this.isNetplay) return;
-              if (this.netplay.owner) return;
-              if (!this.netplay.useSFU) return;
-
-              const a = this.netplay.audioEl;
-              if (a) {
-                // If it got paused, nudge play.
-                if (a.paused && a.readyState >= 2) {
-                  try {
-                    await a.play();
-                  } catch (e) {}
-                  return;
-                }
-                // If user muted/volume=0, don't treat silence as a failure.
-                if (a.muted || a.volume === 0) return;
-              }
-
-              const stream =
-                this.netplay.sfuAudioStream || this.netplay.sfuStream;
-              const track =
-                stream && stream.getAudioTracks
-                  ? stream.getAudioTracks()[0]
-                  : null;
-              if (!track) return;
-
-              // Only run silence detection when bytes are still flowing (otherwise
-              // the bytesReceived stall monitor should handle it).
-              const health = this.netplay._ejsClientAudioHealth;
-              const now = Date.now();
-              if (!health || !health.lastChangeAt) return;
-              if (now - health.lastChangeAt > 8000) return;
-
-              const ok = ensureGraph(stream, track.id);
-              if (!ok) return;
-
-              const st = this.netplay._ejsClientAudioSilence;
-              if (st && st.ctx && st.ctx.state === "suspended") {
-                try {
-                  await st.ctx.resume();
-                } catch (e) {}
-              }
-
-              const rms = measureRms();
-              if (typeof rms === "number" && rms > rmsThreshold) {
-                if (st) st.lastNonSilentAt = now;
-                return;
-              }
-
-              if (!st) return;
-              if (now - st.lastNonSilentAt < silenceMs) return;
-              if (st.lastRecoverAt && now - st.lastRecoverAt < 20000) return;
-
-              st.lastRecoverAt = now;
-              st.lastNonSilentAt = now;
-              if (
-                this.netplay &&
-                typeof this.netplay._ejsAttemptClientSfuAudioRecovery ===
-                  "function"
-              ) {
-                await this.netplay._ejsAttemptClientSfuAudioRecovery(
-                  "silence-detected"
-                );
-              }
-            } catch (e) {
-              // ignore
-            }
-          }, 2000);
-        } catch (e) {
-          // ignore
-        }
-      };
-    }
-
-    function guidGenerator() {
-      const S4 = function () {
-        return (((1 + Math.random()) * 0x10000) | 0).toString(16).substring(1);
-      };
-      return (
-        S4() +
-        S4() +
-        "-" +
-        S4() +
-        "-" +
-        S4() +
-        "-" +
-        S4() +
-        "-" +
-        S4() +
-        S4() +
-        S4()
-      );
-    }
-    this.getNativeResolution = function () {
-      if (this.Module && this.Module.getNativeResolution) {
-        try {
-          const res = this.Module.getNativeResolution();
-          console.log("Native resolution from Module:", res);
-          return res;
-        } catch (error) {
-          console.error("Failed to get native resolution:", error);
-          return {
-            width: 640,
-            height: 480,
-          };
-        }
-      }
-      return {
-        width: 640,
-        height: 480,
-      };
-    };
-
-    this.netplayGetUserIndex = function () {
-      if (!this.isNetplay || !this.netplay.players || !this.netplay.playerID) {
-        console.warn(
-          "netplayGetUserIndex: Netplay not active or players/playerID undefined"
-        );
-        return 0;
-      }
-      const playerIds = Object.keys(this.netplay.players);
-      const index = playerIds.indexOf(this.netplay.playerID);
-      return index === -1 ? 0 : index;
-    };
-
-    // #region agent log
-    fetch("http://127.0.0.1:7242/ingest/22e800bc-6bc6-4492-ae2b-c74b05fdebc4", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        location: "emulator.js:9518",
-        message: "Before setting simulateInput",
-        data: {
-          netplayExists: typeof this.netplay !== "undefined",
-          netplayIsNull: this.netplay === null,
-          netplayType: typeof this.netplay,
-        },
-        timestamp: Date.now(),
-        sessionId: "debug-session",
-        runId: "run1",
-        hypothesisId: "B",
-      }),
-    }).catch(() => {});
-    // #endregion
+    // Initialize this.netplay if it doesn't exist
     if (!this.netplay) {
-      // #region agent log
-      fetch(
-        "http://127.0.0.1:7242/ingest/22e800bc-6bc6-4492-ae2b-c74b05fdebc4",
-        {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            location: "emulator.js:9518",
-            message: "this.netplay is undefined, initializing",
-            data: {},
-            timestamp: Date.now(),
-            sessionId: "debug-session",
-            runId: "run1",
-            hypothesisId: "B",
-          }),
-        }
-      ).catch(() => {});
-      // #endregion
       this.netplay = {};
     }
-    this.netplay.simulateInput = (player, index, value) => {
-      console.log("netplay.simulateInput called:", {
-        player,
-        index,
-        value,
-        playerIndex: this.netplayGetUserIndex(),
-      });
-      if (
-        !this.isNetplay ||
-        !this.gameManager ||
-        !this.gameManager.functions ||
-        !this.gameManager.functions.simulateInput
-      ) {
-        console.error(
-          "Cannot simulate input: Netplay not active or gameManager.functions.simulateInput undefined"
-        );
-        return;
-      }
-      let playerIndex = parseInt(player, 10);
-      if (isNaN(playerIndex)) playerIndex = 0;
-      if (playerIndex < 0) playerIndex = 0;
-      if (playerIndex > 3) playerIndex = 3;
 
-      // Client slot enforcement: use the lobby-selected slot for outgoing inputs.
-      // (Some client code paths send inputs via netplaySendMessage("sync-control")
-      // instead of the SFU datachannel hook.)
-      if (this.netplay && !this.netplay.owner) {
-        try {
-          const slotRaw =
-            this.netplay.localSlot ??
-            this.netplayPreferredSlot ??
-            window.EJS_NETPLAY_PREFERRED_SLOT ??
-            0;
-          let slot = parseInt(slotRaw, 10);
-          if (!isNaN(slot)) {
-            if (slot < 0) slot = 0;
-            if (slot > 3) slot = 3;
-            playerIndex = slot;
-          }
-        } catch (e) {
-          // ignore
-        }
-      }
-      let frame = this.netplay.currentFrame || 0;
-      if (this.netplay.owner) {
-        if (!this.netplay.inputsData[frame])
-          this.netplay.inputsData[frame] = [];
-        this.netplay.inputsData[frame].push({
-          frame: frame,
-          connected_input: [playerIndex, index, value],
-        });
-        this.gameManager.functions.simulateInput(playerIndex, index, value);
-      } else {
-        this.gameManager.functions.simulateInput(playerIndex, index, value);
-        if (this.netplaySendMessage) {
-          this.netplaySendMessage({
-            "sync-control": [
-              {
-                frame: frame + 20,
-                connected_input: [playerIndex, index, value],
-              },
-            ],
-          });
-        } else {
-          console.error("netplaySendMessage is undefined");
-        }
-      }
-    };
-
-    this.netplayUpdateTableList = async () => {
-      if (!this.netplay || !this.netplay.table) {
-        console.error("netplay or netplay.table is undefined");
-        return;
-      }
-
-      const addToTable = (id, name, current, max, hasPassword) => {
-        const row = this.createElement("tr");
-        row.classList.add("ejs_netplay_table_row");
-        const addCell = (text) => {
-          const item = this.createElement("td");
-          item.innerText = text;
-          item.style.padding = "10px 0";
-          item.style["text-align"] = "center";
-          row.appendChild(item);
-          return item;
-        };
-        addCell(name).style["text-align"] = "left";
-        addCell(current + "/" + max).style.width = "80px";
-        const parent = addCell("");
-        parent.style.width = "80px";
-        this.netplay.table.appendChild(row);
-
-        if (current < max) {
-          const join = this.createElement("button");
-          join.classList.add("ejs_netplay_join_button", "ejs_button_button");
-          join.style["background-color"] = "rgba(var(--ejs-primary-color),1)";
-          join.innerText = this.localization("Join");
-          parent.appendChild(join);
-
-          this.addEventListener(join, "click", () => {
-            if (hasPassword) {
-              let password = prompt("Please enter the room password:");
-              if (password !== null) {
-                password = password.trim();
-                this.netplayJoinRoom(id, name, max, password);
-              }
-            } else {
-              this.netplayJoinRoom(id, name, max, null);
-            }
-          });
-        }
-      };
-
-      try {
-        const open = await this.netplayGetOpenRooms();
-        this.netplay.table.innerHTML = "";
-        for (const k in open) {
-          addToTable(
-            k,
-            open[k].room_name,
-            open[k].current,
-            open[k].max,
-            open[k].hasPassword
-          );
-        }
-      } catch (e) {
-        console.error("Could not update room list:", e);
-      }
-    };
-
-    this.netplayGetOpenRooms = async () => {
-      if (!this.netplay.url) {
-        console.error("netplay.url is undefined");
-        return {};
-      }
-      try {
-        const response = await fetch(
-          this.netplay.url +
-            "/list?domain=" +
-            window.location.host +
-            "&game_id=" +
-            this.config.gameId
-        );
-
-        // Check for HTTP error status codes (like 503)
-        if (!response.ok) {
-          console.log(`Room list fetch failed with status ${response.status}`);
-          // Trigger token refresh for auth errors
-          if (window.handleSfuAuthError) {
-            console.log("HTTP error detected, attempting token refresh...");
-            window.handleSfuAuthError("read");
-          }
-          return {};
-        }
-
-        const data = await response.text();
-        console.log("Fetched open rooms:", data);
-        const parsed = JSON.parse(data);
-        // Normalize response formats: server may return either an object mapping
-        // roomName -> info, or { rooms: [ { room_name, players, maxPlayers, hasPassword } ] }
-        if (parsed && parsed.rooms && Array.isArray(parsed.rooms)) {
-          const out = {};
-          for (const r of parsed.rooms) {
-            const name = r.room_name || r.name || "";
-            out[name] = {
-              room_name: r.room_name || name,
-              current: r.players || r.current || 0,
-              max: r.maxPlayers || r.max || 0,
-              hasPassword: !!r.hasPassword,
-            };
-          }
-          return out;
-        }
-        return parsed || {};
-      } catch (error) {
-        console.error("Error fetching open rooms:", error);
-
-        // for room listings, attempt token refresh on any error.
-        // Should be safe because token refresh is idempotent.
-        if (window.handleSfuAuthError) {
-          console.log("Room listing failed, attempting token refresh...");
-          window.handleSfuAuthError("read");
-        }
-
-        return {};
-      }
-    };
-
-    this.netplayUpdateListStart = () => {
-      if (!this.netplayUpdateTableList) {
-        console.error("netplayUpdateTableList is undefined");
-        return;
-      }
-      this.netplay.updateListInterval = setInterval(
-        this.netplayUpdateTableList.bind(this),
-        1000
-      );
-    };
-
-    this.netplayUpdateListStop = () => {
-      clearInterval(this.netplay.updateListInterval);
-    };
-
-    this.netplayShowOpenRoomDialog = () => {
-      if (
-        !this.createSubPopup ||
-        !this.createElement ||
-        !this.localization ||
-        !this.addEventListener
-      ) {
-        console.error(
-          "Required methods for netplayShowOpenRoomDialog are undefined"
-        );
-        return;
-      }
-      this.originalControls = JSON.parse(JSON.stringify(this.controls));
-      const popups = this.createSubPopup();
-      this.netplayMenu.appendChild(popups[0]);
-      popups[1].classList.add("ejs_cheat_parent");
-      const popup = popups[1];
-
-      const header = this.createElement("div");
-      const title = this.createElement("h2");
-      title.innerText = this.localization("Create a room");
-      title.classList.add("ejs_netplay_name_heading");
-      header.appendChild(title);
-      popup.appendChild(header);
-
-      const main = this.createElement("div");
-      main.classList.add("ejs_netplay_header");
-      const rnhead = this.createElement("strong");
-      rnhead.innerText = this.localization("Room Name");
-      const rninput = this.createElement("input");
-      rninput.type = "text";
-      rninput.setAttribute("maxlength", "20");
-
-      const maxhead = this.createElement("strong");
-      maxhead.innerText = this.localization("Max Players");
-      const maxinput = this.createElement("select");
-      const playerCounts = ["2", "3", "4"];
-      playerCounts.forEach((count) => {
-        const option = this.createElement("option");
-        option.value = count;
-        option.innerText = count;
-        option.classList.add("option-enabled");
-        maxinput.appendChild(option);
-      });
-
-      const pwhead = this.createElement("strong");
-      pwhead.innerText = this.localization("Password (optional)");
-      const pwinput = this.createElement("input");
-      pwinput.type = "text";
-      pwinput.setAttribute("maxlength", "20");
-
-      main.appendChild(rnhead);
-      main.appendChild(this.createElement("br"));
-      main.appendChild(rninput);
-      main.appendChild(maxhead);
-      main.appendChild(this.createElement("br"));
-      main.appendChild(maxinput);
-      main.appendChild(pwhead);
-      main.appendChild(this.createElement("br"));
-      main.appendChild(pwinput);
-      popup.appendChild(main);
-
-      popup.appendChild(this.createElement("br"));
-      const submit = this.createElement("button");
-      submit.classList.add("ejs_button_button", "ejs_popup_submit");
-      submit.style["background-color"] = "rgba(var(--ejs-primary-color),1)";
-      submit.style.margin = "0 10px";
-      submit.innerText = this.localization("Submit");
-      popup.appendChild(submit);
-      this.addEventListener(submit, "click", () => {
-        console.log("Submit button clicked");
-        if (!rninput.value.trim()) {
-          console.log("Room name is empty, aborting");
-          return;
-        }
-        const roomName = rninput.value.trim();
-        const maxPlayers = parseInt(maxinput.value);
-        const password = pwinput.value.trim();
-        console.log("Creating room with:", {
-          roomName,
-          maxPlayers,
-          password,
-        });
-        this.netplayOpenRoom(roomName, maxPlayers, password);
-        popups[0].remove();
-      });
-      const close = this.createElement("button");
-      close.classList.add("ejs_button_button", "ejs_popup_submit");
-      close.style.margin = "0 10px";
-      close.innerText = this.localization("Close");
-      popup.appendChild(close);
-      this.addEventListener(close, "click", () => popups[0].remove());
-    };
-
-    this.netplayInitWebRTCStream = async () => {
-      if (this.netplay.localStream) {
-        console.log("netplayInitWebRTCStream: localStream already present");
-        return true;
-      }
-      console.log("Initializing WebRTC stream for owner...");
-      const { width: nativeWidth, height: nativeHeight } =
-        this.getNativeResolution();
-      if (this.canvas) {
-        this.canvas.width = nativeWidth;
-        this.canvas.height = nativeHeight;
-      }
-      if (this.netplay.owner && this.Module && this.Module.setCanvasSize) {
-        this.Module.setCanvasSize(nativeWidth, nativeHeight);
-        console.log("Set emulator canvas size to native:", {
-          width: nativeWidth,
-          height: nativeHeight,
-        });
-      }
-
-      // Some Emscripten cores set inline CSS pixel sizes when setCanvasSize()
-      // is called, which can cause the canvas to overflow/clamp off-screen in
-      // responsive layouts.
-      //
-      // IMPORTANT: Netplay may already be using a pixel-based aspect fitter
-      // (see this._netplayResizeCanvas) which is triggered on resize/fullscreen.
-      // Do NOT force width/height=100% here or we will temporarily override the
-      // fitter until the next resize event.
-      if (this.canvas && this.canvas.style) {
-        Object.assign(this.canvas.style, {
-          maxWidth: "100%",
-          maxHeight: "100%",
-          display: "block",
-          objectFit: "contain",
-          objectPosition: "center",
-        });
-
-        // First-time netplay init can be affected by delayed inline styles from
-        // the core/runtime (e.g. position:fixed/absolute + transforms). That
-        // can shift the canvas off-screen until the user triggers a resize.
-        // Normalize alignment without touching width/height (the aspect fitter
-        // owns those).
-        const normalizeOwnerCanvasAlignment = () => {
-          try {
-            if (!this.netplay || !this.netplay.owner || !this.canvas) return;
-            Object.assign(this.canvas.style, {
-              position: "relative",
-              top: "0",
-              left: "0",
-              right: "auto",
-              bottom: "auto",
-              transform: "none",
-              marginLeft: "auto",
-              marginRight: "auto",
-            });
-          } catch (e) {
-            // ignore
-          }
-        };
-        normalizeOwnerCanvasAlignment();
-        if (typeof window !== "undefined" && window.requestAnimationFrame) {
-          window.requestAnimationFrame(normalizeOwnerCanvasAlignment);
-        }
-        setTimeout(normalizeOwnerCanvasAlignment, 50);
-        setTimeout(normalizeOwnerCanvasAlignment, 250);
-        setTimeout(normalizeOwnerCanvasAlignment, 1000);
-
-        if (typeof this._netplayResizeCanvas === "function") {
-          try {
-            this._netplayResizeCanvas();
-            // Layout may not be settled yet; re-run shortly.
-            if (typeof window !== "undefined" && window.requestAnimationFrame) {
-              window.requestAnimationFrame(() => {
-                if (typeof this._netplayResizeCanvas === "function") {
-                  this._netplayResizeCanvas();
-                }
-              });
-            }
-            setTimeout(() => {
-              if (typeof this._netplayResizeCanvas === "function") {
-                this._netplayResizeCanvas();
-              }
-            }, 150);
-          } catch (e) {
-            // ignore
-          }
-        }
-      }
-
-      // Wait for the emulator canvas to have non-zero layout size before
-      // attempting to capture it. Some browsers / Emscripten setups may
-      // temporarily report 0x0 while the core initializes or the DOM
-      // layout is updated, which causes repeated "Could not get screen
-      // dimensions" errors and broken capture.
-      const waitForCanvasSize = async (timeout = 3000, interval = 100) => {
-        const start = Date.now();
-        while (
-          (this.canvas.clientWidth === 0 || this.canvas.clientHeight === 0) &&
-          Date.now() - start < timeout
-        ) {
-          await new Promise((r) => setTimeout(r, interval));
-        }
-        return this.canvas.clientWidth > 0 && this.canvas.clientHeight > 0;
-      };
-
-      const hasSize = await waitForCanvasSize(3000, 100);
-      if (!hasSize) {
-        console.warn(
-          "Canvas reported zero layout size after wait; falling back to native resolution"
-        );
-        // Ensure canvas logical size is set from native resolution so
-        // captureStream has sensible dimensions even if layout is zero.
-        const { width: fallbackW, height: fallbackH } =
-          this.getNativeResolution() || { width: 640, height: 480 };
-        this.canvas.width = fallbackW;
-        this.canvas.height = fallbackH;
-      }
-
-      // Try capture with retries because some cores may briefly report
-      // invalid canvas state while initializing. Return true on success.
-      let stream = null;
-      const maxAttempts = 3;
-      for (let attempt = 1; attempt <= maxAttempts; attempt++) {
-        // Prefer capturing directly from the emulator canvas.
-        // Some cores render via WebGL, and copying into a 2D canvas can result
-        // in black frames. The helper will still fall back to a copy-canvas
-        // when the canvas has 0x0 size.
-        stream = this.collectScreenRecordingMediaTracks(this.canvas, 30);
-        if (stream && stream.getTracks().length) break;
-        console.warn(`capture attempt ${attempt} failed; retrying...`);
-        await new Promise((r) => setTimeout(r, 500 * attempt));
-      }
-      if (!stream || !stream.getTracks().length) {
-        console.error("Failed to capture stream after retries:", stream);
-        this.displayMessage("Failed to initialize video stream", 5000);
-        return false;
-      }
-      const videoTrack = stream.getVideoTracks()[0];
-      if (videoTrack) {
-        // Always prefer native capture resolution. Simulcast encodings handle
-        // downscaling; forcing 1280x720 here would make "High" non-native.
-        const targetW = nativeWidth;
-        const targetH = nativeHeight;
-        videoTrack
-          .applyConstraints({
-            width: {
-              ideal: targetW,
-            },
-            height: {
-              ideal: targetH,
-            },
-            frameRate: {
-              ideal: 30,
-              max: 30,
-            },
-          })
-          .catch((err) => console.error("Constraint error:", err));
-        console.log("Track settings:", videoTrack.getSettings());
-      }
-      stream.getTracks().forEach((track) => {
-        console.log("Track:", {
-          kind: track.kind,
-          enabled: track.enabled,
-          muted: track.muted,
-        });
-        track.onmute = () => console.warn("Track muted:", track.id);
-        track.onended = () => console.warn("Track ended:", track.id);
-      });
-      this.netplay.localStream = stream;
-      console.log("netplayInitWebRTCStream: localStream initialized", {
-        id: stream.id,
-      });
-
-      // After successfully acquiring the capture stream, request an immediate
-      // layout re-fit. Some embeds rely on the app's global resize handler
-      // (not the netplay fitter) to update the canvas buffer dimensions.
-      // Without this, the host can remain at the native 640x480 buffer size
-      // until the user manually resizes the window.
-      try {
-        const requestHostCanvasRelayout = () => {
-          try {
-            if (typeof this._netplayResizeCanvas === "function") {
-              this._netplayResizeCanvas();
-            }
-          } catch (e) {
-            // ignore
-          }
-          try {
-            if (typeof window !== "undefined" && window.dispatchEvent) {
-              window.dispatchEvent(new Event("resize"));
-            }
-          } catch (e) {
-            // ignore
-          }
-        };
-        requestHostCanvasRelayout();
-        if (typeof window !== "undefined" && window.requestAnimationFrame) {
-          window.requestAnimationFrame(requestHostCanvasRelayout);
-        }
-        setTimeout(requestHostCanvasRelayout, 50);
-        setTimeout(requestHostCanvasRelayout, 250);
-      } catch (e) {
-        // ignore
-      }
-
-      // Helper to re-create SFU producers from a fresh capture.
-      // Used on resume to recover from capture tracks that can freeze after pause.
-      this.netplayReproduceHostVideoToSFU = async (reason = "unknown") => {
-        try {
-          if (!this.netplay || !this.netplay.owner || !this.netplay.useSFU)
-            return false;
-
-          const now = Date.now();
-          if (
-            this.netplay._lastSFUReproduceAt &&
-            now - this.netplay._lastSFUReproduceAt < 1500
-          )
-            return false;
-          this.netplay._lastSFUReproduceAt = now;
-
-          console.log("[Netplay] Reproducing SFU media from capture", {
-            reason,
-          });
-
-          const oldStream = this.netplay.localStream;
-
-          const refreshed = this.collectScreenRecordingMediaTracks(
-            this.canvas,
-            30
-          );
-          if (!refreshed || !refreshed.getTracks().length) {
-            console.error(
-              "[Netplay] Failed to re-capture stream for SFU",
-              refreshed
-            );
-            return false;
-          }
-          const videoTrack = refreshed.getVideoTracks()[0];
-          const audioTrack = refreshed.getAudioTracks()[0];
-
-          try {
-            this.netplay._ejsHostAudioTrack = audioTrack || null;
-          } catch (e) {
-            // ignore
-          }
-
-          try {
-            if (
-              typeof this._ejsAttachHostAudioRecoveryHandlers === "function"
-            ) {
-              this._ejsAttachHostAudioRecoveryHandlers(refreshed, "reproduce");
-            }
-            if (
-              typeof this._ejsEnsureHostAudioProducerHealthMonitor ===
-              "function"
-            ) {
-              this._ejsEnsureHostAudioProducerHealthMonitor();
-            }
-          } catch (e) {
-            // ignore
-          }
-
-          if (!this.netplay.sendTransport) {
-            await this.netplayCreateSFUTransports();
-          }
-
-          if (!this.netplay.sendTransport) {
-            console.warn("[Netplay] Cannot re-produce: sendTransport missing");
-            return false;
-          }
-
-          const forceReproduceVideo =
-            typeof reason === "string" &&
-            (reason.includes("codec") || reason.includes("svc"));
-
-          if (videoTrack) {
-            const existing = this.netplay.producer;
-            if (
-              existing &&
-              !existing.closed &&
-              !forceReproduceVideo &&
-              typeof existing.replaceTrack === "function"
-            ) {
-              await existing.replaceTrack({ track: videoTrack });
-              console.log("[Netplay] Replaced SFU video track (replaceTrack)");
-            } else {
-              if (existing) {
-                try {
-                  existing.close();
-                } catch (e) {}
-                this.netplay.producer = null;
-              }
-
-              const produceParams = {
-                track: videoTrack,
-              };
-              let preferredCodec = null;
-              try {
-                preferredCodec =
-                  typeof this.netplayPickSFUVideoCodec === "function"
-                    ? this.netplayPickSFUVideoCodec()
-                    : null;
-                if (preferredCodec) produceParams.codec = preferredCodec;
-              } catch (e) {}
-
-              const codecMime =
-                preferredCodec && typeof preferredCodec.mimeType === "string"
-                  ? preferredCodec.mimeType.toLowerCase()
-                  : "";
-              const wantsVP9 = codecMime === "video/vp9";
-              const simulcastEnabled =
-                this.netplaySimulcastEnabled === true ||
-                window.EJS_NETPLAY_SIMULCAST === true;
-
-              if (wantsVP9) {
-                const normalizeVP9SVCMode = (v) => {
-                  const s = typeof v === "string" ? v.trim() : "";
-                  const sl = s.toLowerCase();
-                  if (sl === "l1t1") return "L1T1";
-                  if (sl === "l1t3") return "L1T3";
-                  if (sl === "l2t3") return "L2T3";
-                  return "L1T1";
-                };
-                const svcMode = normalizeVP9SVCMode(
-                  this.netplayVP9SVCMode ||
-                    window.EJS_NETPLAY_VP9_SVC_MODE ||
-                    "L1T1"
-                );
-                produceParams.encodings = [
-                  {
-                    scalabilityMode: svcMode,
-                    dtx: false,
-                  },
-                ];
-                produceParams.appData = Object.assign(
-                  {},
-                  produceParams.appData,
-                  {
-                    ejsSVC: true,
-                    ejsScalabilityMode: svcMode,
-                  }
-                );
-              } else if (simulcastEnabled) {
-                produceParams.encodings = [
-                  {
-                    rid: "h",
-                    scaleResolutionDownBy: 1,
-                    maxBitrate: 2500000,
-                  },
-                  {
-                    rid: "l",
-                    scaleResolutionDownBy: 2,
-                    maxBitrate: 900000,
-                  },
-                ];
-                produceParams.appData = {
-                  ejsSimulcast: true,
-                  ejsLayers: ["high", "low"],
-                };
-              }
-
-              this.netplay.producer = await this.netplay.sendTransport.produce(
-                produceParams
-              );
-              console.log(
-                "[Netplay] Produced video to SFU (reproduce), id=",
-                this.netplay.producer.id
-              );
-            }
-          } else {
-            console.warn("[Netplay] No video track available to re-produce");
-          }
-
-          if (audioTrack) {
-            const existingAudio = this.netplay.audioProducer;
-            if (
-              existingAudio &&
-              !existingAudio.closed &&
-              typeof existingAudio.replaceTrack === "function"
-            ) {
-              await existingAudio.replaceTrack({ track: audioTrack });
-              console.log("[Netplay] Replaced SFU audio track (replaceTrack)");
-            } else {
-              if (existingAudio) {
-                try {
-                  existingAudio.close();
-                } catch (e) {}
-                this.netplay.audioProducer = null;
-              }
-              this.netplay.audioProducer =
-                await this.netplay.sendTransport.produce({ track: audioTrack });
-              console.log(
-                "[Netplay] Produced audio to SFU (reproduce), id=",
-                this.netplay.audioProducer.id
-              );
-            }
-            try {
-              if (
-                typeof this._ejsEnsureHostAudioProducerHealthMonitor ===
-                "function"
-              ) {
-                this._ejsEnsureHostAudioProducerHealthMonitor();
-              }
-            } catch (e) {
-              // ignore
-            }
-          } else {
-            console.warn("[Netplay] No audio track available to re-produce");
-          }
-
-          // Swap streams only after the producers are updated, to avoid a brief
-          // drop while we stop old tracks.
-          this.netplay.localStream = refreshed;
-          try {
-            if (oldStream && oldStream.getTracks) {
-              oldStream.getTracks().forEach((t) => {
-                try {
-                  if (typeof t._ejsAudioCaptureCleanup === "function") {
-                    t._ejsAudioCaptureCleanup();
-                  }
-                } catch (e) {}
-                try {
-                  t.stop();
-                } catch (e) {}
-              });
-            }
-          } catch (e) {
-            // ignore
-          }
-          return true;
-        } catch (e) {
-          console.error("[Netplay] Failed to reproduce SFU video", e);
-          return false;
-        }
-      };
-
-      // Audio-only SFU recovery: refresh just the audio producer.
-      // This avoids jarring video resets when only audio stalls.
-      this.netplayReproduceHostAudioToSFU = async (reason = "unknown") => {
-        try {
-          if (!this.netplay || !this.netplay.owner || !this.netplay.useSFU)
-            return false;
-
-          const now = Date.now();
-          if (
-            this.netplay._lastSFUAudioReproduceAt &&
-            now - this.netplay._lastSFUAudioReproduceAt < 8000
-          )
-            return false;
-          this.netplay._lastSFUAudioReproduceAt = now;
-
-          console.log("[Netplay] Reproducing SFU audio from capture", {
-            reason,
-          });
-
-          const refreshed =
-            this.collectScreenRecordingMediaTracks(this.canvas, 30, {
-              audioOnly: true,
-            }) || this.collectScreenRecordingMediaTracks(this.canvas, 30);
-          if (!refreshed || !refreshed.getTracks().length) return false;
-          const audioTrack =
-            refreshed.getAudioTracks && refreshed.getAudioTracks()[0];
-          if (!audioTrack) return false;
-
-          // Stop any prior audio-only capture track/graph.
-          try {
-            const prev = this.netplay._ejsHostAudioTrack;
-            if (prev && prev !== audioTrack) {
-              try {
-                if (typeof prev._ejsAudioCaptureCleanup === "function") {
-                  prev._ejsAudioCaptureCleanup();
-                }
-              } catch (e) {}
-              try {
-                prev.stop();
-              } catch (e) {}
-            }
-          } catch (e) {
-            // ignore
-          }
-          this.netplay._ejsHostAudioTrack = audioTrack;
-
-          try {
-            if (
-              typeof this._ejsAttachHostAudioRecoveryHandlers === "function"
-            ) {
-              const ms = new MediaStream();
-              ms.addTrack(audioTrack);
-              this._ejsAttachHostAudioRecoveryHandlers(ms, "reproduce-audio");
-            }
-          } catch (e) {
-            // ignore
-          }
-
-          if (!this.netplay.sendTransport) {
-            await this.netplayCreateSFUTransports();
-          }
-          if (!this.netplay.sendTransport) return false;
-
-          const existingAudio = this.netplay.audioProducer;
-          if (
-            existingAudio &&
-            !existingAudio.closed &&
-            typeof existingAudio.replaceTrack === "function"
-          ) {
-            await existingAudio.replaceTrack({ track: audioTrack });
-            console.log("[Netplay] Replaced SFU audio track (replaceTrack)");
-          } else {
-            if (existingAudio) {
-              try {
-                existingAudio.close();
-              } catch (e) {}
-              this.netplay.audioProducer = null;
-            }
-            this.netplay.audioProducer =
-              await this.netplay.sendTransport.produce({ track: audioTrack });
-            console.log(
-              "[Netplay] Produced audio to SFU (reproduce-audio), id=",
-              this.netplay.audioProducer.id
-            );
-          }
-
-          try {
-            if (
-              typeof this._ejsEnsureHostAudioProducerHealthMonitor ===
-              "function"
-            ) {
-              this._ejsEnsureHostAudioProducerHealthMonitor();
-            }
-          } catch (e) {
-            // ignore
-          }
-
-          return true;
-        } catch (e) {
-          console.error("[Netplay] Failed to reproduce SFU audio", e);
-          return false;
-        }
-      };
-
-      // Host-side audio recovery/monitoring.
-      try {
-        if (typeof this._ejsAttachHostAudioRecoveryHandlers === "function") {
-          this._ejsAttachHostAudioRecoveryHandlers(stream, "initial");
-        }
-        if (
-          typeof this._ejsEnsureHostAudioProducerHealthMonitor === "function"
-        ) {
-          this._ejsEnsureHostAudioProducerHealthMonitor();
-        }
-      } catch (e) {
-        // ignore
-      }
-
-      // Install synthetic fallback if host video track mutes/ends
-      try {
-        const hostVideoTrack = stream.getVideoTracks()[0];
-        if (hostVideoTrack) {
-          const installSyntheticFallback = async () => {
-            if (this.netplay.syntheticFallbackActive) return;
-            console.warn(
-              "Host video track lost frames - installing synthetic fallback"
-            );
-            this.netplay.syntheticFallbackActive = true;
-
-            const { width: nw, height: nh } = this.getNativeResolution() || {
-              width: 640,
-              height: 480,
-            };
-            const canvas = document.createElement("canvas");
-            canvas.width = nw;
-            canvas.height = nh;
-            canvas.style.display = "none";
-            try {
-              document.body.appendChild(canvas);
-            } catch (e) {
-              /* ignore */
-            }
-            const ctx = canvas.getContext("2d");
-            let t = 0;
-            const iv = setInterval(() => {
-              try {
-                ctx.fillStyle = `hsl(${t % 360} 60% 50%)`.replace(/ /g, "");
-                ctx.fillRect(0, 0, canvas.width, canvas.height);
-                t += 6;
-              } catch (e) {}
-            }, 1000 / 30);
-
-            const s = canvas.captureStream(30);
-            this.netplay.synthetic = { canvas, interval: iv, stream: s };
-            const ttrack = s.getVideoTracks()[0];
-            try {
-              if (!this.netplay.sendTransport)
-                await this.netplayCreateSFUTransports();
-              if (this.netplay.producer) {
-                try {
-                  this.netplay.producer.close();
-                } catch (e) {}
-              }
-              const simulcast =
-                this.netplaySimulcastEnabled === true ||
-                window.EJS_NETPLAY_SIMULCAST === true;
-              const produceParams = {
-                track: ttrack,
-              };
-              let preferredCodec = null;
-              try {
-                preferredCodec =
-                  typeof this.netplayPickSFUVideoCodec === "function"
-                    ? this.netplayPickSFUVideoCodec()
-                    : null;
-                if (preferredCodec) produceParams.codec = preferredCodec;
-              } catch (e) {}
-
-              const codecMime =
-                preferredCodec && typeof preferredCodec.mimeType === "string"
-                  ? preferredCodec.mimeType.toLowerCase()
-                  : "";
-              const wantsVP9 = codecMime === "video/vp9";
-
-              if (wantsVP9) {
-                const normalizeVP9SVCMode = (v) => {
-                  const s = typeof v === "string" ? v.trim() : "";
-                  const sl = s.toLowerCase();
-                  if (sl === "l1t1") return "L1T1";
-                  if (sl === "l1t3") return "L1T3";
-                  if (sl === "l2t3") return "L2T3";
-                  return "L1T1";
-                };
-                const svcMode = normalizeVP9SVCMode(
-                  this.netplayVP9SVCMode ||
-                    window.EJS_NETPLAY_VP9_SVC_MODE ||
-                    "L1T1"
-                );
-                produceParams.encodings = [
-                  {
-                    scalabilityMode: svcMode,
-                    dtx: false,
-                  },
-                ];
-                produceParams.appData = Object.assign(
-                  {},
-                  produceParams.appData,
-                  {
-                    ejsSVC: true,
-                    ejsScalabilityMode: svcMode,
-                  }
-                );
-              } else if (simulcast) {
-                produceParams.encodings = [
-                  {
-                    rid: "h",
-                    scaleResolutionDownBy: 1,
-                    maxBitrate: 2500000,
-                  },
-                  {
-                    rid: "l",
-                    scaleResolutionDownBy: 2,
-                    maxBitrate: 900000,
-                  },
-                ];
-                produceParams.appData = {
-                  ejsSimulcast: true,
-                  ejsLayers: ["high", "low"],
-                };
-              }
-
-              this.netplay.producer = await this.netplay.sendTransport.produce(
-                produceParams
-              );
-              console.log(
-                "Produced synthetic fallback to SFU, id=",
-                this.netplay.producer.id
-              );
-            } catch (e) {
-              console.error("Failed to produce synthetic fallback", e);
-              clearInterval(iv);
-              if (canvas.parentNode) canvas.parentNode.removeChild(canvas);
-              this.netplay.syntheticFallbackActive = false;
-            }
-          };
-
-          const removeSyntheticFallback = async () => {
-            if (!this.netplay.syntheticFallbackActive) return;
-            console.log(
-              "Original host track resumed - removing synthetic fallback"
-            );
-            this.netplay.syntheticFallbackActive = false;
-            if (this.netplay.producer) {
-              try {
-                this.netplay.producer.close();
-              } catch (e) {}
-              this.netplay.producer = null;
-            }
-            if (this.netplay.synthetic) {
-              try {
-                clearInterval(this.netplay.synthetic.interval);
-              } catch (e) {}
-              try {
-                if (
-                  this.netplay.synthetic.canvas &&
-                  this.netplay.synthetic.canvas.parentNode
-                )
-                  this.netplay.synthetic.canvas.parentNode.removeChild(
-                    this.netplay.synthetic.canvas
-                  );
-              } catch (e) {}
-              this.netplay.synthetic = null;
-            }
-            try {
-              if (!this.netplay.sendTransport)
-                await this.netplayCreateSFUTransports();
-              const originalTrack = stream.getVideoTracks()[0];
-              if (originalTrack) {
-                const produceParams = {
-                  track: originalTrack,
-                };
-                let preferredCodec = null;
-                try {
-                  preferredCodec =
-                    typeof this.netplayPickSFUVideoCodec === "function"
-                      ? this.netplayPickSFUVideoCodec()
-                      : null;
-                  if (preferredCodec) produceParams.codec = preferredCodec;
-                } catch (e) {}
-
-                const codecMime =
-                  preferredCodec && typeof preferredCodec.mimeType === "string"
-                    ? preferredCodec.mimeType.toLowerCase()
-                    : "";
-                const wantsVP9 = codecMime === "video/vp9";
-                const simulcastEnabled =
-                  this.netplaySimulcastEnabled === true ||
-                  window.EJS_NETPLAY_SIMULCAST === true;
-
-                if (wantsVP9) {
-                  const normalizeVP9SVCMode = (v) => {
-                    const s = typeof v === "string" ? v.trim() : "";
-                    const sl = s.toLowerCase();
-                    if (sl === "l1t1") return "L1T1";
-                    if (sl === "l1t3") return "L1T3";
-                    if (sl === "l2t3") return "L2T3";
-                    return "L1T1";
-                  };
-                  const svcMode = normalizeVP9SVCMode(
-                    this.netplayVP9SVCMode ||
-                      window.EJS_NETPLAY_VP9_SVC_MODE ||
-                      "L1T1"
-                  );
-                  produceParams.encodings = [
-                    {
-                      scalabilityMode: svcMode,
-                      dtx: false,
-                    },
-                  ];
-                  produceParams.appData = Object.assign(
-                    {},
-                    produceParams.appData,
-                    {
-                      ejsSVC: true,
-                      ejsScalabilityMode: svcMode,
-                    }
-                  );
-                } else if (simulcastEnabled) {
-                  produceParams.encodings = [
-                    {
-                      rid: "h",
-                      scaleResolutionDownBy: 1,
-                      maxBitrate: 2500000,
-                    },
-                    {
-                      rid: "l",
-                      scaleResolutionDownBy: 2,
-                      maxBitrate: 900000,
-                    },
-                  ];
-                  produceParams.appData = {
-                    ejsSimulcast: true,
-                    ejsLayers: ["high", "low"],
-                  };
-                }
-
-                this.netplay.producer =
-                  await this.netplay.sendTransport.produce(produceParams);
-                console.log(
-                  "Re-produced original host track to SFU, id=",
-                  this.netplay.producer.id
-                );
-              }
-            } catch (e) {
-              console.error("Failed to re-produce original track", e);
-            }
-          };
-
-          hostVideoTrack.onmute = () => {
-            console.warn("Host video track muted", hostVideoTrack.id);
-            installSyntheticFallback();
-          };
-          hostVideoTrack.onended = () => {
-            console.warn("Host video track ended", hostVideoTrack.id);
-            installSyntheticFallback();
-          };
-          hostVideoTrack.onunmute = () => {
-            console.log("Host video track unmuted", hostVideoTrack.id);
-            removeSyntheticFallback();
-          };
-        }
-      } catch (e) {
-        console.warn("Failed to attach synthetic fallback handlers", e);
-      }
-      return true;
-    };
-
-    // Attempt to use SFU (mediasoup) for netplay. Falls back to peer-to-peer if unavailable.
-    this.netplayAttemptSFU = async () => {
-      if (!this.netplay.socket || !this.netplay.url) return false;
-      if (this.netplay.useSFU !== undefined) return this.netplay.useSFU;
-      try {
-        const available = await new Promise((resolve) => {
-          this.netplay.socket.emit("sfu-available", {}, (resp) =>
-            resolve(resp && resp.available)
-          );
-        });
-        if (!available) {
-          this.netplay.useSFU = false;
-          return false;
-        }
-
-        // Use a browser-provided `mediasoupClient` global (UMD/browser bundle).
-        // Do NOT attempt to load the library from UNPKG here because many
-        // of the package entry points are CommonJS and will throw
-        // "exports is not defined" when executed in the browser.
-        const mediasoupClient =
-          window.mediasoupClient || window.mediasoup || null;
-        if (!mediasoupClient) {
-          console.warn(
-            "mediasoup-client not available in browser; SFU disabled.\n" +
-              "To enable SFU in-browser include a browser-compatible mediasoup-client bundle that sets `window.mediasoupClient`."
-          );
-          this.netplay.useSFU = false;
-          return false;
-        }
-
-        this.netplay.mediasoupClient = mediasoupClient;
-        this.netplay.device = new mediasoupClient.Device();
-
-        // Request router RTP capabilities from server
-        const routerRtpCapabilities = await new Promise((resolve, reject) => {
-          this.netplay.socket.emit(
-            "sfu-get-router-rtp-capabilities",
-            {},
-            (err, data) => {
-              if (err) return reject(err);
-              resolve(data);
-            }
-          );
-        });
-
-        // Keep for codec preference decisions.
-        this.netplay.routerRtpCapabilities = routerRtpCapabilities;
-
-        await this.netplay.device.load({ routerRtpCapabilities });
-
-        // Helper used by SFU producers to select/force a video codec.
-        // - If Host Codec is Auto: pick first supported codec in router order.
-        // - If forced: pick that codec if supported, else fall back to Auto.
-        this.netplayPickSFUVideoCodec = () => {
-          try {
-            const normalizeHostCodec = (v) => {
-              const s = typeof v === "string" ? v.trim().toLowerCase() : "";
-              if (s === "vp9" || s === "h264" || s === "vp8" || s === "auto")
-                return s;
-              return "auto";
-            };
-            const mode = normalizeHostCodec(
-              (typeof this.netplayHostCodec === "string"
-                ? this.netplayHostCodec
-                : null) ||
-                (typeof window.EJS_NETPLAY_HOST_CODEC === "string"
-                  ? window.EJS_NETPLAY_HOST_CODEC
-                  : null) ||
-                "auto"
-            );
-
-            const routerCaps =
-              (this.netplay && this.netplay.routerRtpCapabilities) || null;
-            const routerCodecs =
-              routerCaps && Array.isArray(routerCaps.codecs)
-                ? routerCaps.codecs
-                : [];
-
-            // Preserve router order.
-            const candidates = routerCodecs.filter((c) => {
-              const mt = c && typeof c.mimeType === "string" ? c.mimeType : "";
-              const mtl = mt.toLowerCase();
-              if (!mtl.startsWith("video/")) return false;
-              if (mtl === "video/rtx") return false;
-              return (
-                mtl === "video/vp9" ||
-                mtl === "video/h264" ||
-                mtl === "video/vp8"
-              );
-            });
-
-            const caps =
-              typeof RTCRtpSender !== "undefined" &&
-              RTCRtpSender.getCapabilities &&
-              RTCRtpSender.getCapabilities("video")
-                ? RTCRtpSender.getCapabilities("video").codecs || []
-                : [];
-            const supports = (mimeLower) =>
-              caps.some(
-                (cc) =>
-                  cc &&
-                  typeof cc.mimeType === "string" &&
-                  cc.mimeType.toLowerCase() === mimeLower
-              );
-
-            const wantMime =
-              mode === "vp9"
-                ? "video/vp9"
-                : mode === "h264"
-                ? "video/h264"
-                : mode === "vp8"
-                ? "video/vp8"
-                : null;
-            if (wantMime) {
-              const forced = candidates.find(
-                (c) => c && c.mimeType && c.mimeType.toLowerCase() === wantMime
-              );
-              if (forced && supports(wantMime)) return forced;
-            }
-
-            for (const c of candidates) {
-              const mt = c && typeof c.mimeType === "string" ? c.mimeType : "";
-              const mtl = mt.toLowerCase();
-              if (supports(mtl)) return c;
-            }
-          } catch (e) {}
-          return null;
-        };
-
-        this.netplay.useSFU = true;
-        console.log("SFU available and mediasoup-client initialized");
-        return true;
-      } catch (err) {
-        console.warn("SFU attempt failed:", err);
-        this.netplay.useSFU = false;
-        return false;
-      }
-    };
-
-    // Create SFU transports for send/recv depending on role
-    this.netplayCreateSFUTransports = async () => {
-      // Ensure required pieces are present; wait briefly for socket/device to appear
-      const waitFor = async (condFn, timeout = 5000, interval = 200) => {
-        const t0 = Date.now();
-        while (!condFn() && Date.now() - t0 < timeout) {
-          await new Promise((r) => setTimeout(r, interval));
-        }
-        return condFn();
-      };
-
-      const ready = await waitFor(
-        () =>
-          this.netplay.useSFU &&
-          this.netplay.device &&
-          this.netplay.socket &&
-          this.netplay.socket.connected,
-        5000,
-        200
-      );
-      if (!ready) {
-        console.warn(
-          "netplayCreateSFUTransports returning early (not ready):",
-          {
-            useSFU: this.netplay.useSFU,
-            hasDevice: !!this.netplay.device,
-            hasSocket: !!this.netplay.socket,
-            socketConnected: !!(
-              this.netplay.socket && this.netplay.socket.connected
-            ),
-          }
-        );
-        return;
-      }
-      try {
-        const role = this.netplay.owner ? "send" : "recv";
-        // Helper to request ICE restart from SFU server and apply to transport
-        const requestSfuIceRestart = async (transport, transportId) => {
-          try {
-            if (!transport || !transportId) return false;
-            if (!this.netplay || !this.netplay.socket) return false;
-            if (!this.netplay.socket.connected) return false;
-            if (transport.closed) return false;
-
-            // Prevent duplicate restarts if connectionstatechange fires repeatedly.
-            const now = Date.now();
-            if (transport._ejsIceRestartInProgress) return false;
-            if (
-              transport._ejsLastIceRestartAt &&
-              now - transport._ejsLastIceRestartAt < 3000
-            ) {
-              return false;
-            }
-            transport._ejsIceRestartInProgress = true;
-            transport._ejsLastIceRestartAt = now;
-
-            console.warn("[Netplay][SFU] Requesting ICE restart", {
-              transportId,
-              direction: transport.direction,
-              connectionState: transport.connectionState,
-            });
-
-            const resp = await new Promise((resolve, reject) => {
-              this.netplay.socket.emit(
-                "sfu-restart-ice",
-                { transportId },
-                (err, data) => {
-                  if (err) return reject(err);
-                  resolve(data);
-                }
-              );
-            });
-
-            const iceParameters = resp && resp.iceParameters;
-            if (!iceParameters) throw new Error("missing iceParameters");
-            if (typeof transport.restartIce !== "function") {
-              throw new Error("transport.restartIce not available");
-            }
-
-            await transport.restartIce({ iceParameters });
-            console.warn("[Netplay][SFU] ICE restart completed", {
-              transportId,
-              direction: transport.direction,
-            });
-            return true;
-          } catch (e) {
-            console.warn("[Netplay][SFU] ICE restart failed", e);
-            return false;
-          } finally {
-            try {
-              transport._ejsIceRestartInProgress = false;
-            } catch (e) {}
-          }
-        };
-
-        const getSfuRetryTimerSeconds = () => {
-          let secs =
-            typeof this.netplayRetryConnectionTimerSeconds === "number"
-              ? this.netplayRetryConnectionTimerSeconds
-              : parseInt(
-                  typeof window.EJS_NETPLAY_RETRY_CONNECTION_TIMER === "number"
-                    ? window.EJS_NETPLAY_RETRY_CONNECTION_TIMER
-                    : window.EJS_NETPLAY_RETRY_CONNECTION_TIMER || "3",
-                  10
-                );
-          if (isNaN(secs)) secs = 3;
-          if (secs < 0) secs = 0;
-          if (secs > 5) secs = 5;
-          return secs;
-        };
-
-        const clearDisconnectedRetryTimer = (transport) => {
-          try {
-            if (transport && transport._ejsDisconnectedRetryTimerId) {
-              clearTimeout(transport._ejsDisconnectedRetryTimerId);
-              transport._ejsDisconnectedRetryTimerId = null;
-            }
-          } catch (e) {}
-        };
-
-        const scheduleDisconnectedIceRestart = (transport, transportId) => {
-          try {
-            if (!transport || !transportId) return;
-            if (transport.closed) return;
-            if (transport._ejsIceRestartInProgress) return;
-            if (transport._ejsDisconnectedRetryTimerId) return;
-
-            const secs = getSfuRetryTimerSeconds();
-            if (!secs) return;
-            transport._ejsDisconnectedRetryTimerSeconds = secs;
-            transport._ejsDisconnectedRetryTimerId = setTimeout(() => {
-              try {
-                transport._ejsDisconnectedRetryTimerId = null;
-                if (transport.closed) return;
-                if (transport.connectionState !== "disconnected") return;
-                requestSfuIceRestart(transport, transportId);
-              } catch (e) {}
-            }, secs * 1000);
-          } catch (e) {}
-        };
-
-        const transportInfo = await new Promise((resolve, reject) => {
-          this.netplay.socket.emit(
-            "sfu-create-transport",
-            { direction: role },
-            (err, info) => {
-              if (err) return reject(err);
-              resolve(info);
-            }
-          );
-        });
-
-        if (this.netplay.owner) {
-          const sendTransport =
-            this.netplay.device.createSendTransport(transportInfo);
-
-          // If ICE fails (common on mobile network transitions), request an ICE restart
-          // from the server and call transport.restartIce({ iceParameters }).
-          sendTransport.on("connectionstatechange", (state) => {
-            try {
-              if (state === "failed") {
-                clearDisconnectedRetryTimer(sendTransport);
-                requestSfuIceRestart(sendTransport, transportInfo.id);
-              } else if (state === "disconnected") {
-                scheduleDisconnectedIceRestart(sendTransport, transportInfo.id);
-              } else {
-                clearDisconnectedRetryTimer(sendTransport);
-              }
-            } catch (e) {}
-          });
-
-          sendTransport.on(
-            "connect",
-            ({ dtlsParameters }, callback, errback) => {
-              this.netplay.socket.emit(
-                "sfu-connect-transport",
-                { transportId: transportInfo.id, dtlsParameters },
-                (err) => {
-                  if (err) return errback(err);
-                  callback();
-                }
-              );
-            }
-          );
-          sendTransport.on(
-            "produce",
-            async ({ kind, rtpParameters }, callback, errback) => {
-              this.netplay.socket.emit(
-                "sfu-produce",
-                { transportId: transportInfo.id, kind, rtpParameters },
-                (err, id) => {
-                  if (err) return errback(err);
-                  callback({ id });
-                }
-              );
-            }
-          );
-          this.netplay.sendTransport = sendTransport;
-          console.log("Created sendTransport for SFU:", {
-            id: transportInfo.id,
-          });
-
-          // If local stream already exists, attempt to produce immediately.
-          if (this.netplay.localStream) {
-            const videoTrack = this.netplay.localStream.getVideoTracks()[0];
-            const audioTrack = this.netplay.localStream.getAudioTracks()[0];
-
-            if (!this.netplay.producer && videoTrack) {
-              try {
-                const produceParams = {
-                  track: videoTrack,
-                };
-                let preferredCodec = null;
-                try {
-                  preferredCodec =
-                    typeof this.netplayPickSFUVideoCodec === "function"
-                      ? this.netplayPickSFUVideoCodec()
-                      : null;
-                  if (preferredCodec) produceParams.codec = preferredCodec;
-                } catch (e) {}
-
-                const codecMime =
-                  preferredCodec && typeof preferredCodec.mimeType === "string"
-                    ? preferredCodec.mimeType.toLowerCase()
-                    : "";
-                const wantsVP9 = codecMime === "video/vp9";
-                const simulcastEnabled =
-                  this.netplaySimulcastEnabled === true ||
-                  window.EJS_NETPLAY_SIMULCAST === true;
-
-                if (wantsVP9) {
-                  const normalizeVP9SVCMode = (v) => {
-                    const s = typeof v === "string" ? v.trim() : "";
-                    const sl = s.toLowerCase();
-                    if (sl === "l1t1") return "L1T1";
-                    if (sl === "l1t3") return "L1T3";
-                    if (sl === "l2t3") return "L2T3";
-                    return "L1T1";
-                  };
-                  const svcMode = normalizeVP9SVCMode(
-                    this.netplayVP9SVCMode ||
-                      window.EJS_NETPLAY_VP9_SVC_MODE ||
-                      "L1T1"
-                  );
-                  produceParams.encodings = [
-                    {
-                      scalabilityMode: svcMode,
-                      dtx: false,
-                    },
-                  ];
-                  produceParams.appData = Object.assign(
-                    {},
-                    produceParams.appData,
-                    {
-                      ejsSVC: true,
-                      ejsScalabilityMode: svcMode,
-                    }
-                  );
-                } else if (simulcastEnabled) {
-                  produceParams.encodings = [
-                    {
-                      rid: "h",
-                      scaleResolutionDownBy: 1,
-                      maxBitrate: 2500000,
-                    },
-                    {
-                      rid: "l",
-                      scaleResolutionDownBy: 2,
-                      maxBitrate: 900000,
-                    },
-                  ];
-                  produceParams.appData = {
-                    ejsSimulcast: true,
-                    ejsLayers: ["high", "low"],
-                  };
-                }
-
-                this.netplay.producer = await sendTransport.produce(
-                  produceParams
-                );
-                console.log(
-                  "Produced video to SFU (immediate), id=",
-                  this.netplay.producer.id
-                );
-                try {
-                  console.log(
-                    "Host track settings after produce:",
-                    videoTrack.getSettings()
-                  );
-                } catch (e) {
-                  console.warn("Could not read host track settings", e);
-                }
-              } catch (e) {
-                console.error("Failed to produce video to SFU (immediate):", e);
-              }
-            }
-
-            if (!this.netplay.audioProducer && audioTrack) {
-              try {
-                this.netplay.audioProducer = await sendTransport.produce({
-                  track: audioTrack,
-                });
-                console.log(
-                  "Produced audio to SFU (immediate), id=",
-                  this.netplay.audioProducer.id
-                );
-              } catch (e) {
-                console.error("Failed to produce audio to SFU (immediate):", e);
-              }
-            }
-          }
-
-          // SFU DataChannel relay (inputs): owner consumes data producers on a dedicated recv transport.
-          if (!this.netplay.dataRecvTransport) {
-            const dataTransportInfo = await new Promise((resolve, reject) => {
-              this.netplay.socket.emit(
-                "sfu-create-transport",
-                { direction: "recv" },
-                (err, info) => {
-                  if (err) return reject(err);
-                  resolve(info);
-                }
-              );
-            });
-
-            const dataRecvTransport =
-              this.netplay.device.createRecvTransport(dataTransportInfo);
-
-            dataRecvTransport.on("connectionstatechange", (state) => {
-              try {
-                if (state === "failed") {
-                  clearDisconnectedRetryTimer(dataRecvTransport);
-                  requestSfuIceRestart(dataRecvTransport, dataTransportInfo.id);
-                } else if (state === "disconnected") {
-                  scheduleDisconnectedIceRestart(
-                    dataRecvTransport,
-                    dataTransportInfo.id
-                  );
-                } else {
-                  clearDisconnectedRetryTimer(dataRecvTransport);
-                }
-              } catch (e) {}
-            });
-
-            dataRecvTransport.on(
-              "connect",
-              ({ dtlsParameters }, callback, errback) => {
-                this.netplay.socket.emit(
-                  "sfu-connect-transport",
-                  { transportId: dataTransportInfo.id, dtlsParameters },
-                  (err) => {
-                    if (err) return errback(err);
-                    callback();
-                  }
-                );
-              }
-            );
-
-            this.netplay.dataRecvTransport = dataRecvTransport;
-            this.netplay.dataRecvTransportId = dataTransportInfo.id;
-            this.netplay.sfuDataConsumedProducerIds = new Set();
-
-            const handleRelayInputPayload = (payload) => {
-              try {
-                const msg =
-                  typeof payload === "string"
-                    ? payload
-                    : payload && payload.data
-                    ? payload.data
-                    : payload;
-                const text =
-                  typeof msg === "string"
-                    ? msg
-                    : msg instanceof ArrayBuffer
-                    ? new TextDecoder().decode(new Uint8Array(msg))
-                    : null;
-                if (!text) return;
-                const data = JSON.parse(text);
-
-                if (data && data.type === "host-left") {
-                  this.displayMessage("Host left. Restarting...", 3000);
-                  this.netplayLeaveRoom("host-left-sfu-data");
-                  return;
-                }
-
-                const playerIndex = data.player;
-                const applyInput = (idx, val) => {
-                  const frame = this.netplay.currentFrame || 0;
-                  if (!this.netplay.inputsData[frame]) {
-                    this.netplay.inputsData[frame] = [];
-                  }
-                  this.netplay.inputsData[frame].push({
-                    frame: frame,
-                    connected_input: [playerIndex, idx, val],
-                  });
-
-                  if (
-                    this.gameManager &&
-                    this.gameManager.functions &&
-                    this.gameManager.functions.simulateInput
-                  ) {
-                    // Apply remote input without being affected by host slot override.
-                    const raw =
-                      this.netplay && this.netplay._ejsRawSimulateInputFn;
-                    if (typeof raw === "function") {
-                      try {
-                        this.netplay._ejsApplyingRemoteInput = true;
-                        raw(playerIndex, idx, val);
-                      } finally {
-                        this.netplay._ejsApplyingRemoteInput = false;
-                      }
-                    } else {
-                      this.gameManager.functions.simulateInput(
-                        playerIndex,
-                        idx,
-                        val
-                      );
-                    }
-                  }
-                };
-
-                // Snapshot packets (state array) are used when unordered retries are 0
-                // so lost release packets are corrected by later packets.
-                if (data && Array.isArray(data.state)) {
-                  if (!this.netplay.remoteInputStates)
-                    this.netplay.remoteInputStates = {};
-                  const key = `sfu:${playerIndex}`;
-                  const prev = Array.isArray(
-                    this.netplay.remoteInputStates[key]
-                  )
-                    ? this.netplay.remoteInputStates[key]
-                    : new Array(30).fill(0);
-                  const next = new Array(30).fill(0);
-                  for (let i = 0; i < 30; i++) {
-                    const raw = data.state[i];
-                    const v = parseInt(raw, 10);
-                    next[i] = isNaN(v) ? 0 : v;
-                    if (next[i] !== (prev[i] || 0)) {
-                      applyInput(i, next[i]);
-                    }
-                  }
-                  this.netplay.remoteInputStates[key] = next;
-                  return;
-                }
-
-                applyInput(data.index, data.value);
-              } catch (e) {
-                console.warn("[Netplay][SFU] Failed to process relay input", e);
-              }
-            };
-
-            const consumeDataProducerId = async (dataProducerId) => {
-              try {
-                if (!dataProducerId) return;
-                if (!this.netplay || !this.netplay.useSFU) return;
-                if (!this.netplay.device || !this.netplay.dataRecvTransport)
-                  return;
-                if (this.netplay.sfuDataConsumedProducerIds.has(dataProducerId))
-                  return;
-                this.netplay.sfuDataConsumedProducerIds.add(dataProducerId);
-
-                const params = await new Promise((resolve, reject) => {
-                  this.netplay.socket.emit(
-                    "sfu-consume-data",
-                    {
-                      dataProducerId,
-                      transportId: dataTransportInfo.id,
-                    },
-                    (err, p) => {
-                      if (err) return reject(err);
-                      resolve(p);
-                    }
-                  );
-                });
-
-                const dataConsumer = await dataRecvTransport.consumeData({
-                  id: params.id,
-                  dataProducerId: params.dataProducerId,
-                  sctpStreamParameters: params.sctpStreamParameters,
-                  label: params.label,
-                  protocol: params.protocol,
-                  appData: params.appData,
-                });
-
-                dataConsumer.on("message", (message) => {
-                  handleRelayInputPayload(message);
-                });
-
-                console.log("[Netplay][SFU] Consumed dataProducer", {
-                  dataProducerId,
-                  dataConsumerId: dataConsumer.id,
-                  label: dataConsumer.label,
-                });
-              } catch (e) {
-                console.warn(
-                  "[Netplay][SFU] Failed consuming dataProducer",
-                  dataProducerId,
-                  e
-                );
-              }
-            };
-
-            this.netplayConsumeSFUDataProducer = consumeDataProducerId;
+    // Only log once when netplay functions are first defined
+    if (!this.netplay._functionsDefined) {
+      console.log("[EmulatorJS] Netplay functions initialized");
+      this.netplay._functionsDefined = true;
+    }
+
+    // Define updateList function for refreshing room lists
+    if (!this.netplay.updateList) {
+      let updateInterval = null;
+      this.netplay.updateList = {
+        start: () => {
+          // Stop any existing interval
+          this.netplay.updateList.stop();
+
+          // Start updating room list every 5 seconds
+          const updateRooms = async () => {
+            if (!this.netplay || !this.netplay.table) return;
 
             try {
-              const existing = await new Promise((resolve, reject) => {
-                this.netplay.socket.emit(
-                  "sfu-get-data-producers",
-                  {},
-                  (err, list) => {
-                    if (err) return reject(err);
-                    resolve(list || []);
-                  }
-                );
-              });
-              for (const p of existing) {
-                const id = p && (p.id || p.dataProducerId);
-                if (id) await consumeDataProducerId(id);
-              }
-            } catch (e) {
-              console.warn("[Netplay][SFU] Failed listing data producers", e);
-            }
-          }
-        } else {
-          const recvTransport =
-            this.netplay.device.createRecvTransport(transportInfo);
-
-          recvTransport.on("connectionstatechange", (state) => {
-            try {
-              if (state === "failed") {
-                clearDisconnectedRetryTimer(recvTransport);
-                requestSfuIceRestart(recvTransport, transportInfo.id);
-              } else if (state === "disconnected") {
-                scheduleDisconnectedIceRestart(recvTransport, transportInfo.id);
-              } else {
-                clearDisconnectedRetryTimer(recvTransport);
-              }
-            } catch (e) {}
-          });
-
-          recvTransport.on(
-            "connect",
-            ({ dtlsParameters }, callback, errback) => {
-              this.netplay.socket.emit(
-                "sfu-connect-transport",
-                { transportId: transportInfo.id, dtlsParameters },
-                (err) => {
-                  if (err) return errback(err);
-                  callback();
-                }
-              );
-            }
-          );
-          this.netplay.recvTransport = recvTransport;
-          console.log("Created recvTransport for SFU:", {
-            id: transportInfo.id,
-          });
-
-          // SFU DataChannel relay (inputs): clients produce data on a dedicated send transport.
-          try {
-            const mode =
-              (typeof this.netplayInputMode === "string" &&
-                this.netplayInputMode) ||
-              (typeof window.EJS_NETPLAY_INPUT_MODE === "string" &&
-                window.EJS_NETPLAY_INPUT_MODE) ||
-              "unorderedRelay";
-            const usesRelay =
-              mode === "orderedRelay" || mode === "unorderedRelay";
-            if (usesRelay && !this.netplay.inputSendTransport) {
-              const dataSendInfo = await new Promise((resolve, reject) => {
-                this.netplay.socket.emit(
-                  "sfu-create-transport",
-                  { direction: "send" },
-                  (err, info) => {
-                    if (err) return reject(err);
-                    resolve(info);
-                  }
-                );
-              });
-
-              const inputSendTransport =
-                this.netplay.device.createSendTransport(dataSendInfo);
-
-              inputSendTransport.on("connectionstatechange", (state) => {
-                try {
-                  if (state === "failed") {
-                    clearDisconnectedRetryTimer(inputSendTransport);
-                    requestSfuIceRestart(inputSendTransport, dataSendInfo.id);
-                  } else if (state === "disconnected") {
-                    scheduleDisconnectedIceRestart(
-                      inputSendTransport,
-                      dataSendInfo.id
-                    );
-                  } else {
-                    clearDisconnectedRetryTimer(inputSendTransport);
-                  }
-                } catch (e) {}
-              });
-
-              inputSendTransport.on(
-                "connect",
-                ({ dtlsParameters }, callback, errback) => {
-                  this.netplay.socket.emit(
-                    "sfu-connect-transport",
-                    { transportId: dataSendInfo.id, dtlsParameters },
-                    (err) => {
-                      if (err) return errback(err);
-                      callback();
-                    }
-                  );
-                }
-              );
-
-              inputSendTransport.on(
-                "producedata",
-                (
-                  { sctpStreamParameters, label, protocol, appData },
-                  callback,
-                  errback
-                ) => {
-                  this.netplay.socket.emit(
-                    "sfu-produce-data",
-                    {
-                      transportId: dataSendInfo.id,
-                      sctpStreamParameters,
-                      label,
-                      protocol,
-                      appData,
-                    },
-                    (err, id) => {
-                      if (err) return errback(err);
-                      callback({ id });
-                    }
-                  );
-                }
-              );
-
-              this.netplay.inputSendTransport = inputSendTransport;
-              this.netplay.inputSendTransportId = dataSendInfo.id;
-              console.log("Created inputSendTransport for SFU DataChannel:", {
-                id: dataSendInfo.id,
-              });
-            }
-          } catch (e) {
-            console.warn(
-              "[Netplay][SFU] Failed creating inputSendTransport",
-              e
-            );
-          }
-
-          // Helper for consuming a single producer id (also used by the
-          // Socket.IO 'new-producer' event).
-          // Always reset SFU receive state on (re)join. If we keep a stale
-          // consumed-id set, reconnects can incorrectly skip consuming the
-          // current room's producers.
-          try {
-            if (this.netplay.sfuStream) {
-              this.netplay.sfuStream.getTracks().forEach((t) => {
-                try {
-                  t.stop();
-                } catch (e) {}
-              });
-            }
-          } catch (e) {}
-          this.netplay.sfuConsumedProducerIds = new Set();
-          this.netplay.sfuStream = new MediaStream();
-          // Keep separate streams so we can attach audio to an <audio> element.
-          // This improves reliability on some mobile browsers where audio tied
-          // to a <video> element can get stuck muted/paused.
-          this.netplay.sfuAudioStream = new MediaStream();
-          this.netplay.sfuVideoStream = new MediaStream();
-          const sfuStream = this.netplay.sfuStream;
-          const sfuAudioStream = this.netplay.sfuAudioStream;
-          const sfuVideoStream = this.netplay.sfuVideoStream;
-
-          const useAudioElementFallback =
-            typeof window !== "undefined"
-              ? window.EJS_NETPLAY_AUDIO_ELEMENT_FALLBACK !== false
-              : true;
-
-          const ensureVideoElement = () => {
-            if (!this.netplay.video) {
-              this.netplay.video = document.createElement("video");
-              this.netplay.video.playsInline = true;
-              // When using an <audio> element for sound, keep the video muted to
-              // avoid double-audio and to reduce the chance of autoplay issues.
-              this.netplay.video.muted = useAudioElementFallback ? true : false;
-            }
-            const desired = useAudioElementFallback
-              ? sfuVideoStream
-              : sfuStream;
-            if (this.netplay.video.srcObject !== desired) {
-              this.netplay.video.srcObject = desired;
-            }
-            return this.netplay.video;
-          };
-
-          const ensureAudioElement = () => {
-            if (!useAudioElementFallback) return null;
-            if (!this.netplay.audioEl) {
-              const el = document.createElement("audio");
-              el.autoplay = true;
-              el.muted = false;
-              el.controls = false;
-              // Keep it in DOM (some mobile browsers are picky) but invisible.
-              el.style.position = "absolute";
-              el.style.left = "0";
-              el.style.top = "0";
-              el.style.width = "1px";
-              el.style.height = "1px";
-              el.style.opacity = "0";
-              el.style.pointerEvents = "none";
-              el.id = "netplay-audio";
-              this.netplay.audioEl = el;
-            }
-            const desired = sfuAudioStream;
-            if (this.netplay.audioEl.srcObject !== desired) {
-              this.netplay.audioEl.srcObject = desired;
-            }
-            try {
-              const container =
-                this.netplay.videoContainer ||
-                (this.elements && this.elements.parent) ||
-                document.body;
-              if (container && !this.netplay.audioEl.parentElement) {
-                container.appendChild(this.netplay.audioEl);
-              }
-            } catch (e) {}
-            return this.netplay.audioEl;
-          };
-
-          const consumeProducerId = async (producerId) => {
-            try {
-              if (!producerId) return;
-              if (!this.netplay || !this.netplay.useSFU) return;
-              if (!this.netplay.device || !this.netplay.recvTransport) return;
-              if (this.netplay.sfuConsumedProducerIds.has(producerId)) return;
-              this.netplay.sfuConsumedProducerIds.add(producerId);
-
-              const consumerParams = await new Promise((resolve, reject) => {
-                this.netplay.socket.emit(
-                  "sfu-consume",
-                  {
-                    producerId,
-                    transportId: transportInfo.id,
-                    rtpCapabilities: this.netplay.device.rtpCapabilities,
-                  },
-                  (err, params) => {
-                    if (err) return reject(err);
-                    resolve(params);
-                  }
-                );
-              });
-              const consumer = await recvTransport.consume({
-                id: consumerParams.id,
-                producerId: consumerParams.producerId,
-                kind: consumerParams.kind,
-                rtpParameters: consumerParams.rtpParameters,
-              });
-              console.log("SFU consumer created:", {
-                consumerId: consumer.id,
-                producerId: consumer.producerId,
-                kind: consumer.kind,
-                trackId: consumer.track && consumer.track.id,
-              });
-
-              // Track the current audio consumer so we can monitor/recover it.
-              try {
-                if (consumer && consumer.kind === "audio") {
-                  this.netplay.audioConsumer = consumer;
-                  this.netplay._ejsSfuAudioProducerId =
-                    consumer.producerId || producerId;
-                  if (
-                    typeof this
-                      ._ejsEnsureClientSfuAudioConsumerHealthMonitor ===
-                    "function"
-                  ) {
-                    this._ejsEnsureClientSfuAudioConsumerHealthMonitor();
-                  }
-                }
-              } catch (e) {
-                // ignore
-              }
-
-              // Enforce client preference for SFU video quality.
-              // When host uses our 2-layer simulcast, mediasoup consumer spatial layers are:
-              // 0=low, 1=high.
-              try {
-                if (consumer && consumer.kind === "video") {
-                  const normalizeSimulcastQuality = (v) => {
-                    const s =
-                      typeof v === "string" ? v.trim().toLowerCase() : "";
-                    if (s === "high" || s === "low") return s;
-                    if (s === "medium") return "low";
-                    if (s === "720p") return "high";
-                    if (s === "360p") return "low";
-                    if (s === "180p") return "low";
-                    return "high";
-                  };
-                  const prefRaw =
-                    (typeof this.netplayClientSimulcastQuality === "string"
-                      ? this.netplayClientSimulcastQuality
-                      : null) ||
-                    (typeof window.EJS_NETPLAY_CLIENT_SIMULCAST_QUALITY ===
-                    "string"
-                      ? window.EJS_NETPLAY_CLIENT_SIMULCAST_QUALITY
-                      : null) ||
-                    (typeof window.EJS_NETPLAY_CLIENT_PREFERRED_QUALITY ===
-                    "string"
-                      ? window.EJS_NETPLAY_CLIENT_PREFERRED_QUALITY
-                      : null) ||
-                    // Legacy fallback
-                    (typeof window.EJS_NETPLAY_CLIENT_MAX_RESOLUTION ===
-                    "string"
-                      ? window.EJS_NETPLAY_CLIENT_MAX_RESOLUTION
-                      : null) ||
-                    "high";
-                  const pref = normalizeSimulcastQuality(prefRaw);
-                  const spatialLayer = pref === "low" ? 0 : 1;
-                  if (typeof consumer.setPreferredLayers === "function") {
-                    consumer.setPreferredLayers({
-                      spatialLayer,
-                      temporalLayer: 2,
-                    });
-                  }
-                }
-              } catch (e) {
-                console.warn("Failed to set preferred layers on consumer", e);
-              }
-
-              // If we got a consumer+track, SFU is active in practice.
-              try {
-                this.netplay.useSFU = true;
-                this.netplay._sfuDecisionMade = true;
-              } catch (e) {}
-
-              // Replace existing track of same kind in the shared stream.
-              try {
-                if (consumer && consumer.track) {
-                  sfuStream.getTracks().forEach((t) => {
-                    if (t && t.kind === consumer.track.kind) {
-                      try {
-                        sfuStream.removeTrack(t);
-                      } catch (e) {}
-                    }
-                  });
-                  sfuStream.addTrack(consumer.track);
-                }
-              } catch (e) {
-                console.warn("Failed to attach consumer track to sfuStream", e);
-              }
-
-              // Keep audio/video separated for more reliable playback on mobile.
-              try {
-                if (consumer && consumer.track) {
-                  if (consumer.track.kind === "audio" && sfuAudioStream) {
-                    sfuAudioStream.getTracks().forEach((t) => {
-                      if (t && t.kind === "audio") {
-                        try {
-                          sfuAudioStream.removeTrack(t);
-                        } catch (e) {}
-                      }
-                    });
-                    sfuAudioStream.addTrack(consumer.track);
-                    const a = ensureAudioElement();
-                    if (a && typeof a.play === "function") {
-                      a.play().catch(() => {
-                        try {
-                          if (
-                            typeof this.promptUserInteraction === "function"
-                          ) {
-                            this.promptUserInteraction(a);
-                          }
-                        } catch (e) {}
-                      });
-                    }
-                    // Start a silence detector so we can recover if we end up
-                    // receiving bytes but rendering silence.
-                    try {
-                      if (
-                        typeof this._ejsEnsureClientSfuAudioSilenceMonitor ===
-                        "function"
-                      ) {
-                        this._ejsEnsureClientSfuAudioSilenceMonitor();
-                      }
-                    } catch (e) {}
-                  }
-
-                  if (consumer.track.kind === "video" && sfuVideoStream) {
-                    sfuVideoStream.getTracks().forEach((t) => {
-                      if (t && t.kind === "video") {
-                        try {
-                          sfuVideoStream.removeTrack(t);
-                        } catch (e) {}
-                      }
-                    });
-                    sfuVideoStream.addTrack(consumer.track);
-                  }
-                }
-              } catch (e) {
-                console.warn(
-                  "Failed to attach consumer track to sfuAudioStream/sfuVideoStream",
-                  e
-                );
-              }
-
-              // Instrument consumer track lifecycle
-              try {
-                if (consumer.track) {
-                  consumer.track.onended = () =>
-                    console.warn("consumer.track ended", consumer.track.id);
-                  consumer.track.onmute = () =>
-                    console.warn("consumer.track muted", consumer.track.id);
-                  consumer.track.onunmute = () =>
-                    console.log("consumer.track unmuted", consumer.track.id);
-
-                  // If SFU audio track stops, try to re-consume it.
-                  if (consumer.kind === "audio") {
-                    const trigger = (why) => {
-                      try {
-                        if (
-                          this.netplay &&
-                          typeof this.netplay
-                            ._ejsAttemptClientSfuAudioRecovery === "function"
-                        ) {
-                          this.netplay._ejsAttemptClientSfuAudioRecovery(
-                            `track-${why}`
-                          );
-                        }
-                      } catch (e) {}
-                    };
-                    consumer.track.onended = () => {
-                      console.warn(
-                        "consumer.audio track ended",
-                        consumer.track.id
-                      );
-                      trigger("ended");
-                    };
-                    consumer.track.onmute = () => {
-                      console.warn(
-                        "consumer.audio track muted",
-                        consumer.track.id
-                      );
-                      trigger("muted");
-                    };
-                  }
-                }
-              } catch (e) {
-                console.warn(
-                  "Failed to attach track handlers to consumer.track",
-                  e
-                );
-              }
-
-              // Only create/attach the video element and start drawing when we actually got video.
-              if (consumer.kind === "video") {
-                this.netplay.video = ensureVideoElement();
-
-                const v = this.netplay.video;
-                const addLog = (ev) =>
-                  v.addEventListener(ev, () =>
-                    console.log(`video event: ${ev}`, {
-                      readyState: v.readyState,
-                      paused: v.paused,
-                      videoWidth: v.videoWidth,
-                      videoHeight: v.videoHeight,
-                    })
-                  );
-                [
-                  "loadedmetadata",
-                  "loadeddata",
-                  "play",
-                  "playing",
-                  "pause",
-                  "error",
-                  "stalled",
-                  "suspend",
-                  "emptied",
-                  "abort",
-                  "resize",
-                ].forEach(addLog);
-
-                const markReadyFromSFUFrames = (ev) => {
-                  try {
-                    if (v.videoWidth > 0 && v.videoHeight > 0) {
-                      this.netplay.webRtcReady = true;
-                      if (this.netplay && this.netplay._webrtcReadyTimeoutId) {
-                        clearTimeout(this.netplay._webrtcReadyTimeoutId);
-                        this.netplay._webrtcReadyTimeoutId = null;
-                      }
-                      console.log(
-                        "[Netplay] Marked ready from SFU video frames",
-                        {
-                          event: ev,
-                          videoWidth: v.videoWidth,
-                          videoHeight: v.videoHeight,
-                        }
-                      );
-                    }
-                  } catch (e) {}
-                };
-                ["loadedmetadata", "loadeddata", "playing", "resize"].forEach(
-                  (ev) =>
-                    v.addEventListener(ev, () => markReadyFromSFUFrames(ev))
-                );
-                v.addEventListener("error", (e) =>
-                  console.error("Video element error event", e)
-                );
-
-                try {
-                  v.style.display = "block";
-                  v.style.position = "absolute";
-                  v.style.left = "0";
-                  v.style.top = "0";
-                  v.style.width = "100%";
-                  v.style.height = "100%";
-                  v.style.objectFit = "contain";
-                  v.style.objectPosition = "top center";
-                  v.style.pointerEvents = "none";
-                  v.style.background = "black";
-                  v.id = "netplay-video";
-
-                  const container =
-                    this.netplay.videoContainer ||
-                    (this.elements && this.elements.parent) ||
-                    document.body;
-                  try {
-                    if (container && container.style)
-                      container.style.display = "block";
-                  } catch (e) {}
-                  container.appendChild(v);
-                  console.log(
-                    "Netplay SFU video element attached and visible",
-                    v
-                  );
-                } catch (e) {
-                  console.warn("Failed to append video element to DOM", e);
-                }
-
-                const tryPlay = async (retries = 5, delay = 1000) => {
-                  for (let i = 0; i < retries; i++) {
-                    try {
-                      await v.play();
-                      console.log("video.play() succeeded on attempt", i + 1);
-                      // If video is playing, host is effectively resumed.
-                      if (
-                        typeof this.netplayHideHostPausedOverlay === "function"
-                      ) {
-                        this.netplayHideHostPausedOverlay();
-                      }
-                      return true;
-                    } catch (err) {
-                      console.warn(
-                        "video.play() attempt",
-                        i + 1,
-                        "failed",
-                        err
-                      );
-                      if (i === retries - 1) break;
-                      await new Promise((r) => setTimeout(r, delay));
-                    }
-                  }
-                  return false;
-                };
-                try {
-                  v.addEventListener(
-                    "loadeddata",
-                    () => {
-                      if (
-                        typeof this.netplayHideHostPausedOverlay === "function"
-                      ) {
-                        this.netplayHideHostPausedOverlay();
-                      }
-                    },
-                    { once: true }
-                  );
-                } catch (e) {
-                  // ignore
-                }
-                const played = await tryPlay().catch(() => false);
-                if (!played) {
-                  console.warn("video.play() failed after retries");
-                  if (typeof this.promptUserInteraction === "function") {
-                    this.promptUserInteraction(v);
-                  }
-                }
-
-                setTimeout(() => {
-                  console.log("video size check after attach", {
-                    videoWidth: v.videoWidth,
-                    videoHeight: v.videoHeight,
-                  });
-                  if (v.videoWidth === 0 || v.videoHeight === 0) {
-                    console.warn(
-                      "Attached video has zero dimensions - no frames yet or consumer not producing frames"
-                    );
-                  }
-                }, 2000);
-
-                this.drawVideoToCanvas();
-              }
-            } catch (err) {
-              console.error("Error consuming producer from SFU:", err);
-            }
-          };
-
-          this.netplayConsumeSFUProducer = consumeProducerId;
-
-          // Ask server to tell us about existing producers to consume
-          this.netplay.socket.emit(
-            "sfu-get-producers",
-            {},
-            async (err, producers) => {
-              if (err) return console.error("sfu-get-producers error", err);
-
-              const list = Array.isArray(producers) ? producers : [];
-              for (const p of list) {
-                await consumeProducerId(p && p.id);
-              }
-
-              // If we raced the room join or producers are registered slightly
-              // later (e.g. host re-produced while nobody was connected), retry once.
-              if (list.length === 0) {
-                setTimeout(() => {
-                  try {
-                    if (!this.netplay || !this.netplay.useSFU) return;
-                    if (this.netplay.owner) return;
-                    if (!this.netplay.socket || !this.netplay.socket.connected)
-                      return;
-                    this.netplay.socket.emit(
-                      "sfu-get-producers",
-                      {},
-                      async (err2, producers2) => {
-                        if (err2)
-                          return console.error(
-                            "sfu-get-producers retry error",
-                            err2
-                          );
-                        const list2 = Array.isArray(producers2)
-                          ? producers2
-                          : [];
-                        for (const p2 of list2) {
-                          await consumeProducerId(p2 && p2.id);
-                        }
-                      }
-                    );
-                  } catch (e) {
-                    console.warn("SFU producer resync retry failed", e);
-                  }
-                }, 750);
-              }
-            }
-          );
-        }
-      } catch (err) {
-        console.error("Failed to create SFU transports:", err);
-        this.netplay.useSFU = false;
-      }
-    };
-
-    // Ensure the SFU DataChannel send transport exists for relay inputs.
-    // IMPORTANT: This must not recreate SFU media transports (video/audio), because
-    // it may be called during mid-session input-mode switches.
-    this.netplayEnsureSFUInputSendTransport = async () => {
-      try {
-        if (!this.netplay || !this.isNetplay) return false;
-        if (this.netplay.owner) return false;
-        if (!this.netplay.useSFU) return false;
-        if (!this.netplay.device || !this.netplay.socket) return false;
-        if (!this.netplay.socket.connected) return false;
-
-        if (
-          this.netplay.inputSendTransport &&
-          !this.netplay.inputSendTransport.closed &&
-          typeof this.netplay.inputSendTransport.produceData === "function"
-        ) {
-          return true;
-        }
-
-        const dataSendInfo = await new Promise((resolve, reject) => {
-          this.netplay.socket.emit(
-            "sfu-create-transport",
-            { direction: "send" },
-            (err, info) => {
-              if (err) return reject(err);
-              resolve(info);
-            }
-          );
-        });
-
-        const inputSendTransport =
-          this.netplay.device.createSendTransport(dataSendInfo);
-
-        inputSendTransport.on(
-          "connect",
-          ({ dtlsParameters }, callback, errback) => {
-            this.netplay.socket.emit(
-              "sfu-connect-transport",
-              { transportId: dataSendInfo.id, dtlsParameters },
-              (err) => {
-                if (err) return errback(err);
-                callback();
-              }
-            );
-          }
-        );
-
-        inputSendTransport.on(
-          "producedata",
-          (
-            { sctpStreamParameters, label, protocol, appData },
-            callback,
-            errback
-          ) => {
-            this.netplay.socket.emit(
-              "sfu-produce-data",
-              {
-                transportId:
-                  this.netplay.inputSendTransportId || dataSendInfo.id,
-                sctpStreamParameters,
-                label,
-                protocol,
-                appData,
-              },
-              (err, id) => {
-                if (err) return errback(err);
-                callback({ id });
-              }
-            );
-          }
-        );
-
-        this.netplay.inputSendTransport = inputSendTransport;
-        this.netplay.inputSendTransportId = dataSendInfo.id;
-        console.log("Created inputSendTransport for SFU DataChannel:", {
-          id: dataSendInfo.id,
-        });
-        return true;
-      } catch (e) {
-        console.warn("[Netplay][SFU] Failed ensuring inputSendTransport", e);
-        return false;
-      }
-    };
-
-    this.netplayCreatePeerConnection = (peerId, options = {}) => {
-      const controlsOnly =
-        this.netplay && this.netplay._hybridOnly
-          ? true
-          : typeof options.controlsOnly === "boolean"
-          ? options.controlsOnly
-          : this.netplay && this.netplay._sfuDecisionMade !== true
-          ? true
-          : !!this.netplay.useSFU;
-
-      const markNetplayReady = (reason) => {
-        try {
-          this.netplay.webRtcReady = true;
-          if (this.netplay && this.netplay._webrtcReadyTimeoutId) {
-            clearTimeout(this.netplay._webrtcReadyTimeoutId);
-            this.netplay._webrtcReadyTimeoutId = null;
-          }
-          if (reason) {
-            console.log("[Netplay] Marked ready:", reason);
-          }
-        } catch (e) {
-          // Best-effort.
-        }
-      };
-      console.log(
-        `[Netplay] Creating RTCPeerConnection for peer ${peerId} with ICE servers:`,
-        this.config.netplayICEServers
-      );
-      const pc = new RTCPeerConnection({
-        iceServers: this.config.netplayICEServers,
-        iceCandidatePoolSize: 10,
-      });
-
-      pc.addEventListener("iceconnectionstatechange", () => {
-        console.log(
-          `[Netplay] ICE connection state for peer ${peerId}:`,
-          pc.iceConnectionState
-        );
-      });
-      pc.addEventListener("signalingstatechange", () => {
-        console.log(
-          `[Netplay] Signaling state for peer ${peerId}:`,
-          pc.signalingState
-        );
-      });
-      pc.addEventListener("icegatheringstatechange", () => {
-        console.log(
-          `[Netplay] ICE gathering state for peer ${peerId}:`,
-          pc.iceGatheringState
-        );
-      });
-
-      let dataChannel;
-      let unorderedDataChannel;
-
-      if (this.netplay.owner) {
-        const attachHostDataChannelHandlers = (ch) => {
-          if (!ch) return;
-          ch.onopen = () => {
-            console.log(
-              `[Netplay] Data channel opened for peer ${peerId} (${ch.label})`
-            );
-            markNetplayReady("datachannel-open");
-          };
-          ch.onclose = () =>
-            console.warn(
-              `[Netplay] Data channel closed for peer ${peerId} (${ch.label})`
-            );
-          ch.onerror = (e) =>
-            console.error(
-              `[Netplay] Data channel error for peer ${peerId} (${ch.label}):`,
-              e
-            );
-          ch.onmessage = (event) => {
-            console.log(
-              `[Netplay] Data channel message from peer ${peerId} (${ch.label}):`,
-              event.data
-            );
-            const data = JSON.parse(event.data);
-            if (data.type === "host-left") {
-              this.displayMessage("Host left. Restarting...", 3000);
-              this.netplayLeaveRoom("host-left-datachannel");
-              return;
-            }
-
-            const playerIndex = data.player;
-            const applyInput = (idx, val) => {
-              const frame = this.netplay.currentFrame || 0;
-              if (!this.netplay.inputsData[frame]) {
-                this.netplay.inputsData[frame] = [];
-              }
-              this.netplay.inputsData[frame].push({
-                frame: frame,
-                connected_input: [playerIndex, idx, val],
-              });
-              if (
-                this.gameManager &&
-                this.gameManager.functions &&
-                this.gameManager.functions.simulateInput
-              ) {
-                // Apply remote input without being affected by host slot override.
-                const raw = this.netplay && this.netplay._ejsRawSimulateInputFn;
-                if (typeof raw === "function") {
-                  try {
-                    this.netplay._ejsApplyingRemoteInput = true;
-                    raw(playerIndex, idx, val);
-                  } finally {
-                    this.netplay._ejsApplyingRemoteInput = false;
-                  }
-                } else {
-                  this.gameManager.functions.simulateInput(
-                    playerIndex,
-                    idx,
-                    val
-                  );
-                }
-              } else {
-                console.error(
-                  "Cannot process input: gameManager.functions.simulateInput is undefined"
-                );
-              }
-            };
-
-            // Snapshot packets (state array) are used when unordered retries are 0
-            // so lost release packets are corrected by later packets.
-            if (data && Array.isArray(data.state)) {
-              try {
-                if (!this.netplay.remoteInputStates)
-                  this.netplay.remoteInputStates = {};
-                const key = `p2p:${peerId}:${playerIndex}`;
-                const prev = Array.isArray(this.netplay.remoteInputStates[key])
-                  ? this.netplay.remoteInputStates[key]
-                  : new Array(30).fill(0);
-                const next = new Array(30).fill(0);
-                for (let i = 0; i < 30; i++) {
-                  const raw = data.state[i];
-                  const v = parseInt(raw, 10);
-                  next[i] = isNaN(v) ? 0 : v;
-                  if (next[i] !== (prev[i] || 0)) {
-                    applyInput(i, next[i]);
-                  }
-                }
-                this.netplay.remoteInputStates[key] = next;
-              } catch (e) {
-                console.warn("[Netplay] Failed processing input snapshot", e);
-              }
-              return;
-            }
-
-            applyInput(data.index, data.value);
-          };
-        };
-
-        dataChannel = pc.createDataChannel("inputs");
-        attachHostDataChannelHandlers(dataChannel);
-
-        // Allow client-initiated channels (e.g. unordered P2P inputs).
-        pc.ondatachannel = (event) => {
-          try {
-            const ch = event && event.channel;
-            if (!ch) return;
-            console.log(
-              `[Netplay] Received data channel for peer ${peerId} (owner):`,
-              ch.label
-            );
-            attachHostDataChannelHandlers(ch);
-            if (ch.label === "inputs-unordered") {
-              unorderedDataChannel = ch;
-            }
-          } catch (e) {
-            console.warn("[Netplay] Failed handling ondatachannel (owner)", e);
-          }
-        };
-      } else {
-        pc.ondatachannel = (event) => {
-          dataChannel = event.channel;
-          console.log(
-            `[Netplay] Received data channel for peer ${peerId}:`,
-            dataChannel
-          );
-
-          // Persist the received channel onto the stored peer connection entry.
-          if (
-            this.netplay.peerConnections &&
-            this.netplay.peerConnections[peerId]
-          ) {
-            this.netplay.peerConnections[peerId].dataChannel = dataChannel;
-          }
-
-          dataChannel.onopen = () => {
-            console.log(`[Netplay] Data channel opened for peer ${peerId}`);
-            markNetplayReady("datachannel-open");
-          };
-          dataChannel.onclose = () =>
-            console.warn(`[Netplay] Data channel closed for peer ${peerId}`);
-          dataChannel.onerror = (e) =>
-            console.error(
-              `[Netplay] Data channel error for peer ${peerId}:`,
-              e
-            );
-          dataChannel.onmessage = (event) => {
-            console.log(
-              `[Netplay] Data channel message from peer ${peerId}:`,
-              event.data
-            );
-            const data = JSON.parse(event.data);
-            if (data.type === "host-left") {
-              this.displayMessage("Host left. Restarting...", 3000);
-              this.netplayLeaveRoom("host-left-datachannel");
-              return;
-            }
-            console.log(`Received input from host ${peerId}:`, data);
-            if (
-              this.gameManager &&
-              this.gameManager.functions &&
-              this.gameManager.functions.simulateInput
-            ) {
-              this.gameManager.functions.simulateInput(
-                data.player,
-                data.index,
-                data.value
-              );
-            } else {
-              console.error(
-                "Cannot process input: gameManager.functions.simulateInput is undefined"
-              );
-            }
-          };
-        };
-
-        // If the user requested Unordered P2P, create a client-initiated data channel
-        // with ordered=false and maxRetransmits set by Netplay Options.
-        try {
-          const mode =
-            (typeof this.netplayInputMode === "string" &&
-              this.netplayInputMode) ||
-            (typeof window.EJS_NETPLAY_INPUT_MODE === "string" &&
-              window.EJS_NETPLAY_INPUT_MODE) ||
-            "unorderedRelay";
-          if (mode === "unorderedP2P") {
-            const retriesRaw =
-              typeof this.netplayUnorderedRetries === "number" ||
-              typeof this.netplayUnorderedRetries === "string"
-                ? this.netplayUnorderedRetries
-                : window.EJS_NETPLAY_UNORDERED_RETRIES;
-            let retries = parseInt(retriesRaw, 10);
-            if (isNaN(retries)) retries = 0;
-            if (retries < 0) retries = 0;
-            if (retries > 2) retries = 2;
-            unorderedDataChannel = pc.createDataChannel("inputs-unordered", {
-              ordered: false,
-              maxRetransmits: retries,
-            });
-            unorderedDataChannel.onopen = () => {
-              console.log(
-                `[Netplay] Unordered P2P data channel opened for peer ${peerId}`
-              );
-              markNetplayReady("datachannel-open");
-            };
-            unorderedDataChannel.onclose = () =>
-              console.warn(
-                `[Netplay] Unordered P2P data channel closed for peer ${peerId}`
-              );
-            unorderedDataChannel.onerror = (e) =>
-              console.error(
-                `[Netplay] Unordered P2P data channel error for peer ${peerId}:`,
-                e
-              );
-
-            // Persist onto stored entry (if already present).
-            if (
-              this.netplay.peerConnections &&
-              this.netplay.peerConnections[peerId]
-            ) {
-              this.netplay.peerConnections[peerId].unorderedDataChannel =
-                unorderedDataChannel;
-            }
-          }
-        } catch (e) {
-          console.warn(
-            "[Netplay] Failed creating unordered P2P data channel",
-            e
-          );
-        }
-      }
-
-      // If SFU is enabled, P2P is for controls only (data channel).
-      // Avoid adding media tracks/transceivers.
-      if (!controlsOnly) {
-        if (this.netplay.owner && this.netplay.localStream) {
-          this.netplay.localStream.getTracks().forEach((track) => {
-            pc.addTrack(track, this.netplay.localStream);
-          });
-
-          const codecs = RTCRtpSender.getCapabilities("video").codecs;
-          const order = ["video/VP9", "video/H264", "video/VP8"];
-          const preferredCodecs = codecs
-            .filter((codec) => order.includes(codec.mimeType))
-            .sort(
-              (a, b) => order.indexOf(a.mimeType) - order.indexOf(b.mimeType)
-            );
-          const transceiver = pc
-            .getTransceivers()
-            .find(
-              (t) =>
-                t.sender && t.sender.track && t.sender.track.kind === "video"
-            );
-          if (transceiver && preferredCodecs.length) {
-            try {
-              transceiver.setCodecPreferences(preferredCodecs);
+              // Get room list from SFU server
+              const rooms = await this.netplayGetRoomList();
+              this.netplayUpdateRoomTable(rooms);
             } catch (error) {
-              console.error("Failed to set codec preferences:", error);
+              console.error("[Netplay] Failed to update room list:", error);
             }
-          }
-        } else {
-          pc.addTransceiver("video", {
-            direction: "recvonly",
-          });
-        }
-      } else {
-        console.log(
-          `[Netplay] SFU enabled; creating controls-only P2P connection for peer ${peerId}`
-        );
-      }
+          };
 
-      this.netplay.peerConnections[peerId] = {
-        pc,
-        dataChannel,
-        unorderedDataChannel,
-      };
+          // Initial update
+          updateRooms();
 
-      let streamReceived = false;
-      const streamTimeout = controlsOnly
-        ? null
-        : setTimeout(() => {
-            const hasSFUVideoFrames = () => {
-              try {
-                return (
-                  !!this.netplay &&
-                  !!this.netplay.video &&
-                  this.netplay.video.videoWidth > 0 &&
-                  this.netplay.video.videoHeight > 0
-                );
-              } catch (e) {
-                return false;
-              }
-            };
-
-            if (
-              !streamReceived &&
-              !this.netplay.owner &&
-              !hasSFUVideoFrames()
-            ) {
-              this.displayMessage(
-                "Failed to receive video stream. Check your network and try again.",
-                5000
-              );
-              this.netplayLeaveRoom("p2p-stream-timeout");
-            }
-          }, 10000);
-
-      pc.onicecandidate = (event) => {
-        if (event.candidate) {
-          this.netplay.socket.emit("webrtc-signal", {
-            target: peerId,
-            candidate: event.candidate,
-          });
-        }
-      };
-
-      pc.onicecandidateerror = (event) => {
-        console.error("ICE candidate error for peer", peerId, ":", event);
-      };
-
-      pc.onconnectionstatechange = () => {
-        if (pc.connectionState === "connected") {
-          markNetplayReady("pc-connected");
-          return;
-        }
-
-        if (
-          pc.connectionState !== "failed" &&
-          pc.connectionState !== "disconnected"
-        ) {
-          return;
-        }
-
-        // In SFU mode the P2P PC is controls-only; browsers can briefly flip to
-        // disconnected and then recover. Don't immediately kill the data channel.
-        if (controlsOnly) {
-          const existing =
-            this.netplay.peerConnections &&
-            this.netplay.peerConnections[peerId];
-          const dc = existing && existing.dataChannel;
-          const dcOpen = !!dc && dc.readyState === "open";
-          console.warn(
-            `[Netplay] Controls-only PC ${peerId} state ${pc.connectionState} (dcOpen=${dcOpen}) - waiting before reconnect`
-          );
-
-          if (existing && existing._reconnectTimeoutId) {
-            clearTimeout(existing._reconnectTimeoutId);
-            existing._reconnectTimeoutId = null;
-          }
-
-          if (existing) {
-            existing._reconnectTimeoutId = setTimeout(() => {
-              // If this timer is stale (we've already replaced the PC), do nothing.
-              const currentEntry =
-                this.netplay &&
-                this.netplay.peerConnections &&
-                this.netplay.peerConnections[peerId];
-              if (currentEntry && currentEntry !== existing) return;
-
-              // If the peer is no longer present in the room, quietly clean up and
-              // skip reconnect UI/errors.
-              const peerStillPresent = !!(
-                this.netplay &&
-                this.netplay.players &&
-                Object.values(this.netplay.players).some(
-                  (p) => p && p.socketId === peerId
-                )
-              );
-              if (!peerStillPresent) {
-                try {
-                  pc.close();
-                } catch (e) {
-                  // ignore
-                }
-                if (this.netplay && this.netplay.peerConnections) {
-                  delete this.netplay.peerConnections[peerId];
-                }
-                return;
-              }
-
-              const stillBad =
-                pc.connectionState === "failed" ||
-                pc.connectionState === "disconnected";
-              const nowDcOpen =
-                existing.dataChannel &&
-                existing.dataChannel.readyState === "open";
-              if (!stillBad || nowDcOpen) {
-                console.log(
-                  `[Netplay] Controls-only PC ${peerId} recovered; skipping reconnect`,
-                  { state: pc.connectionState, nowDcOpen }
-                );
-                return;
-              }
-
-              this.displayMessage(
-                "Connection with player lost. Attempting to reconnect...",
-                3000
-              );
-              try {
-                pc.close();
-              } catch (e) {
-                // ignore
-              }
-              delete this.netplay.peerConnections[peerId];
-              setTimeout(
-                () =>
-                  this.netplayCreatePeerConnection(peerId, {
-                    controlsOnly: true,
-                  }),
-                2000
-              );
-            }, 5000);
-          }
-          return;
-        }
-
-        // Legacy P2P mode: reconnect immediately.
-        this.displayMessage(
-          "Connection with player lost. Attempting to reconnect...",
-          3000
-        );
-        if (streamTimeout) clearTimeout(streamTimeout);
-        pc.close();
-        delete this.netplay.peerConnections[peerId];
-        setTimeout(() => this.netplayCreatePeerConnection(peerId), 2000);
-      };
-
-      if (!controlsOnly) {
-        pc.ontrack = (event) => {
-          if (!this.netplay.owner) {
-            streamReceived = true;
-            if (streamTimeout) clearTimeout(streamTimeout);
-            const stream = event.streams[0];
-            if (!this.netplay.video) {
-              this.netplay.video = document.createElement("video");
-              this.netplay.video.muted = true;
-              this.netplay.video.playsInline = true;
-            }
-            this.netplay.video.srcObject = stream;
-            this.netplay.video.play().catch(() => {
-              if (this.isMobile) {
-                this.promptUserInteraction(this.netplay.video);
-              }
-            });
-            this.drawVideoToCanvas();
-          }
-        };
-      }
-
-      if (this.netplay.owner) {
-        pc.createOffer()
-          .then((offer) => {
-            offer.sdp = offer.sdp.replace(
-              /profile-level-id=[0-9a-fA-F]+/,
-              "profile-level-id=42e01f"
-            );
-            return pc.setLocalDescription(offer);
-          })
-          .then(() => {
-            this.netplay.socket.emit("webrtc-signal", {
-              target: peerId,
-              offer: pc.localDescription,
-            });
-          })
-          .catch((error) => console.error("Error creating offer:", error));
-      }
-
-      return pc;
-    };
-
-    this.showVideoOverlay = () => {
-      const videoElement = this.netplay.video;
-      if (!videoElement) {
-        console.error("showVideoOverlay: videoElement is not initialized");
-        return;
-      }
-      console.log(
-        "showVideoOverlay called, videoElement exists:",
-        videoElement
-      );
-
-      if (videoElement.parentElement) {
-        console.log(
-          "Removing video element from current parent:",
-          videoElement.parentElement
-        );
-        videoElement.parentElement.removeChild(videoElement);
-      }
-
-      // Keep the overlay within the emulator container (not document.body) and
-      // size/center it using the same aspect-ratio rules as the main canvas.
-      const aspect =
-        (this.netplay && this.netplay.lockedAspectRatio) ||
-        (videoElement.videoWidth && videoElement.videoHeight
-          ? videoElement.videoWidth / videoElement.videoHeight
-          : this.canvas && this.canvas.width && this.canvas.height
-          ? this.canvas.width / this.canvas.height
-          : 700 / 720);
-
-      const container =
-        (this.netplay && this.netplay.videoContainer) ||
-        (this.elements && this.elements.parent) ||
-        document.body;
-      let vw = 0;
-      let vh = 0;
-      try {
-        if (
-          container &&
-          typeof container.getBoundingClientRect === "function"
-        ) {
-          const rect = container.getBoundingClientRect();
-          vw = rect.width;
-          vh = rect.height;
-        }
-      } catch (e) {
-        // ignore
-      }
-      if (!vw || !vh) {
-        vw = window.innerWidth;
-        vh = window.innerHeight;
-      }
-      let newWidth, newHeight;
-      if (vw / vh > aspect) {
-        newHeight = vh;
-        newWidth = vh * aspect;
-      } else {
-        newWidth = vw;
-        newHeight = vw / aspect;
-      }
-
-      videoElement.style.position = "absolute";
-      videoElement.style.top = "0";
-      videoElement.style.left = "50%";
-      videoElement.style.transform = "translateX(-50%)";
-      videoElement.style.width = `${newWidth}px`;
-      videoElement.style.height = `${newHeight}px`;
-      videoElement.style.border = "1px solid white";
-      videoElement.style.zIndex = "1";
-      videoElement.style.display = "";
-      videoElement.style.objectFit = "contain";
-      videoElement.style.objectPosition = "top center";
-
-      try {
-        if (container && container.style && !container.style.position) {
-          container.style.position = "relative";
-        }
-      } catch (e) {
-        // ignore
-      }
-      container.appendChild(videoElement);
-      console.log(
-        "Video overlay added to DOM, styles:",
-        videoElement.style.cssText
-      );
-
-      const playVideo = async () => {
-        console.log(
-          "Attempting to play video, readyState:",
-          videoElement.readyState,
-          "Paused:",
-          videoElement.paused,
-          "Ended:",
-          videoElement.ended,
-          "Muted:",
-          videoElement.muted
-        );
-        try {
-          await videoElement.play();
-          console.log(
-            "Video playback started successfully, currentTime:",
-            videoElement.currentTime
-          );
-        } catch (error) {
-          console.error("Video play error:", error);
-          if (this.isMobile) {
-            this.promptUserInteraction(videoElement);
-          } else {
-            console.log(
-              "Autoplay failed on desktop, but user interaction not required for muted video"
-            );
-          }
-        }
-        if (videoElement.videoWidth === 0 || videoElement.videoHeight === 0) {
-          console.warn(
-            "Video element has zero dimensions, likely no valid frame:",
-            {
-              videoWidth: videoElement.videoWidth,
-              videoHeight: videoElement.videoHeight,
-            }
-          );
-        } else {
-          console.log("Video dimensions:", {
-            videoWidth: videoElement.videoWidth,
-            videoHeight: videoElement.videoHeight,
-          });
-        }
-      };
-      playVideo();
-    };
-
-    this.drawVideoToCanvas = () => {
-      const videoElement = this.netplay.video;
-      const canvas = this.netplayCanvas;
-      if (!canvas) {
-        console.error("drawVideoToCanvas: Missing canvas!");
-      }
-      const ctx = canvas.getContext("2d", {
-        alpha: false,
-        willReadFrequently: true,
-      });
-
-      if (!videoElement || !ctx) {
-        console.error("drawVideoToCanvas: Missing video, or context!");
-        return;
-      }
-
-      const { width: nativeWidth, height: nativeHeight } =
-        this.getNativeResolution() || {
-          width: 720,
-          height: 700,
-        };
-      canvas.width = nativeWidth;
-      canvas.height = nativeHeight;
-
-      const ensureVideoPlaying = async () => {
-        let retries = 0;
-        const maxRetries = 5;
-        while (retries < maxRetries) {
-          if (videoElement.paused || videoElement.ended) {
-            try {
-              await videoElement.play();
-            } catch (error) {
-              if (this.isMobile) this.promptUserInteraction(videoElement);
-            }
-          }
-          if (videoElement.videoWidth > 0 && videoElement.videoHeight > 0) {
-            if (!this.netplay.lockedAspectRatio) {
-              this.netplay.lockedAspectRatio =
-                videoElement.videoWidth / videoElement.videoHeight;
-              console.log(
-                "Locked aspect ratio:",
-                this.netplay.lockedAspectRatio
-              );
-            }
-            break;
-          }
-          retries++;
-          await new Promise((resolve) => setTimeout(resolve, 1000));
-        }
-
-        if (retries >= maxRetries) {
-          this.displayMessage("Failed to initialize video stream", 5000);
-          this.netplayLeaveRoom("video-init-failed");
-        }
-      };
-
-      const drawFrame = () => {
-        if (!this.isNetplay || this.netplay.owner) return;
-
-        const aspect =
-          this.netplay.lockedAspectRatio ||
-          videoElement.videoWidth / videoElement.videoHeight ||
-          nativeWidth / nativeHeight;
-
-        if (
-          videoElement.readyState >= videoElement.HAVE_CURRENT_DATA &&
-          videoElement.videoWidth > 0
-        ) {
-          ctx.clearRect(0, 0, canvas.width, canvas.height);
-
-          const canvasAspect = nativeWidth / nativeHeight;
-          let drawWidth, drawHeight, offsetX, offsetY;
-
-          if (aspect > canvasAspect) {
-            drawWidth = nativeWidth;
-            drawHeight = nativeWidth / aspect;
-            offsetX = 0;
-            offsetY = 0;
-          } else {
-            drawHeight = nativeHeight;
-            drawWidth = nativeHeight * aspect;
-            offsetX = (nativeWidth - drawWidth) / 2;
-            offsetY = 0;
-          }
-
-          ctx.drawImage(
-            videoElement,
-            0,
-            0,
-            videoElement.videoWidth,
-            videoElement.videoHeight,
-            offsetX,
-            offsetY,
-            drawWidth,
-            drawHeight
-          );
-        }
-
-        requestAnimationFrame(drawFrame);
-      };
-
-      videoElement.addEventListener(
-        "loadeddata",
-        () => {
-          ensureVideoPlaying().then(drawFrame);
+          // Set up periodic updates
+          updateInterval = setInterval(updateRooms, 5000);
         },
-        {
-          once: true,
+        stop: () => {
+          if (updateInterval) {
+            clearInterval(updateInterval);
+            updateInterval = null;
+          }
         }
-      );
-
-      ensureVideoPlaying();
-    };
-
-    this.netplayStartSocketIO = (callback) => {
-      if (!this.netplay.previousPlayers) {
-        this.netplay.previousPlayers = {};
-      }
-      if (!this.netplay.peerConnections) {
-        this.netplay.peerConnections = {};
-      }
-
-      // Always key P2P connections by Socket.IO socketId.
-      // In SFU mode, P2P is controls-only (data channel).
-      this.netplayInitControlsP2P = (controlsOnly) => {
-        if (!this.netplay || !this.netplay.players) return;
-        const localSocketId =
-          this.netplay.socket && this.netplay.socket.id
-            ? String(this.netplay.socket.id).trim()
-            : null;
-        const localUserid = this.netplay.playerID
-          ? String(this.netplay.playerID).trim()
-          : null;
-        Object.keys(this.netplay.players).forEach((userId) => {
-          if (userId === this.netplay.playerID) return;
-          const extra = this.netplay.players[userId] || null;
-
-          // Never create a P2P connection to ourselves.
-          // Some deployments key `players` by username (not userid), so `userId !== playerID`
-          // can still refer to the local player.
-          if (
-            extra &&
-            localUserid &&
-            extra.userid !== undefined &&
-            extra.userid !== null &&
-            String(extra.userid).trim() === localUserid
-          ) {
-            return;
-          }
-
-          const peerSocketIdRaw = extra && (extra.socketId || extra.socket_id);
-          const peerSocketId = peerSocketIdRaw
-            ? String(peerSocketIdRaw).trim()
-            : "";
-          if (!peerSocketId) {
-            console.warn(
-              `[Netplay] Player ${userId} has no socketId yet; delaying P2P controls init`
-            );
-            return;
-          }
-
-          // SocketId-based self-check (most reliable).
-          if (localSocketId && peerSocketId === localSocketId) {
-            return;
-          }
-
-          if (!this.netplay.peerConnections[peerSocketId]) {
-            console.log(
-              `[Netplay] Initializing P2P controls for peer (socketId) ${peerSocketId}`
-            );
-            this.netplayCreatePeerConnection(peerSocketId, { controlsOnly });
-          }
-        });
       };
+    }
 
-      if (typeof io === "undefined") {
-        console.error(
-          "Socket.IO client library not loaded. Please include <script src='https://cdn.socket.io/4.5.0/socket.io.min.js'></script>"
-        );
-        this.displayMessage("Socket.IO not available", 5000);
-        return;
-      }
-      if (this.netplay.socket && this.netplay.socket.connected) {
-        console.log(
-          "Socket already connected, reusing:",
-          this.netplay.socket.id
-        );
-        callback();
-        return;
-      }
-      if (!this.netplay.url) {
-        console.error("Cannot initialize Socket.IO: netplay.url is undefined");
-        this.displayMessage("Network configuration error", 5000);
-        return;
-      }
-      console.log(
-        "Initializing new Socket.IO connection to:",
-        this.netplay.url
-      );
+    // Define showOpenRoomDialog function for creating rooms
+    if (!this.netplay.showOpenRoomDialog) {
+      this.netplay.showOpenRoomDialog = () => {
+        // Create a sub-popup within the netplay menu (like "Set Player Name")
+        const popups = this.createSubPopup();
+        const container = popups[0];
+        const content = popups[1];
 
-      // Netplay socket connection establishment
-      // This handles initial connection errors
-      this.netplay.socket = io(this.netplay.url);
-      this.netplay.socket.on("connect", () => {
-        console.log("Socket.IO connected:", this.netplay.socket.id);
-        callback();
-      });
-      this.netplay.socket.on("connect_error", (error) => {
-        console.error("Socket.IO connection error:", error.message);
-        this.displayMessage(
-          "Failed to connect to server: " + error.message,
-          5000
-        );
-      });
+        // Use the same styling class as "Set Player Name" popup
+        content.classList.add("ejs_cheat_parent");
 
-      // SFU: host may create new producers during runtime (e.g. after pause/resume
-      // when re-producing tracks). Consume new producers as they appear.
-      this.netplay.socket.on("new-producer", async (data) => {
-        try {
-          if (!this.netplay || !this.netplay.useSFU) return;
-          if (
-            !this.netplay.owner &&
-            typeof this.netplayConsumeSFUProducer === "function"
-          ) {
-            const producerId = data && (data.id || data.producerId);
-            if (producerId) {
-              console.log("[Netplay] new-producer received", { producerId });
-              await this.netplayConsumeSFUProducer(producerId);
-              // If SFU is producing again, clear any host-paused overlay.
-              this.netplayHideHostPausedOverlay();
-            }
-          }
-        } catch (e) {
-          console.warn("[Netplay] Failed handling new-producer", e);
+        // Add title to the dialog using proper CSS class
+        const header = this.createElement("div");
+        const title = this.createElement("h2");
+        title.innerText = "Create Room";
+        title.classList.add("ejs_netplay_name_heading");
+        header.appendChild(title);
+        content.appendChild(header);
+
+        // Create form content using proper CSS classes
+        const main = this.createElement("div");
+        main.classList.add("ejs_netplay_header");
+
+        // Room name input
+        const nameHead = this.createElement("strong");
+        nameHead.innerText = "Room Name";
+        const nameInput = this.createElement("input");
+        nameInput.type = "text";
+        nameInput.name = "roomName";
+        nameInput.setAttribute("maxlength", 50);
+        nameInput.placeholder = "Enter room name...";
+
+        // Max players input
+        const maxHead = this.createElement("strong");
+        maxHead.innerText = "Max Players";
+        const maxSelect = this.createElement("select");
+        maxSelect.name = "maxPlayers";
+        for (let i = 1; i <= 4; i++) {
+          const option = this.createElement("option");
+          option.value = String(i);
+          option.innerText = String(i);
+          if (i === 4) option.selected = true;
+          maxSelect.appendChild(option);
         }
-      });
 
-      this.netplay.socket.on("new-data-producer", async (data) => {
-        try {
-          if (!this.netplay || !this.netplay.useSFU) return;
-          if (
-            this.netplay.owner &&
-            typeof this.netplayConsumeSFUDataProducer === "function"
-          ) {
-            const dataProducerId = data && (data.id || data.dataProducerId);
-            if (dataProducerId) {
-              console.log("[Netplay] new-data-producer received", {
-                dataProducerId,
-              });
-              await this.netplayConsumeSFUDataProducer(dataProducerId);
-            }
-          }
-        } catch (e) {
-          console.warn("[Netplay] Failed handling new-data-producer", e);
-        }
-      });
+        // Password input (optional)
+        const passHead = this.createElement("strong");
+        passHead.innerText = "Password (Optional)";
+        const passInput = this.createElement("input");
+        passInput.type = "password";
+        passInput.name = "password";
+        passInput.placeholder = "Leave empty for public room";
 
-      // Netplay system messages.
-      this.netplay.socket.on("netplay-host-paused", (data) => {
-        try {
-          if (!this.netplay || this.netplay.owner) return;
-          console.log("[Netplay] netplay-host-paused received", data);
-          this.netplayShowHostPausedOverlay();
-        } catch (e) {
-          // ignore
-        }
-      });
-      this.netplay.socket.on("netplay-host-resumed", (data) => {
-        try {
-          if (!this.netplay || this.netplay.owner) return;
-          console.log("[Netplay] netplay-host-resumed received", data);
-          this.netplayHideHostPausedOverlay();
-        } catch (e) {
-          // ignore
-        }
-      });
-      this.netplay.socket.on("users-updated", (users) => {
-        const currentPlayers = users || {};
-        const previousPlayerIds = Object.keys(this.netplay.previousPlayers);
-        const currentPlayerIds = Object.keys(currentPlayers);
-
-        // Find who joined
-        currentPlayerIds.forEach((id) => {
-          if (!previousPlayerIds.includes(id) && id !== this.netplay.playerID) {
-            const playerName = currentPlayers[id].player_name || "A player";
-            this.displayMessage(`${playerName} has joined the room.`);
-          }
+        // Spectators
+        const spectatorHead = this.createElement("strong");
+        spectatorHead.innerText = "Allow Spectators";
+        const spectatorSelect = this.createElement("select");
+        spectatorSelect.name = "spectators";
+        ["Yes", "No"].forEach(val => {
+          const option = this.createElement("option");
+          option.value = val.toLowerCase();
+          option.innerText = val;
+          spectatorSelect.appendChild(option);
         });
 
-        // Find who left
-        previousPlayerIds.forEach((id) => {
-          if (!currentPlayerIds.includes(id)) {
-            const playerName =
-              this.netplay.previousPlayers[id].player_name || "A player";
-            this.displayMessage(`${playerName} has left the room.`);
-          }
+        // Room type
+        const roomTypeHead = this.createElement("strong");
+        roomTypeHead.innerText = "Room Type";
+        const roomTypeSelect = this.createElement("select");
+        roomTypeSelect.name = "roomType";
+        ["Live Stream", "Delay Sync"].forEach(val => {
+          const option = this.createElement("option");
+          option.value = val.toLowerCase().replace(" ", "_");
+          option.innerText = val;
+          roomTypeSelect.appendChild(option);
         });
 
-        this.netplay.previousPlayers = currentPlayers;
+        // Delay sync options (initially hidden)
+        const delaySyncOptions = this.createElement("div");
+        delaySyncOptions.style.display = "none";
 
-        console.log("Users updated:", users);
-        this.netplay.players = users;
-        this.netplayUpdatePlayersTable();
-
-        // Clean up any peer connections for peers that are no longer in the room.
-        // Otherwise the host can show "Attempting to reconnect..." and churn ICE after
-        // a player intentionally leaves.
-        try {
-          const activeSocketIds = new Set(
-            Object.values(this.netplay.players || {})
-              .map((p) => p && p.socketId)
-              .filter(Boolean)
-          );
-          if (this.netplay.peerConnections) {
-            Object.keys(this.netplay.peerConnections).forEach(
-              (peerSocketId) => {
-                if (!activeSocketIds.has(peerSocketId)) {
-                  const stale = this.netplay.peerConnections[peerSocketId];
-                  try {
-                    if (stale && stale._reconnectTimeoutId) {
-                      clearTimeout(stale._reconnectTimeoutId);
-                      stale._reconnectTimeoutId = null;
-                    }
-                  } catch (e) {
-                    // ignore
-                  }
-                  try {
-                    if (stale && stale.dataChannel) stale.dataChannel.close();
-                  } catch (e) {
-                    // ignore
-                  }
-                  try {
-                    if (stale && stale.pc) stale.pc.close();
-                  } catch (e) {
-                    // ignore
-                  }
-                  delete this.netplay.peerConnections[peerSocketId];
-                }
-              }
-            );
-          }
-        } catch (e) {
-          console.warn("[Netplay] users-updated peer cleanup failed", e);
+        const frameDelayHead = this.createElement("strong");
+        frameDelayHead.innerText = "Frame Delay";
+        const frameDelaySelect = this.createElement("select");
+        frameDelaySelect.name = "frameDelay";
+        for (let i = 1; i <= 10; i++) {
+          const option = this.createElement("option");
+          option.value = String(i);
+          option.innerText = String(i);
+          if (i === 2) option.selected = true;
+          frameDelaySelect.appendChild(option);
         }
 
-        // users-updated can fire before SFU decision is made (especially right after connect).
-        // Creating a P2P peer connection too early may create recvonly video + timeouts and
-        // force the client to leave even while SFU is working.
-        if (!this.netplay || this.netplay._sfuDecisionMade !== true) {
-          console.log(
-            "[Netplay] users-updated received before SFU decision; deferring P2P init"
-          );
-          return;
-        }
-
-        if (typeof this.netplayInitControlsP2P === "function") {
-          this.netplayInitControlsP2P(!!this.netplay.useSFU);
-        }
-        if (this.netplay.owner) {
-          console.log("Owner setting up WebRTC for updated users...");
-          (async () => {
-            const localSocketId =
-              this.netplay && this.netplay.socket && this.netplay.socket.id
-                ? String(this.netplay.socket.id).trim()
-                : null;
-            const localUserid =
-              this.netplay && this.netplay.playerID
-                ? String(this.netplay.playerID).trim()
-                : null;
-
-            // In SFU mode we still want P2P for controls even if P2P media
-            // stream init fails/isn't needed.
-            if (!this.netplay.useSFU) {
-              const ok = await this.netplayInitWebRTCStream().catch((err) => {
-                console.error("users-updated: init stream failed", err);
-                return false;
-              });
-              if (!ok)
-                return console.warn(
-                  "users-updated: unable to init local stream; skipping peer setup"
-                );
-            }
-            Object.keys(users).forEach((playerId) => {
-              // Some deployments key `users` by username (not userid), so this check alone
-              // does NOT reliably exclude the local player.
-              if (playerId === this.netplay.playerID) return;
-
-              const extra =
-                this.netplay.players && this.netplay.players[playerId]
-                  ? this.netplay.players[playerId]
-                  : null;
-
-              // Skip self by userid when available.
-              if (
-                extra &&
-                localUserid &&
-                extra.userid !== undefined &&
-                extra.userid !== null &&
-                String(extra.userid).trim() === localUserid
-              ) {
-                return;
-              }
-
-              const socketIdRaw = extra && (extra.socketId || extra.socket_id);
-              const peerSocketId = socketIdRaw
-                ? String(socketIdRaw).trim()
-                : "";
-              if (!peerSocketId) {
-                console.error(
-                  "No socketId for player",
-                  playerId,
-                  "- WebRTC may fail"
-                );
-                return;
-              }
-
-              // Skip self by socketId (most reliable).
-              if (localSocketId && peerSocketId === localSocketId) {
-                return;
-              }
-
-              if (!this.netplay.peerConnections[peerSocketId]) {
-                console.log(
-                  "Creating peer connection for (socketId)",
-                  peerSocketId
-                );
-                this.netplayCreatePeerConnection(peerSocketId, {
-                  controlsOnly: !!this.netplay.useSFU,
-                });
-              }
-            });
-          })();
-        }
-      });
-      this.netplay.socket.on("disconnect", (reason) => {
-        if (this.netplay && this.netplay._leaving) return;
-
-        console.warn("Socket.IO disconnected:", reason);
-
-        // Avoid immediately tearing down the room on transient disconnects.
-        // If we don't reconnect shortly, fall back to leaving.
-        if (this.netplay._disconnectLeaveTimeoutId) {
-          clearTimeout(this.netplay._disconnectLeaveTimeoutId);
-        }
-        this.netplay._disconnectLeaveTimeoutId = setTimeout(() => {
-          try {
-            if (this.netplay && !this.netplay._leaving) {
-              const stillDisconnected =
-                !this.netplay.socket || !this.netplay.socket.connected;
-              if (stillDisconnected) {
-                this.displayMessage(
-                  "Disconnected from server. Leaving room...",
-                  3000
-                );
-                this.netplayLeaveRoom("socket-disconnect-timeout");
-              }
-            }
-          } catch (e) {
-            // Best-effort.
-          }
-        }, 10000);
-      });
-
-      this.netplay.socket.on("connect", () => {
-        if (this.netplay && this.netplay._disconnectLeaveTimeoutId) {
-          clearTimeout(this.netplay._disconnectLeaveTimeoutId);
-          this.netplay._disconnectLeaveTimeoutId = null;
-        }
-
-        try {
-          if (this.netplay && this.netplay._ejsHostAudioHealthTimer) {
-            clearInterval(this.netplay._ejsHostAudioHealthTimer);
-            this.netplay._ejsHostAudioHealthTimer = null;
-          }
-          if (this.netplay) this.netplay._ejsHostAudioHealth = null;
-        } catch (e) {
-          // ignore
-        }
-      });
-      this.netplay.socket.on("data-message", (data) =>
-        this.netplayDataMessage(data)
-      );
-
-      this.netplay.socket.on("webrtc-signal", async (data) => {
-        const { sender, offer, candidate, answer, requestRenegotiate } = data;
-        console.log(`Received WebRTC signal from ${sender}:`, {
-          offer: !!offer,
-          answer: !!answer,
-          candidate: !!candidate,
-          requestRenegotiate,
+        const syncModeHead = this.createElement("strong");
+        syncModeHead.innerText = "Sync Mode";
+        const syncModeSelect = this.createElement("select");
+        syncModeSelect.name = "syncMode";
+        ["Timeout + Last Known", "Strict Sync"].forEach(val => {
+          const option = this.createElement("option");
+          option.value = val === "Timeout + Last Known" ? "timeout" : "strict";
+          option.innerText = val;
+          syncModeSelect.appendChild(option);
         });
-        if (!sender && !requestRenegotiate) {
-          console.warn(
-            "Ignoring signal with no sender and no renegotiation request",
-            data
-          );
-          return;
-        }
-        if (requestRenegotiate && !sender) {
-          console.warn(
-            "Ignoring renegotiation request with undefined sender",
-            data
-          );
-          this.netplay.socket.emit("webrtc-signal-error", {
-            error: "Renegotiation request missing sender",
-            data,
-          });
-          return;
-        }
-        let pcData = sender ? this.netplay.peerConnections[sender] : null;
 
-        if (pcData && !pcData.iceCandidateQueue) {
-          pcData.iceCandidateQueue = [];
-        }
+        delaySyncOptions.appendChild(frameDelayHead);
+        delaySyncOptions.appendChild(this.createElement("br"));
+        delaySyncOptions.appendChild(frameDelaySelect);
+        delaySyncOptions.appendChild(this.createElement("br"));
+        delaySyncOptions.appendChild(syncModeHead);
+        delaySyncOptions.appendChild(this.createElement("br"));
+        delaySyncOptions.appendChild(syncModeSelect);
 
-        if (!pcData && sender) {
-          console.log(
-            "No existing peer connection for",
-            sender,
-            "- creating new one"
-          );
-          pcData = {
-            pc: this.netplayCreatePeerConnection(sender),
-            dataChannel: null,
-            iceCandidateQueue: [],
-          };
-          this.netplay.peerConnections[sender] = pcData;
-        }
-        const pc = pcData.pc;
-        try {
-          if (offer) {
-            console.log("Processing offer from", sender);
-            await pc.setRemoteDescription(new RTCSessionDescription(offer));
-
-            if (pcData.iceCandidateQueue.length > 0) {
-              console.log(
-                `Processing ${pcData.iceCandidateQueue.length} queued ICE candidates.`
-              );
-              for (const queuedCandidate of pcData.iceCandidateQueue) {
-                await pc.addIceCandidate(new RTCIceCandidate(queuedCandidate));
-              }
-              pcData.iceCandidateQueue = [];
-            }
-
-            const answer = await pc.createAnswer();
-            await pc.setLocalDescription(answer);
-            console.log("Sending answer to", sender);
-            this.netplay.socket.emit("webrtc-signal", {
-              target: sender,
-              answer: pc.localDescription,
-            });
-          } else if (answer) {
-            console.log("Processing answer from", sender);
-            await pc.setRemoteDescription(new RTCSessionDescription(answer));
-
-            if (pcData.iceCandidateQueue.length > 0) {
-              console.log(
-                `Processing ${pcData.iceCandidateQueue.length} queued ICE candidates.`
-              );
-              for (const queuedCandidate of pcData.iceCandidateQueue) {
-                await pc.addIceCandidate(new RTCIceCandidate(queuedCandidate));
-              }
-              pcData.iceCandidateQueue = [];
-            }
-          } else if (candidate) {
-            if (pc.remoteDescription) {
-              console.log("Adding ICE candidate from", sender);
-              await pc.addIceCandidate(new RTCIceCandidate(candidate));
-            } else {
-              console.log(
-                "Remote description not set. Queueing ICE candidate from",
-                sender
-              );
-              pcData.iceCandidateQueue.push(candidate);
-            }
-          } else if (requestRenegotiate && this.netplay.owner) {
-            console.log("Owner handling renegotiation request...");
-            Object.keys(this.netplay.peerConnections).forEach((peerId) => {
-              if (peerId && this.netplay.peerConnections[peerId]) {
-                const peerConn = this.netplay.peerConnections[peerId].pc;
-                console.log(
-                  "Closing and recreating peer connection for",
-                  peerId
-                );
-                peerConn.close();
-                delete this.netplay.peerConnections[peerId];
-                this.netplayCreatePeerConnection(peerId);
-              }
-            });
-          }
-        } catch (error) {
-          console.error("WebRTC signaling error:", error);
-        }
-      });
-    };
-
-    this.netplayUpdatePlayersTable = () => {
-      if (!this.netplay.playerTable) {
-        console.error("netplay.playerTable is undefined");
-        return;
-      }
-      const table = this.netplay.playerTable;
-      table.innerHTML = "";
-
-      const playerCount = Object.keys(this.netplay.players).length;
-      const maxPlayers = this.netplay.maxPlayers || "?";
-
-      const addToTable = (playerNumber, playerName, statusText) => {
-        const row = this.createElement("tr");
-        const addCell = (text) => {
-          const item = this.createElement("td");
-          item.innerText = text;
-          row.appendChild(item);
-          return item;
-        };
-        addCell(playerNumber).style.width = "80px";
-        addCell(playerName);
-        addCell(statusText).style.width = "80px";
-        table.appendChild(row);
-      };
-
-      let i = 0;
-      for (const k in this.netplay.players) {
-        const playerNumber = i + 1;
-        const playerName = this.netplay.players[k].player_name || "Unknown";
-        const statusText = i === 0 ? `${playerCount}/${maxPlayers}` : "";
-        addToTable(playerNumber, playerName, statusText);
-        i++;
-      }
-    };
-
-    this.netplayOpenRoom = (roomName, maxPlayers, password) => {
-      const sessionid = guidGenerator();
-      this.netplay.playerID = guidGenerator();
-      this.netplay.players = {};
-      this.netplay.maxPlayers = maxPlayers;
-      this.netplay.localSlot =
-        typeof this.netplayPreferredSlot === "number"
-          ? this.netplayPreferredSlot
-          : 0;
-      // Ensure the leave guard never leaks across sessions.
-      this.netplay._leaving = false;
-      this.netplay._sfuDecisionMade = false;
-      // Force SFU capability to be re-evaluated for this new room/session.
-      // (useSFU=false is a cached result; undefined means "unknown")
-      this.netplay.useSFU = undefined;
-      this.netplay.device = null;
-      this.netplay.extra = {
-        domain: window.location.host,
-        game_id: this.config.gameId,
-        room_name: roomName,
-        player_name: this.netplay.name,
-        player_slot: this.netplay.localSlot,
-        // maps a userid from netplay session negotiation to player ID for mapping controls in game
-        userid: this.netplay.playerID,
-        sessionid: sessionid,
-        input_mode:
-          this.netplayInputMode ||
-          window.EJS_NETPLAY_INPUT_MODE ||
-          "unorderedRelay",
-      };
-      this.netplay.players[this.netplay.playerID] = this.netplay.extra;
-      this.netplay.owner = true;
-
-      // Netplay room create error handling
-      this.netplayStartSocketIO(() => {
-        this.netplay.socket.emit(
-          "open-room",
-          {
-            extra: this.netplay.extra,
-            maxPlayers: maxPlayers,
-            password: password,
-          },
-          (error) => {
-            if (error) {
-              // Room create fails
-              console.error("Error opening room:", error);
-              // Check if this is an authentication error
-              if (
-                error.includes("unauthorized") ||
-                error.includes("token") ||
-                error.includes("auth")
-              ) {
-                // Call the token refresh function from base.vue
-                if (window.handleSfuAuthError) {
-                  window.handleSfuAuthError();
-                  return; // Don't show error message - refreshing token instead
-                }
-              }
-              // If error for some other reasons unrelated to token validity...
-              this.displayMessage("Failed to create room: " + error, 5000);
-              return;
-            }
-            // Room created successfully, join created room.
-            this.netplayRoomJoined(true, roomName, password, sessionid);
-          }
-        );
-      });
-    };
-
-    this.netplayJoinRoom = (sessionid, roomName, maxPlayers, password) => {
-      this.netplay.playerID = guidGenerator();
-      this.netplay.players = {};
-      this.netplay.maxPlayers = maxPlayers;
-      this.netplay.localSlot =
-        typeof this.netplayPreferredSlot === "number"
-          ? this.netplayPreferredSlot
-          : 0;
-      // Ensure the leave guard never leaks across sessions.
-      this.netplay._leaving = false;
-      this.netplay._sfuDecisionMade = false;
-      // Force SFU capability to be re-evaluated for this new room/session.
-      this.netplay.useSFU = undefined;
-      this.netplay.device = null;
-      this.netplay.extra = {
-        domain: window.location.host,
-        game_id: this.config.gameId,
-        room_name: roomName,
-        player_name: this.netplay.name,
-        player_slot: this.netplay.localSlot,
-        userid: this.netplay.playerID,
-        sessionid: sessionid,
-        input_mode:
-          this.netplayInputMode ||
-          window.EJS_NETPLAY_INPUT_MODE ||
-          "unorderedRelay",
-      };
-      this.netplay.players[this.netplay.playerID] = this.netplay.extra;
-      this.netplay.owner = false;
-
-      // Netplay room join error handling
-      this.netplayStartSocketIO(() => {
-        this.netplay.socket.emit(
-          "join-room",
-          {
-            extra: this.netplay.extra,
-            password: password,
-          },
-          (error, users) => {
-            if (error) {
-              console.error("Error joining room:", error);
-
-              // Check if this is an auth error
-              if (
-                error.includes("unauthorized") ||
-                error.includes("token") ||
-                error.includes("auth")
-              ) {
-                // Calls the refresh function from base.vue
-                if (window.handleSfuAuthError) {
-                  window.handleSfuAuthError();
-                  return; // Don't show an error message - refreshing token instead.
-                }
-              }
-              // If error for some reason other than authentication...
-              alert("Error joining room: " + error);
-              return;
-            }
-            this.netplay.players = users;
-            this.netplayRoomJoined(false, roomName, password, sessionid);
-          }
-        );
-      });
-    };
-
-    this.netplayRoomJoined = async (isOwner, roomName, password, roomId) => {
-      console.log(
-        "[Netplay] Build stamp:",
-        "sfu-media+p2p-controls-2026-01-06a"
-      );
-      console.log(
-        "[Netplay] netplayRoomJoined called. isOwner:",
-        isOwner,
-        "players:",
-        Object.keys(this.netplay.players)
-      );
-      EJS_INSTANCE.updateNetplayUI(true);
-
-      if (
-        !this.netplay ||
-        !this.canvas ||
-        !this.elements ||
-        !this.elements.parent
-      ) {
-        console.error("netplayRoomJoined: Required objects are undefined", {
-          netplay: !!this.netplay,
-          canvas: !!this.canvas,
-          elements: !!this.elements,
-          parent: !!(this.elements && this.elements.parent),
-        });
-        this.displayMessage("Failed to initialize netplay room", 5000);
-        return;
-      }
-
-      if (!this.netplayCanvas) {
-        this.netplayCanvas = this.createElement("canvas");
-        this.netplayCanvas.classList.add("ejs_canvas");
-        this.netplayCanvas.style.display = "none";
-        this.netplayCanvas.style.position = "absolute";
-        this.netplayCanvas.style.top = "0";
-        this.netplayCanvas.style.left = "0";
-        this.netplayCanvas.style.zIndex = "5";
-        this.netplayCanvas.style.objectFit = "contain";
-        this.netplayCanvas.style.width = "100%";
-        this.netplayCanvas.style.height = "100%";
-        this.netplayCanvas.style.objectPosition = "top center";
-      }
-
-      this.isNetplay = true;
-      this.netplay.inputs = {};
-      this.netplay.owner = isOwner;
-      this.netplay._sfuDecisionMade = false;
-
-      // Host local slot override: allow the room owner to switch which player
-      // their *local* inputs control, without affecting remote players.
-      try {
-        if (
-          isOwner &&
-          this.netplay &&
-          this.gameManager &&
-          this.gameManager.functions &&
-          typeof this.gameManager.functions.simulateInput === "function"
-        ) {
-          if (!this.netplay._ejsRawSimulateInputFn) {
-            this.netplay._ejsRawSimulateInputFn =
-              this.gameManager.functions.simulateInput;
-          }
-          if (!this.netplay._ejsSlotOverrideInstalled) {
-            this.netplay._ejsSlotOverrideInstalled = true;
-            this.gameManager.functions.simulateInput = (
-              player,
-              index,
-              value
-            ) => {
-              try {
-                if (!this.netplay || !this.isNetplay) {
-                  return this.netplay._ejsRawSimulateInputFn(
-                    player,
-                    index,
-                    value
-                  );
-                }
-                if (this.netplay._ejsApplyingRemoteInput) {
-                  return this.netplay._ejsRawSimulateInputFn(
-                    player,
-                    index,
-                    value
-                  );
-                }
-                const slot =
-                  typeof this.netplay.localSlot === "number"
-                    ? this.netplay.localSlot
-                    : player;
-                return this.netplay._ejsRawSimulateInputFn(slot, index, value);
-              } catch (e) {
-                return this.netplay._ejsRawSimulateInputFn(
-                  player,
-                  index,
-                  value
-                );
-              }
-            };
-          }
-        }
-      } catch (e) {
-        // ignore
-      }
-      // Hybrid-only build mode: SFU audio/video is mandatory; P2P is controls-only.
-      this.netplay._hybridOnly = !!(
-        (this.config && this.config.netplayHybridOnly) ||
-        window.EJS_NETPLAY_HYBRID_ONLY === true
-      );
-      // Re-evaluate SFU on every join (do not reuse cached false from a prior run).
-      this.netplay.useSFU = undefined;
-      // Wait until the emulator/core has started (so canvas/native
-      // resolution is stable) before attempting SFU. This avoids
-      // capturing a zero-sized canvas from cores that initialize
-      // asynchronously.
-      const waitForStarted = async (timeout = 10000, interval = 200) => {
-        const t0 = Date.now();
-        while (!this.started && Date.now() - t0 < timeout) {
-          await new Promise((r) => setTimeout(r, interval));
-        }
-        return this.started;
-      };
-
-      try {
-        await waitForStarted(10000, 200);
-        const useSFU = await this.netplayAttemptSFU();
-        this.netplay._sfuDecisionMade = true;
-        this.netplay.useSFU = !!useSFU;
-        // Now that SFU decision is known, initialize P2P controls appropriately.
-        if (typeof this.netplayInitControlsP2P === "function") {
-          this.netplayInitControlsP2P(!!useSFU);
-        }
-        if (useSFU) {
-          console.log("Using SFU for netplay");
-          if (this.netplay.owner) {
-            try {
-              const ok = await this.netplayInitWebRTCStream();
-              if (ok) await this.netplayCreateSFUTransports();
-              else
-                console.warn(
-                  "SFU init skipped: failed to initialize local stream (owner)"
-                );
-            } catch (err) {
-              console.error("SFU init error (owner):", err);
-            }
-          } else {
-            try {
-              await this.netplayCreateSFUTransports();
-            } catch (err) {
-              console.error("SFU init error (client):", err);
-            }
-          }
-        } else {
-          if (this.netplay._hybridOnly) {
-            console.error(
-              "SFU is required for this build (hybrid-only); leaving room"
-            );
-            this.displayMessage(
-              "Netplay requires SFU (hybrid-only build).",
-              5000
-            );
-            this.netplayLeaveRoom("sfu-required");
-            return;
-          }
-          console.log("SFU not used; falling back to peer-to-peer");
-        }
-      } catch (err) {
-        console.warn("netplayAttemptSFU failed or timed out:", err);
-      }
-
-      // Input channel selection (can be changed mid-session).
-      // Non-owner sends inputs either via SFU DataChannel relay (ordered/unordered)
-      // or via P2P unordered DataChannel.
-      this.netplayTeardownRelayInputs = (reason) => {
-        try {
-          if (!this.netplay) return;
-          if (this.netplay.inputDataProducer) {
-            try {
-              this.netplay.inputDataProducer.close();
-            } catch (e) {}
-            this.netplay.inputDataProducer = null;
-          }
-        } catch (e) {
-          console.warn("[Netplay] Failed to teardown relay inputs", {
-            reason,
-            error: e,
-          });
-        }
-      };
-
-      this.netplayTeardownUnorderedP2PInputs = (reason) => {
-        try {
-          if (!this.netplay) return;
-          Object.values(this.netplay.peerConnections || {}).forEach(
-            (pcData) => {
-              const dc = pcData && pcData.unorderedDataChannel;
-              if (!dc) return;
-              try {
-                if (dc.readyState !== "closed") dc.close();
-              } catch (e) {}
-              try {
-                pcData.unorderedDataChannel = null;
-              } catch (e) {}
-            }
-          );
-        } catch (e) {
-          console.warn("[Netplay] Failed to teardown unordered P2P inputs", {
-            reason,
-            error: e,
-          });
-        }
-      };
-
-      this.netplayEnsureUnorderedP2PInputs = (retries, reason) => {
-        try {
-          if (!this.netplay) return;
-          Object.values(this.netplay.peerConnections || {}).forEach(
-            (pcData) => {
-              if (!pcData || !pcData.pc) return;
-
-              // Recreate the channel to apply changed retransmit settings.
-              if (pcData.unorderedDataChannel) {
-                try {
-                  if (pcData.unorderedDataChannel.readyState !== "closed") {
-                    pcData.unorderedDataChannel.close();
-                  }
-                } catch (e) {}
-                pcData.unorderedDataChannel = null;
-              }
-
-              const dc = pcData.pc.createDataChannel("inputs-unordered", {
-                ordered: false,
-                maxRetransmits: retries,
-              });
-              dc.onopen = () =>
-                console.log("[Netplay] Unordered P2P input channel open", {
-                  reason,
-                });
-              dc.onclose = () =>
-                console.warn("[Netplay] Unordered P2P input channel closed", {
-                  reason,
-                });
-              dc.onerror = (e) =>
-                console.error("[Netplay] Unordered P2P input channel error", e);
-              pcData.unorderedDataChannel = dc;
-            }
-          );
-        } catch (e) {
-          console.warn("[Netplay] Failed ensuring unordered P2P channel", e);
-        }
-      };
-
-      this.netplayApplyInputMode = async (reason) => {
-        try {
-          if (!this.isNetplay || !this.netplay) return;
-          if (this.netplay.owner) return;
-
-          const retriesRaw =
-            typeof this.netplayUnorderedRetries === "number" ||
-            typeof this.netplayUnorderedRetries === "string"
-              ? this.netplayUnorderedRetries
-              : window.EJS_NETPLAY_UNORDERED_RETRIES;
-          let retries = parseInt(retriesRaw, 10);
-          if (isNaN(retries)) retries = 0;
-          if (retries < 0) retries = 0;
-          if (retries > 2) retries = 2;
-
-          const mode =
-            (typeof this.netplayInputMode === "string" &&
-              this.netplayInputMode) ||
-            (typeof window.EJS_NETPLAY_INPUT_MODE === "string" &&
-              window.EJS_NETPLAY_INPUT_MODE) ||
-            "unorderedRelay";
-
-          if (mode === "orderedRelay" || mode === "unorderedRelay") {
-            if (!this.netplay.useSFU) {
-              console.warn(
-                "[Netplay] Input mode is relay but SFU is not available"
-              );
-              return;
-            }
-
-            // Data-only switch: ensure we only have one input path alive.
-            this.netplayTeardownUnorderedP2PInputs("switch-to-relay:" + reason);
-            this.netplayTeardownRelayInputs("switch-to-relay:" + reason);
-
-            // Do not recreate SFU media transports here.
-            if (typeof this.netplayEnsureSFUInputSendTransport === "function") {
-              await this.netplayEnsureSFUInputSendTransport();
-            }
-
-            if (
-              !this.netplay.inputSendTransport ||
-              typeof this.netplay.inputSendTransport.produceData !== "function"
-            ) {
-              console.warn("[Netplay] inputSendTransport not ready for relay");
-              return;
-            }
-
-            const ordered = mode === "orderedRelay";
-            const produceOpts = {
-              ordered,
-              label: "ejs-inputs",
-              protocol: "json",
-              appData: { ejsType: "inputs", ejsInputMode: mode },
-            };
-            if (!ordered) produceOpts.maxRetransmits = retries;
-
-            this.netplay.inputDataProducer =
-              await this.netplay.inputSendTransport.produceData(produceOpts);
-            console.log("[Netplay] Input relay channel ready", {
-              reason,
-              mode,
-              dataProducerId: this.netplay.inputDataProducer.id,
-            });
-            return;
-          }
-
-          // unorderedP2P
-          this.netplayTeardownRelayInputs("switch-to-unorderedP2P:" + reason);
-          this.netplayTeardownUnorderedP2PInputs(
-            "switch-to-unorderedP2P:" + reason
-          );
-          this.netplayEnsureUnorderedP2PInputs(retries, reason);
-        } catch (e) {
-          console.warn("[Netplay] netplayApplyInputMode failed", e);
-        }
-      };
-
-      try {
-        await this.netplayApplyInputMode("join");
-      } catch (e) {
-        // ignore
-      }
-      console.log("Room joined with extra:", this.netplay.extra);
-
-      if (this.netplay.roomNameElem) {
-        this.netplay.roomNameElem.innerText = roomName;
-      }
-      if (this.netplay.tabs && this.netplay.tabs[0] && this.netplay.tabs[1]) {
-        this.netplay.tabs[0].style.display = "none";
-        this.netplay.tabs[1].style.display = "";
-      }
-      if (this.netplay.passwordElem) {
-        if (password) {
-          this.netplay.passwordElem.style.display = "";
-          this.netplay.passwordElem.innerText =
-            this.localization("Password") + ": " + password;
-        } else {
-          this.netplay.passwordElem.style.display = "none";
-        }
-      }
-      if (this.netplay.createButton) {
-        this.netplay.createButton.innerText = this.localization("Leave Room");
-      }
-      this.netplayUpdatePlayersTable();
-
-      // Netplay overlays use absolute positioning; keep a positioning context,
-      // but do not force viewport dimensions (breaks embeds).
-      if (this.elements.parent && this.elements.parent.style) {
-        if (!this.elements.parent.style.position) {
-          this.elements.parent.style.position = "relative";
-        }
-      }
-
-      const { width: nativeWidth, height: nativeHeight } =
-        this.getNativeResolution() || {
-          width: 700,
-          height: 720,
+        // Add form elements with tighter spacing
+        const addField = (label, element) => {
+          const fieldContainer = this.createElement("div");
+          fieldContainer.style.marginBottom = "8px"; // Tighter spacing between fields
+          fieldContainer.appendChild(label);
+          fieldContainer.appendChild(this.createElement("br"));
+          fieldContainer.appendChild(element);
+          main.appendChild(fieldContainer);
         };
 
-      if (!this.netplay.owner) {
-        // In SFU mode, the non-owner is a spectator: show the SFU video and
-        // keep the emulator canvas out of the layout (but not 0x0 / display:none,
-        // which can trigger Emscripten screen dimension errors in some cores).
-        if (this.netplay.useSFU) {
-          // Spectator mode: do not run local emulation/audio; watch SFU media.
+        addField(nameHead, nameInput);
+        addField(maxHead, maxSelect);
+        addField(passHead, passInput);
+        addField(spectatorHead, spectatorSelect);
+        addField(roomTypeHead, roomTypeSelect);
+        main.appendChild(delaySyncOptions);
+
+        content.appendChild(main);
+
+        // Add buttons at the bottom with proper spacing (like other netplay menus)
+        content.appendChild(this.createElement("br"));
+        const buttonContainer = this.createElement("div");
+        buttonContainer.style.display = "flex";
+        buttonContainer.style.gap = "10px"; // Match spacing used in netplay menus
+        buttonContainer.style.justifyContent = "center";
+
+        const createBtn = this.createElement("button");
+        createBtn.classList.add("ejs_button_button");
+        createBtn.classList.add("ejs_popup_submit");
+        createBtn.style["background-color"] = "rgba(var(--ejs-primary-color),1)";
+        createBtn.innerText = "Create";
+        createBtn.onclick = async () => {
+          const roomName = nameInput.value.trim();
+          const maxPlayers = parseInt(maxSelect.value, 10);
+          const password = passInput ? passInput.value.trim() || null : null;
+          const allowSpectators = spectatorSelect ? spectatorSelect.value === "yes" : true;
+          const roomType = roomTypeSelect.value;
+          const frameDelay = frameDelaySelect ? parseInt(frameDelaySelect.value, 10) : 2;
+          const syncMode = syncModeSelect ? syncModeSelect.value : "timeout";
+
+          if (!roomName) {
+            alert("Please enter a room name");
+            return;
+          }
+
           try {
-            this.gameManager.toggleMainLoop(0);
-            this.paused = true;
-            this.netplay._spectatorPausedLocal = true;
-          } catch (e) {
-            // ignore
-          }
-          try {
-            const audioCtx =
-              this.Module &&
-              this.Module.AL &&
-              this.Module.AL.currentCtx &&
-              this.Module.AL.currentCtx.audioCtx;
-            if (audioCtx && audioCtx.state === "running") {
-              audioCtx.suspend();
-              this.netplay._spectatorSuspendedAudio = true;
-            }
-          } catch (e) {
-            // ignore
-          }
-
-          if (this.canvas) {
-            this.canvas.width = 1;
-            this.canvas.height = 1;
-            Object.assign(this.canvas.style, {
-              display: "block",
-              position: "absolute",
-              left: "-9999px",
-              top: "-9999px",
-              width: "1px",
-              height: "1px",
-              opacity: "0",
-              pointerEvents: "none",
-            });
-            try {
-              if (this.Module && this.Module.setCanvasSize) {
-                this.Module.setCanvasSize(1, 1);
-              }
-            } catch (e) {
-              // Best-effort; some cores may not expose setCanvasSize here.
-            }
-          }
-
-          if (!this.netplay.videoContainer) {
-            this.netplay.videoContainer = this.createElement("div");
-            Object.assign(this.netplay.videoContainer.style, {
-              position: "absolute",
-              top: "0",
-              left: "0",
-              width: "100%",
-              height: "100%",
-              zIndex: "5",
-              background: "black",
-              pointerEvents: "none",
-            });
-          }
-          // If we previously left a room, videoContainer may be display:none.
-          // Ensure it's visible again when joining in SFU spectator mode.
-          this.netplay.videoContainer.style.display = "block";
-          if (!this.netplay.videoContainer.parentElement) {
-            this.elements.parent.appendChild(this.netplay.videoContainer);
-          }
-          if (this.netplayCanvas) {
-            this.netplayCanvas.style.display = "none";
-          }
-        } else {
-          // P2P fallback (legacy): display the netplay canvas.
-          this.canvas.style.display = "none";
-          if (!this.netplayCanvas.parentElement) {
-            this.elements.parent.appendChild(this.netplayCanvas);
-            console.log(
-              "Appended netplayCanvas to this.elements.parent:",
-              this.elements.parent
-            );
-          }
-          this.netplayCanvas.width = nativeWidth;
-          this.netplayCanvas.height = nativeHeight;
-          Object.assign(this.netplayCanvas.style, {
-            position: "absolute",
-            top: "0",
-            left: "0",
-            width: "100%",
-            height: "100%",
-            zIndex: "5",
-            display: "block",
-            pointerEvents: "none",
-          });
-        }
-
-        const parentStyles = window.getComputedStyle(this.elements.parent);
-        console.log("Parent container styles:", {
-          display: parentStyles.display,
-          visibility: parentStyles.visibility,
-          opacity: parentStyles.opacity,
-          position: parentStyles.position,
-          zIndex: parentStyles.zIndex,
-        });
-
-        if (
-          this.elements.bottomBar &&
-          this.elements.bottomBar.cheat &&
-          this.elements.bottomBar.cheat[0]
-        ) {
-          this.netplay.oldStyles = [
-            this.elements.bottomBar.cheat[0].style.display,
-          ];
-          this.elements.bottomBar.cheat[0].style.display = "none";
-        }
-        if (this.gameManager && this.gameManager.resetCheat) {
-          this.gameManager.resetCheat();
-        }
-        console.log("Player 2 joined, awaiting WebRTC stream...");
-        this.elements.parent.focus();
-
-        // For the spectator client in SFU mode, keyboard/gamepad events still
-        // flow through GameManager.simulateInput(). Intercept that path and
-        // forward inputs over the P2P data channel to the host.
-        if (
-          this.gameManager &&
-          typeof this.gameManager.simulateInput === "function"
-        ) {
-          if (!this.netplay.originalSimulateInputMethod) {
-            this.netplay.originalSimulateInputMethod =
-              this.gameManager.simulateInput;
-          }
-
-          const sendInputOverDataChannel = (player, index, value) => {
-            let playerIndex = parseInt(player, 10);
-            if (isNaN(playerIndex)) playerIndex = 0;
-            if (playerIndex < 0) playerIndex = 0;
-            if (playerIndex > 3) playerIndex = 3;
-
-            // Live slot switching: always send as the currently selected local slot.
-            try {
-              const slotRaw =
-                (this.netplay &&
-                  (this.netplay.localSlot ??
-                    this.netplayPreferredSlot ??
-                    window.EJS_NETPLAY_PREFERRED_SLOT)) ||
-                0;
-              let slot = parseInt(slotRaw, 10);
-              if (!isNaN(slot)) {
-                if (slot < 0) slot = 0;
-                if (slot > 3) slot = 3;
-                playerIndex = slot;
-              }
-            } catch (e) {
-              // ignore
-            }
-            const mode =
-              (typeof this.netplayInputMode === "string" &&
-                this.netplayInputMode) ||
-              (typeof window.EJS_NETPLAY_INPUT_MODE === "string" &&
-                window.EJS_NETPLAY_INPUT_MODE) ||
-              "unorderedRelay";
-
-            const retriesRaw =
-              typeof this.netplayUnorderedRetries === "number" ||
-              typeof this.netplayUnorderedRetries === "string"
-                ? this.netplayUnorderedRetries
-                : window.EJS_NETPLAY_UNORDERED_RETRIES;
-            let retries = parseInt(retriesRaw, 10);
-            if (isNaN(retries)) retries = 0;
-            if (retries < 0) retries = 0;
-            if (retries > 2) retries = 2;
-
-            // For unordered channels with maxRetransmits=0, send a full controller snapshot
-            // (default state merged with current held state) in every packet.
-            const shouldSendSnapshot =
-              retries === 0 &&
-              (mode === "unorderedRelay" || mode === "unorderedP2P");
-
-            let payload;
-            if (shouldSendSnapshot) {
-              try {
-                if (!this.netplay) this.netplay = {};
-                if (!Array.isArray(this.netplay.localInputState)) {
-                  this.netplay.localInputState = new Array(30).fill(0);
-                }
-                const idx = parseInt(index, 10);
-                if (!isNaN(idx) && idx >= 0 && idx < 30) {
-                  const v = parseInt(value, 10);
-                  this.netplay.localInputState[idx] = isNaN(v) ? 0 : v;
-                }
-                payload = JSON.stringify({
-                  player: playerIndex,
-                  state: this.netplay.localInputState,
-                });
-              } catch (e) {
-                payload = JSON.stringify({ player: playerIndex, index, value });
-              }
-            } else {
-              payload = JSON.stringify({ player: playerIndex, index, value });
-            }
-            try {
-              if (mode === "orderedRelay" || mode === "unorderedRelay") {
-                const dp = this.netplay && this.netplay.inputDataProducer;
-                if (dp && !dp.closed && typeof dp.send === "function") {
-                  dp.send(payload);
-                  return;
-                }
-              }
-
-              if (mode === "unorderedP2P") {
-                let sent = false;
-                Object.values(this.netplay.peerConnections || {}).forEach(
-                  (pcData) => {
-                    if (
-                      pcData &&
-                      pcData.unorderedDataChannel &&
-                      pcData.unorderedDataChannel.readyState === "open"
-                    ) {
-                      pcData.unorderedDataChannel.send(payload);
-                      sent = true;
-                    }
-                  }
-                );
-                if (sent) return;
-              }
-
-              // Fallback: ordered P2P inputs channel.
-              Object.values(this.netplay.peerConnections || {}).forEach(
-                (pcData) => {
-                  if (
-                    pcData &&
-                    pcData.dataChannel &&
-                    pcData.dataChannel.readyState === "open"
-                  ) {
-                    pcData.dataChannel.send(payload);
-                  }
-                }
-              );
-            } catch (e) {
-              console.error("Failed to send input over dataChannel:", e);
-            }
-          };
-
-          this.gameManager.simulateInput = (player, index, value) => {
-            console.log("Player 2 input:", {
-              player,
-              index,
-              value,
-              playerIndex: this.netplayGetUserIndex(),
-            });
-            sendInputOverDataChannel(player, index, value);
-          };
-
-          // Some code paths call gameManager.functions.simulateInput.
-          if (
-            this.gameManager.functions &&
-            typeof this.gameManager.functions.simulateInput === "function"
-          ) {
-            if (!this.netplay.originalSimulateInputFn) {
-              this.netplay.originalSimulateInputFn =
-                this.gameManager.functions.simulateInput;
-            }
-            this.gameManager.functions.simulateInput = (
-              player,
-              index,
-              value
-            ) => {
-              console.log("Player 2 input (fn):", {
-                player,
-                index,
-                value,
-                playerIndex: this.netplayGetUserIndex(),
-              });
-              sendInputOverDataChannel(player, index, value);
-            };
-          }
-        } else {
-          console.error(
-            "Cannot override simulateInput: gameManager.simulateInput is undefined"
-          );
-        }
-
-        if (this.isMobile && this.gamepadElement) {
-          const newGamepad = this.gamepadElement.cloneNode(true);
-          this.gamepadElement.parentNode.replaceChild(
-            newGamepad,
-            this.gamepadElement
-          );
-          this.gamepadElement = newGamepad;
-          Object.assign(this.gamepadElement.style, {
-            zIndex: "1000",
-            position: "absolute",
-            pointerEvents: "auto",
-          });
-
-          this.gamepadElement.addEventListener(
-            "touchstart",
-            (e) => {
-              e.preventDefault();
-              const button = e.target.closest("[data-button]");
-              if (
-                button &&
-                this.gameManager &&
-                this.gameManager.functions &&
-                this.gameManager.functions.simulateInput
-              ) {
-                this.gameManager.functions.simulateInput(
-                  0,
-                  button.dataset.button,
-                  1
-                );
-              }
-            },
-            {
-              passive: false,
-            }
-          );
-
-          this.gamepadElement.addEventListener(
-            "touchend",
-            (e) => {
-              e.preventDefault();
-              const button = e.target.closest("[data-button]");
-              if (
-                button &&
-                this.gameManager &&
-                this.gameManager.functions &&
-                this.gameManager.functions.simulateInput
-              ) {
-                this.gameManager.functions.simulateInput(
-                  0,
-                  button.dataset.button,
-                  0
-                );
-              }
-            },
-            {
-              passive: false,
-            }
-          );
-
-          this.gamepadElement.focus();
-        }
-        const updateGamepadStyles = () => {
-          if (this.isMobile && this.gamepadElement) {
-            Object.assign(this.gamepadElement.style, {
-              zIndex: "1000",
-              position: "absolute",
-              pointerEvents: "auto",
-            });
-            this.netplayCanvas.style.pointerEvents = "none";
-            this.netplayCanvas.width = nativeWidth;
-            this.netplayCanvas.height = nativeHeight;
-            this.netplayCanvas.style.width = "100%";
-            this.netplayCanvas.style.height = "100%";
+            container.remove(); // Remove the popup
+            await this.netplayCreateRoom(roomName, maxPlayers, password, allowSpectators, roomType, frameDelay, syncMode);
+          } catch (error) {
+            console.error("[Netplay] Failed to create room:", error);
+            alert("Failed to create room: " + error.message);
           }
         };
-        document.addEventListener("fullscreenchange", updateGamepadStyles);
-        document.addEventListener(
-          "webkitfullscreenchange",
-          updateGamepadStyles
-        );
 
-        // Keep a handle so we can cancel the timeout if we leave early.
-        if (this.netplay._webrtcReadyTimeoutId) {
-          clearTimeout(this.netplay._webrtcReadyTimeoutId);
-        }
-        this.netplay._webrtcReadyTimeoutId = setTimeout(() => {
-          const hasOpenDataChannel = () => {
-            try {
-              return Object.values(this.netplay.peerConnections || {}).some(
-                (pcData) =>
-                  pcData &&
-                  pcData.dataChannel &&
-                  pcData.dataChannel.readyState === "open"
-              );
-            } catch (e) {
-              return false;
-            }
-          };
-
-          const hasSFUVideoFrames = () => {
-            try {
-              return (
-                !!this.netplay.video &&
-                this.netplay.video.videoWidth > 0 &&
-                this.netplay.video.videoHeight > 0
-              );
-            } catch (e) {
-              return false;
-            }
-          };
-
-          const ready =
-            !!this.netplay.webRtcReady ||
-            hasOpenDataChannel() ||
-            hasSFUVideoFrames();
-
-          if (!ready) {
-            console.error("WebRTC connection not established after timeout");
-            this.displayMessage(
-              "Failed to connect to Player 1. Please check your network and try again.",
-              5000
-            );
-            if (this.interactionOverlay) {
-              this.interactionOverlay.remove();
-              this.interactionOverlay = null;
-            }
-            this.netplayLeaveRoom("webrtc-ready-timeout");
-          } else {
-            console.log("Netplay ready before timeout", {
-              webRtcReady: !!this.netplay.webRtcReady,
-              hasOpenDataChannel: hasOpenDataChannel(),
-              hasSFUVideoFrames: hasSFUVideoFrames(),
-            });
-          }
-        }, 10000);
-      } else {
-        if (this.canvas) {
-          this.canvas.width = nativeWidth;
-          this.canvas.height = nativeHeight;
-          this.canvas.style.display = "block";
-          this.canvas.style.objectFit = "contain";
-        }
-        if (this.netplayCanvas) {
-          this.netplayCanvas.style.display = "none";
-        }
-        if (this.netplay.videoContainer) {
-          this.netplay.videoContainer.style.display = "none";
-        }
-        if (
-          this.elements.bottomBar &&
-          this.elements.bottomBar.cheat &&
-          this.elements.bottomBar.cheat[0]
-        ) {
-          this.netplay.oldStyles = [
-            this.elements.bottomBar.cheat[0].style.display,
-          ];
-        }
-
-        if (this.netplay.owner && this.Module && this.Module.setCanvasSize) {
-          this.Module.setCanvasSize(nativeWidth, nativeHeight);
-        }
-
-        this.netplay.lockedAspectRatio = nativeWidth / nativeHeight;
-        const resizeCanvasWithAspect = () => {
-          const aspect = this.netplay.lockedAspectRatio;
-          let vw = 0;
-          let vh = 0;
-          try {
-            const container =
-              (this.netplay && this.netplay.videoContainer) ||
-              (this.elements && this.elements.parent) ||
-              null;
-            if (
-              container &&
-              typeof container.getBoundingClientRect === "function"
-            ) {
-              const rect = container.getBoundingClientRect();
-              vw = rect.width;
-              vh = rect.height;
-            }
-          } catch (e) {
-            // ignore
-          }
-          // On first netplay initialization, the container can briefly report
-          // 0x0 while layout settles. Falling back to window size causes an
-          // oversized canvas until the user manually resizes the window.
-          // Instead, retry briefly until we can read the real container size.
-          if (!vw || !vh) {
-            const start =
-              (this.netplay && this.netplay._resizeInitStart) || Date.now();
-            if (this.netplay) this.netplay._resizeInitStart = start;
-            if (Date.now() - start < 1500) {
-              if (
-                typeof window !== "undefined" &&
-                window.requestAnimationFrame
-              ) {
-                window.requestAnimationFrame(resizeCanvasWithAspect);
-              } else {
-                setTimeout(resizeCanvasWithAspect, 50);
-              }
-              return;
-            }
-            // Last resort: if the container never reports a size, fall back.
-            vw = window.innerWidth;
-            vh = window.innerHeight;
-          } else if (this.netplay) {
-            this.netplay._resizeInitStart = null;
-          }
-          let newWidth, newHeight;
-
-          if (vw / vh > aspect) {
-            newHeight = vh;
-            newWidth = vh * aspect;
-          } else {
-            newWidth = vw;
-            newHeight = vw / aspect;
-          }
-
-          if (this.canvas) {
-            Object.assign(this.canvas.style, {
-              width: `${newWidth}px`,
-              height: `${newHeight}px`,
-              display: "block",
-              objectFit: "contain",
-            });
-
-            // Keep the resized canvas horizontally centered. Use normal flow
-            // centering (margin auto) to avoid snapping back to left alignment
-            // if other code clears absolute-positioning styles.
-            Object.assign(this.canvas.style, {
-              position: "relative",
-              top: "0",
-              left: "0",
-              transform: "none",
-              marginLeft: "auto",
-              marginRight: "auto",
-            });
-          }
-
-          // If a netplay video element is present (SFU or legacy video overlay),
-          // keep it sized/centered like the main canvas.
-          try {
-            const v = this.netplay && this.netplay.video;
-            if (v && v.style && v.parentElement) {
-              Object.assign(v.style, {
-                width: `${newWidth}px`,
-                height: `${newHeight}px`,
-                display: "block",
-                position: "absolute",
-                top: "0",
-                left: "50%",
-                transform: "translateX(-50%)",
-                objectFit: "contain",
-                objectPosition: "top center",
-                pointerEvents: "none",
-                background: "black",
-              });
-            }
-          } catch (e) {
-            // ignore
-          }
+        const cancelBtn = this.createElement("button");
+        cancelBtn.classList.add("ejs_button_button");
+        cancelBtn.innerText = "Cancel";
+        cancelBtn.onclick = () => {
+          container.remove(); // Remove the popup
         };
-        this._netplayResizeCanvas = resizeCanvasWithAspect;
-        window.addEventListener("resize", resizeCanvasWithAspect);
-        document.addEventListener("fullscreenchange", resizeCanvasWithAspect);
-        document.addEventListener(
-          "webkitfullscreenchange",
-          resizeCanvasWithAspect
-        );
-        resizeCanvasWithAspect();
-        window.dispatchEvent(new Event("resize"));
-      }
-    };
 
-    this.netplayLeaveRoom = (reason) => {
-      EJS_INSTANCE.updateNetplayUI(false);
+        buttonContainer.appendChild(createBtn);
+        buttonContainer.appendChild(cancelBtn);
+        content.appendChild(buttonContainer);
 
-      // Guard against recursive/double leave (e.g. socket disconnect handler
-      // firing due to our own socket.disconnect()).
-      if (this.netplay && this.netplay._leaving) return;
-      if (this.netplay) this.netplay._leaving = true;
-
-      try {
-        console.warn("[Netplay] Leaving netplay room", {
-          reason: reason || "(unknown)",
-          useSFU: !!(this.netplay && this.netplay.useSFU),
-          sfuDecisionMade: !!(this.netplay && this.netplay._sfuDecisionMade),
-          webRtcReady: !!(this.netplay && this.netplay.webRtcReady),
-          hasVideo: !!(this.netplay && this.netplay.video),
-          videoSize:
-            this.netplay && this.netplay.video
-              ? {
-                  videoWidth: this.netplay.video.videoWidth,
-                  videoHeight: this.netplay.video.videoHeight,
-                }
-              : null,
+        // Show/hide delay sync options based on room type
+        roomTypeSelect.addEventListener("change", () => {
+          delaySyncOptions.style.display = roomTypeSelect.value === "delay_sync" ? "" : "none";
         });
-        try {
-          console.trace("[Netplay] netplayLeaveRoom() trace");
-        } catch (e) {
-          // ignore
+
+        // Add the popup to the netplay menu (like "Set Player Name")
+        if (this.netplayMenu) {
+          this.netplayMenu.appendChild(container);
         }
 
-        console.log(
-          `Leaving netplay room... [reason=${reason || "(unknown)"}]`
-        );
+        // Focus on room name input
+        setTimeout(() => nameInput.focus(), 100);
+      };
+    }
 
-        if (this.netplay && this.netplay._webrtcReadyTimeoutId) {
-          clearTimeout(this.netplay._webrtcReadyTimeoutId);
-          this.netplay._webrtcReadyTimeoutId = null;
+    // Define leaveRoom function
+    if (!this.netplay.leaveRoom) {
+      this.netplay.leaveRoom = () => {
+        console.log("[Netplay] Leaving room");
+        // This would normally call the NetplayEngine's leaveRoom method
+        // For now, we'll show a placeholder implementation
+        alert("Leaving room not fully implemented yet.");
+        // TODO: Integrate with actual NetplayEngine room leaving logic
+      };
+    }
+
+    // Define reset function
+    if (!this.netplay.reset) {
+      this.netplay.reset = () => {
+        console.log("[Netplay] Resetting netplay state");
+        // Stop room list updates
+        if (this.netplay.updateList) {
+          this.netplay.updateList.stop();
         }
-
-        if (this.netplay && this.netplay._disconnectLeaveTimeoutId) {
-          clearTimeout(this.netplay._disconnectLeaveTimeoutId);
-          this.netplay._disconnectLeaveTimeoutId = null;
-        }
-
-        if (this.netplay.owner && this.netplaySendMessage) {
-          this.netplaySendMessage({
-            type: "host-left",
-          });
-        }
-
-        if (this.netplay.socket && this.netplay.socket.connected) {
-          this.netplay.socket.emit("leave-room");
-        }
-
-        if (this.netplay.socket) {
-          this.netplay.socket.disconnect();
-          this.netplay.socket = null;
-        }
-
-        // Tear down SFU state so a re-join starts clean.
-        try {
-          if (this.netplay && this.netplay._ejsClientAudioHealthTimer) {
-            clearInterval(this.netplay._ejsClientAudioHealthTimer);
-            this.netplay._ejsClientAudioHealthTimer = null;
-          }
-          if (this.netplay) {
-            this.netplay._ejsClientAudioHealth = null;
-            this.netplay._ejsAttemptClientSfuAudioRecovery = null;
-            this.netplay._ejsSfuAudioProducerId = null;
-            this.netplay.audioConsumer = null;
-          }
-        } catch (e) {}
-
-        try {
-          if (this.netplay.producer) this.netplay.producer.close();
-        } catch (e) {}
-        this.netplay.producer = null;
-
-        try {
-          if (this.netplay.audioProducer) this.netplay.audioProducer.close();
-        } catch (e) {}
-        this.netplay.audioProducer = null;
-
-        try {
-          if (this.netplay.sendTransport) this.netplay.sendTransport.close();
-        } catch (e) {}
-        this.netplay.sendTransport = null;
-
-        try {
-          if (this.netplay.recvTransport) this.netplay.recvTransport.close();
-        } catch (e) {}
-        this.netplay.recvTransport = null;
-
-        this.netplay.device = null;
-        // Set to undefined so netplayAttemptSFU() will actually retry on next join.
-        this.netplay.useSFU = undefined;
-        this.netplay._sfuDecisionMade = false;
-
-        if (this.netplay.localStream) {
-          this.netplay.localStream.getTracks().forEach((track) => track.stop());
-          this.netplay.localStream = null;
-        }
-
-        try {
-          this.netplayConsumeSFUProducer = null;
-        } catch (e) {}
-        try {
-          if (this.netplay.sfuConsumedProducerIds)
-            this.netplay.sfuConsumedProducerIds.clear();
-        } catch (e) {}
-
-        if (this.netplay.sfuStream) {
-          try {
-            this.netplay.sfuStream.getTracks().forEach((track) => {
-              try {
-                track.stop();
-              } catch (e) {}
-            });
-          } catch (e) {}
-          this.netplay.sfuStream = null;
-        }
-
-        if (this.netplay.sfuAudioStream) {
-          try {
-            this.netplay.sfuAudioStream.getTracks().forEach((track) => {
-              try {
-                track.stop();
-              } catch (e) {}
-            });
-          } catch (e) {}
-          this.netplay.sfuAudioStream = null;
-        }
-
-        if (this.netplay.sfuVideoStream) {
-          try {
-            this.netplay.sfuVideoStream.getTracks().forEach((track) => {
-              try {
-                track.stop();
-              } catch (e) {}
-            });
-          } catch (e) {}
-          this.netplay.sfuVideoStream = null;
-        }
-
-        if (this.netplay.peerConnections) {
-          Object.values(this.netplay.peerConnections).forEach((pcData) => {
-            if (pcData.pc) pcData.pc.close();
-          });
-          this.netplay.peerConnections = {};
-        }
-
-        if (this.netplayCanvas && this.netplayCanvas.parentElement) {
-          this.netplayCanvas.parentElement.removeChild(this.netplayCanvas);
-          this.netplayCanvas.style.display = "none";
-        }
-        if (this.netplay.video && this.netplay.video.parentElement) {
-          this.netplay.video.parentElement.removeChild(this.netplay.video);
-          this.netplay.video.srcObject = null;
-          this.netplay.video = null;
-        }
-        if (this.netplay.audioEl && this.netplay.audioEl.parentElement) {
-          this.netplay.audioEl.parentElement.removeChild(this.netplay.audioEl);
-          try {
-            this.netplay.audioEl.srcObject = null;
-          } catch (e) {}
-          this.netplay.audioEl = null;
-        }
-        if (this.netplay.videoContainer) {
-          this.netplay.videoContainer.style.display = "none";
-        }
-
-        // Clear client audio watchdogs.
-        try {
-          if (this.netplay._ejsClientAudioHealthTimer) {
-            clearInterval(this.netplay._ejsClientAudioHealthTimer);
-          }
-        } catch (e) {}
-        this.netplay._ejsClientAudioHealthTimer = null;
-
-        try {
-          if (this.netplay._ejsClientAudioSilenceTimer) {
-            clearInterval(this.netplay._ejsClientAudioSilenceTimer);
-          }
-        } catch (e) {}
-        this.netplay._ejsClientAudioSilenceTimer = null;
-
-        try {
-          const st = this.netplay._ejsClientAudioSilence;
-          if (st) {
-            try {
-              if (st.source) st.source.disconnect();
-            } catch (e) {}
-            try {
-              if (st.analyser) st.analyser.disconnect();
-            } catch (e) {}
-            try {
-              if (st.ctx && st.ctx.state !== "closed") st.ctx.close();
-            } catch (e) {}
-          }
-        } catch (e) {}
-        this.netplay._ejsClientAudioSilence = null;
-
-        if (this.canvas) {
-          Object.assign(this.canvas.style, {
-            display: "block",
-            width: "100%",
-            height: "100%",
-            objectFit: "contain",
-            position: "absolute",
-            top: "0",
-            left: "0",
-            transform: "none",
-          });
-        }
-
-        // If we paused local playback for SFU spectator mode, restore it on leave.
-        try {
-          if (this.netplay && this.netplay._spectatorSuspendedAudio) {
-            const audioCtx =
-              this.Module &&
-              this.Module.AL &&
-              this.Module.AL.currentCtx &&
-              this.Module.AL.currentCtx.audioCtx;
-            if (audioCtx && audioCtx.state === "suspended") audioCtx.resume();
-          }
-        } catch (e) {
-          // ignore
-        }
-        try {
-          if (this.netplay && this.netplay._spectatorPausedLocal) {
-            this.gameManager.toggleMainLoop(1);
-            this.paused = false;
-          }
-        } catch (e) {
-          // ignore
-        }
-
-        if (this.netplay.createButton) {
-          this.netplay.createButton.innerText =
-            this.localization("Create Room");
-        }
-        if (this.netplay.tabs) {
-          this.netplay.tabs[0].style.display = "";
-          this.netplay.tabs[1].style.display = "none";
-        }
-        if (this.netplay.roomNameElem) {
-          this.netplay.roomNameElem.innerText = "";
-        }
-        if (this.netplay.passwordElem) {
-          this.netplay.passwordElem.style.display = "none";
-          this.netplay.passwordElem.innerText = "";
-        }
-        if (this.netplay.playerTable) {
-          this.netplay.playerTable.innerHTML = "";
-        }
-
-        if (
-          this.netplay.oldStyles &&
-          this.elements.bottomBar &&
-          this.elements.bottomBar.cheat &&
-          this.elements.bottomBar.cheat[0]
-        ) {
-          this.elements.bottomBar.cheat[0].style.display =
-            this.netplay.oldStyles[0] || "";
-        }
-
-        if (this._netplayResizeCanvas) {
-          window.removeEventListener("resize", this._netplayResizeCanvas);
-          document.removeEventListener(
-            "fullscreenchange",
-            this._netplayResizeCanvas
-          );
-          document.removeEventListener(
-            "webkitfullscreenchange",
-            this._netplayResizeCanvas
-          );
-          this._netplayResizeCanvas = null;
-        }
-
-        // Restore the original input function when leaving the room
-        if (this.gameManager) {
-          if (this.netplay.originalSimulateInputMethod) {
-            this.gameManager.simulateInput =
-              this.netplay.originalSimulateInputMethod;
-            this.netplay.originalSimulateInputMethod = null;
-          }
-          if (
-            this.gameManager.functions &&
-            this.netplay.originalSimulateInputFn
-          ) {
-            this.gameManager.functions.simulateInput =
-              this.netplay.originalSimulateInputFn;
-            this.netplay.originalSimulateInputFn = null;
-          }
-
-          // Restore host-side slot override wrapper.
-          if (
-            this.gameManager.functions &&
-            this.netplay &&
-            this.netplay._ejsRawSimulateInputFn
-          ) {
-            this.gameManager.functions.simulateInput =
-              this.netplay._ejsRawSimulateInputFn;
-            this.netplay._ejsRawSimulateInputFn = null;
-            this.netplay._ejsSlotOverrideInstalled = false;
-            this.netplay._ejsApplyingRemoteInput = false;
-          }
-        }
-
+        // Reset netplay state
         this.isNetplay = false;
-        this.netplay.owner = false;
-        this.netplay.players = {};
-        this.netplay.playerID = null;
-        this.netplay.inputs = {};
-        this.netplay.inputsData = {};
-        this.netplay.webRtcReady = false;
-        this.netplay.lockedAspectRatio = null;
-        this.netplay._resizeInitStart = null;
-        this.player = 1;
+        // TODO: Add more reset logic as needed
+      };
+    }
+  }
 
-        if (this.originalControls) {
-          this.controls = JSON.parse(JSON.stringify(this.originalControls));
-          this.originalControls = null;
-        }
+  netplaySetupDelaySyncLobby() {
+    console.log("[Netplay] Setting up delay sync lobby interface");
 
-        if (this.isMobile && this.gamepadElement) {
-          Object.assign(this.gamepadElement.style, {
-            zIndex: "1000",
-            position: "absolute",
-            pointerEvents: "auto",
-          });
-        }
+    // Ensure we're on the joined tab
+    if (this.netplay.tabs && this.netplay.tabs[0] && this.netplay.tabs[1]) {
+      this.netplay.tabs[0].style.display = "none";
+      this.netplay.tabs[1].style.display = "";
+    }
 
-        if (this.gameManager && this.gameManager.restart) {
-          this.gameManager.restart();
-        } else if (this.startGame) {
-          this.startGame();
-        }
+    // Stop room list refresh
+    if (this.netplay.updateList) {
+      this.netplay.updateList.stop();
+    }
 
-        this.displayMessage("Left the room", 3000);
-      } finally {
-        // Always clear the leave guard, even if teardown throws.
-        try {
-          if (this.netplay) this.netplay._leaving = false;
-        } catch (e) {
-          // ignore
+    // Update table headers for lobby
+    if (this.netplay.playerTable && this.netplay.playerTable.parentElement) {
+      const table = this.netplay.playerTable.parentElement;
+      const thead = table.querySelector("thead");
+      if (thead) {
+        const headerRow = thead.querySelector("tr");
+        if (headerRow && headerRow.children.length >= 3) {
+          headerRow.children[2].innerText = "Status";
         }
       }
-    };
+    }
 
-    this.netplayDataMessage = function (data) {
-      if (data["sync-control"]) {
-        data["sync-control"].forEach((value) => {
-          let inFrame = parseInt(value.frame);
-          if (!value.connected_input || value.connected_input[0] < 0) return;
-          this.netplay.inputsData[inFrame] =
-            this.netplay.inputsData[inFrame] || [];
-          this.netplay.inputsData[inFrame].push(value);
-          this.netplaySendMessage({
-            frameAck: inFrame,
-          });
-          if (this.netplay.owner) {
-            console.log("Owner processing input:", value.connected_input);
-            if (
-              this.gameManager &&
-              this.gameManager.functions &&
-              this.gameManager.functions.simulateInput
-            ) {
-              // Apply remote input without being affected by host slot override.
-              const raw = this.netplay && this.netplay._ejsRawSimulateInputFn;
-              if (typeof raw === "function") {
-                try {
-                  this.netplay._ejsApplyingRemoteInput = true;
-                  raw(
-                    value.connected_input[0],
-                    value.connected_input[1],
-                    value.connected_input[2]
-                  );
-                } finally {
-                  this.netplay._ejsApplyingRemoteInput = false;
-                }
-              } else {
-                this.gameManager.functions.simulateInput(
-                  value.connected_input[0],
-                  value.connected_input[1],
-                  value.connected_input[2]
-                );
-              }
-            } else {
-              console.error(
-                "Cannot process input: gameManager.functions.simulateInput is undefined"
-              );
-            }
-          }
+    // Hide normal joined controls and show lobby controls
+    if (this.netplay.tabs && this.netplay.tabs[1]) {
+      const joinedDiv = this.netplay.tabs[1];
+      const joinedControls = joinedDiv.querySelector(".ejs_netplay_header");
+      if (joinedControls) {
+        joinedControls.style.display = "none";
+      }
+
+      // Create lobby controls
+      const lobbyControls = this.createElement("div");
+      lobbyControls.classList.add("ejs_netplay_header");
+      lobbyControls.style.display = "flex";
+      lobbyControls.style.alignItems = "center";
+      lobbyControls.style.gap = "10px";
+      lobbyControls.style.margin = "10px 0";
+      lobbyControls.style.justifyContent = "center";
+      lobbyControls.style.flexWrap = "wrap";
+
+      // Ready button
+      const readyButton = this.createElement("button");
+      readyButton.classList.add("ejs_button_button");
+      readyButton.style["background-color"] = "rgba(var(--ejs-primary-color),1)";
+      readyButton.innerText = "Ready";
+      readyButton.disabled = this.netplay.extra?.is_spectator;
+      lobbyControls.appendChild(readyButton);
+
+      // Launch Game button (only for owner)
+      const launchButton = this.createElement("button");
+      launchButton.classList.add("ejs_button_button");
+      launchButton.style["background-color"] = "rgba(0, 150, 0, 1)";
+      launchButton.innerText = "Launch Game";
+      launchButton.disabled = !this.netplay.owner;
+      if (!this.netplay.owner) {
+        launchButton.style.display = "none";
+      }
+      lobbyControls.appendChild(launchButton);
+
+      // Leave Room button
+      const leaveButton = this.createElement("button");
+      leaveButton.classList.add("ejs_button_button");
+      leaveButton.innerText = "Leave Room";
+      lobbyControls.appendChild(leaveButton);
+
+      // Close button
+      const closeButton = this.createElement("button");
+      closeButton.classList.add("ejs_button_button");
+      closeButton.innerText = "Close";
+      lobbyControls.appendChild(closeButton);
+
+      // Insert after password element
+      const passwordElem = this.netplay.passwordElem;
+      if (passwordElem && passwordElem.parentElement) {
+        passwordElem.parentElement.insertBefore(lobbyControls, passwordElem.nextSibling);
+      }
+
+      // Store reference for cleanup
+      this.netplay.lobbyControls = lobbyControls;
+
+      // Event handlers
+      this.addEventListener(readyButton, "click", () => {
+        readyButton.innerText = readyButton.innerText === "Ready" ? "Not Ready" : "Ready";
+      });
+
+      this.addEventListener(launchButton, "click", () => {
+        // For now, just hide the lobby
+        if (this.netplay.lobbyControls) {
+          this.netplay.lobbyControls.remove();
+        }
+        this.netplayRestoreMenu();
+      });
+
+      this.addEventListener(leaveButton, "click", () => {
+        this.netplayLeaveRoom();
+      });
+
+      this.addEventListener(closeButton, "click", () => {
+        if (this.netplayMenu) this.netplayMenu.style.display = "none";
+      });
+    }
+
+    // Mark as in lobby mode
+    this.netplay.isInDelaySyncLobby = true;
+  }
+
+  netplayRestoreMenu() {
+    this.netplay.isInDelaySyncLobby = false;
+  }
+
+  // Setup bottom bar buttons for Delay Sync mode
+  setupDelaySyncBottomBar() {
+    if (!this.elements.bottomBar) return;
+
+    // Hide normal buttons and show Delay Sync buttons
+    Object.keys(this.elements.bottomBar).forEach(key => {
+      if (this.elements.bottomBar[key] && Array.isArray(this.elements.bottomBar[key])) {
+        this.elements.bottomBar[key].forEach(btn => {
+          if (btn) btn.style.display = "none";
         });
       }
-      if (data.frameData) {
-        console.log("Received frame data on Player 2:", data.frameData);
-        if (!this.canvas) {
-          console.error("Canvas unavailable for frame data processing");
-          return;
-        }
-        const ctx = this.canvas.getContext("2d");
-        if (!ctx) {
-          console.error("Canvas context unavailable for frame data processing");
-          return;
-        }
-        if (data.frameData.pixelSample.every((v) => v === 0)) {
-          console.warn(
-            "Frame data indicates black screen, attempting reconstruction"
-          );
-          if (this.reconstructFrame) {
-            this.reconstructFrame(data.frameData.inputs);
-          } else {
-            console.error("reconstructFrame is undefined");
-          }
-        } else {
-          console.log("Frame data indicates content, relying on WebRTC stream");
-        }
-      }
-    };
+    });
 
-    this.netplaySendMessage = (data) => {
-      if (this.netplay.socket && this.netplay.socket.connected) {
-        this.netplay.socket.emit("data-message", data);
-        console.log("Sent data message:", data);
-      } else {
-        console.error("Cannot send message: Socket is not connected");
-      }
-    };
+    // Create Delay Sync buttons in the bottom bar
+    const bar = this.elements.bottomBar;
 
-    this.netplayReset = () => {
-      this.netplay.init_frame = this.gameManager
-        ? this.gameManager.getFrameNum()
-        : 0;
-      this.netplay.currentFrame = 0;
-      this.netplay.inputsData = {};
-      this.netplay.syncing = false;
-    };
+    // Ready button
+    if (!bar.delaySyncReady) {
+      const readyBtn = this.createElement("a");
+      readyBtn.classList.add("ejs_button");
+      readyBtn.innerText = "Ready";
+      readyBtn.style.whiteSpace = "nowrap";
+      readyBtn.onclick = () => this.netplayToggleReady();
+      this.elements.bottomBar.appendChild(readyBtn);
+      bar.delaySyncReady = [readyBtn];
+      this.netplay.readyButton = readyBtn;
+    } else {
+      bar.delaySyncReady[0].style.display = "";
+    }
 
-    this.netplayInitModulePostMainLoop = () => {
-      // Try using NetplayEngine first (if available)
-      if (this._netplayEngine && this._netplayEngine.isInitialized()) {
-        try {
-          // Use NetplayEngine's frame processing
-          this._netplayEngine.processFrameInputs();
-          return;
-        } catch (error) {
-          console.warn(
-            "[EmulatorJS] NetplayEngine frame processing failed, falling back to legacy:",
-            error
-          );
-        }
-      }
+    // Launch Game button
+    if (!bar.delaySyncLaunch) {
+      const launchBtn = this.createElement("a");
+      launchBtn.classList.add("ejs_button");
+      launchBtn.innerText = "Launch Game";
+      launchBtn.style.whiteSpace = "nowrap";
+      launchBtn.disabled = true;
+      launchBtn.onclick = () => this.netplayLaunchGame();
+      this.elements.bottomBar.appendChild(launchBtn);
+      bar.delaySyncLaunch = [launchBtn];
+      this.netplay.launchButton = launchBtn;
+    } else {
+      bar.delaySyncLaunch[0].style.display = "";
+    }
 
-      // Legacy frame processing (fallback if NetplayEngine not available)
-      if (this.isNetplay && !this.netplay.owner) {
-        return;
-      }
+    // Leave Room button
+    if (!bar.delaySyncLeave) {
+      const leaveBtn = this.createElement("a");
+      leaveBtn.classList.add("ejs_button");
+      leaveBtn.innerText = "Leave Room";
+      leaveBtn.style.whiteSpace = "nowrap";
+      leaveBtn.onclick = () => this.netplayLeaveRoom();
+      this.elements.bottomBar.appendChild(leaveBtn);
+      bar.delaySyncLeave = [leaveBtn];
+    } else {
+      bar.delaySyncLeave[0].style.display = "";
+    }
 
-      this.netplay.currentFrame =
-        parseInt(this.gameManager ? this.gameManager.getFrameNum() : 0) -
-        (this.netplay.init_frame || 0);
-      if (!this.isNetplay) return;
+    // Close button (reuse existing netplay button)
+    if (bar.netplay && bar.netplay[0]) {
+      bar.netplay[0].innerText = "Close";
+      bar.netplay[0].onclick = () => {
+        if (this.netplayMenu) this.netplayMenu.style.display = "none";
+      };
+      bar.netplay[0].style.display = "";
+    }
+  }
 
-      if (this.netplay.owner) {
-        let to_send = [];
-        let i = this.netplay.currentFrame;
-        if (this.netplay.inputsData[i]) {
-          this.netplay.inputsData[i].forEach((value) => {
-            if (
-              this.gameManager &&
-              this.gameManager.functions &&
-              this.gameManager.functions.simulateInput
-            ) {
-              // Replay inputs (local+remote) without forcing the host slot.
-              const raw = this.netplay && this.netplay._ejsRawSimulateInputFn;
-              if (typeof raw === "function") {
-                try {
-                  this.netplay._ejsApplyingRemoteInput = true;
-                  raw(
-                    value.connected_input[0],
-                    value.connected_input[1],
-                    value.connected_input[2]
-                  );
-                } finally {
-                  this.netplay._ejsApplyingRemoteInput = false;
-                }
-              } else {
-                this.gameManager.functions.simulateInput(
-                  value.connected_input[0],
-                  value.connected_input[1],
-                  value.connected_input[2]
-                );
-              }
-            }
-            value.frame = this.netplay.currentFrame + 20;
-            to_send.push(value);
-          });
-          this.netplaySendMessage({
-            "sync-control": to_send,
-          });
-          delete this.netplay.inputsData[i];
-        }
-      }
-    };
+  updateCheatUI() {
+    if (!this.cheatsMenu) return;
 
-    this.netplay.updateList = {
-      start: this.netplayUpdateListStart,
-      stop: this.netplayUpdateListStop,
-    };
-    this.netplay.showOpenRoomDialog = this.netplayShowOpenRoomDialog;
+    const body = this.cheatsMenu.querySelector('.ejs_popup_body');
+    if (!body) return;
 
-    // Proxy methods: try NetplayEngine first, fallback to legacy methods
-    this.netplay.openRoom = async (...args) => {
-      if (
-        this._netplayEngine &&
-        this._netplayEngine.isInitialized() &&
-        this._netplayEngine.roomManager
-      ) {
-        try {
-          // Use new RoomManager
-          const [roomName, maxPlayers, password] = args;
-          const playerInfo = {
-            netplayUsername: this.netplay.name || "Player",
-            userId: this.netplay.playerID || null,
-            preferredSlot: this.netplay.localSlot || 0,
-          };
-          await this._netplayEngine.roomManager.createRoom(
-            roomName,
-            maxPlayers,
-            password,
-            playerInfo
-          );
-          return;
-        } catch (error) {
-          console.warn(
-            "[EmulatorJS] NetplayEngine openRoom failed, using legacy:",
-            error
-          );
-        }
-      }
-      // Legacy fallback
-      return this.netplayOpenRoom(...args);
-    };
+    // Clear existing content
+    body.innerHTML = '';
 
-    this.netplay.joinRoom = async (...args) => {
-      if (
-        this._netplayEngine &&
-        this._netplayEngine.isInitialized() &&
-        this._netplayEngine.roomManager
-      ) {
-        try {
-          // Use new RoomManager
-          const [sessionId, roomName, maxPlayers, password] = args;
-          const playerInfo = {
-            netplayUsername: this.netplay.name || "Player",
-            userId: this.netplay.playerID || null,
-            preferredSlot: this.netplay.localSlot || 0,
-          };
-          await this._netplayEngine.roomManager.joinRoom(
-            sessionId,
-            roomName,
-            maxPlayers,
-            password,
-            playerInfo
-          );
-          return;
-        } catch (error) {
-          console.warn(
-            "[EmulatorJS] NetplayEngine joinRoom failed, using legacy:",
-            error
-          );
-        }
-      }
-      // Legacy fallback
-      return this.netplayJoinRoom(...args);
-    };
-
-    this.netplay.leaveRoom = async (...args) => {
-      if (
-        this._netplayEngine &&
-        this._netplayEngine.isInitialized() &&
-        this._netplayEngine.roomManager
-      ) {
-        try {
-          // Use new RoomManager
-          const [reason] = args;
-          await this._netplayEngine.roomManager.leaveRoom(reason);
-          return;
-        } catch (error) {
-          console.warn(
-            "[EmulatorJS] NetplayEngine leaveRoom failed, using legacy:",
-            error
-          );
-        }
-      }
-      // Legacy fallback
-      return this.netplayLeaveRoom(...args);
-    };
-
-    this.netplay.sendMessage = (data) => {
-      if (
-        this._netplayEngine &&
-        this._netplayEngine.isInitialized() &&
-        this._netplayEngine.socketTransport
-      ) {
-        try {
-          // Use new SocketTransport
-          this._netplayEngine.socketTransport.sendDataMessage(data);
-          return;
-        } catch (error) {
-          console.warn(
-            "[EmulatorJS] NetplayEngine sendMessage failed, using legacy:",
-            error
-          );
-        }
-      }
-      // Legacy fallback
-      return this.netplaySendMessage(data);
-    };
-
-    this.netplay.updatePlayersTable = this.netplayUpdatePlayersTable;
-    this.netplay.createPeerConnection = this.netplayCreatePeerConnection;
-    this.netplay.initWebRTCStream = this.netplayInitWebRTCStream;
-    this.netplay.roomJoined = this.netplayRoomJoined;
-
-    this.netplay = this.netplay || {};
-    this.netplay.init_frame = 0;
-    this.netplay.currentFrame = 0;
-    this.netplay.inputsData = {};
-    this.netplay.syncing = false;
-    this.netplay.ready = 0;
-    this.netplay.webRtcReady = false;
-    this.netplay.peerConnections = this.netplay.peerConnections || {};
-
-    this.netplay.url = this.config.netplayUrl || window.EJS_netplayUrl;
-
-    if (!this.netplay.url) {
-      if (this.debug)
-        console.error(
-          "netplayUrl is not defined. Please set it in EJS_config or as a global EJS_netplayUrl variable."
-        );
-      this.displayMessage(
-        "Network configuration error: netplay URL is not set.",
-        5000
-      );
+    if (this.cheats.length === 0) {
+      body.innerHTML = '<div style="text-align: center; padding: 20px; color: #666;">No cheats available</div>';
       return;
     }
 
-    while (this.netplay.url.endsWith("/")) {
-      this.netplay.url = this.netplay.url.substring(
-        0,
-        this.netplay.url.length - 1
-      );
-    }
-    this.netplay.current_frame = 0;
+    // Add cheat toggles
+    this.cheats.forEach((cheat, index) => {
+      const cheatDiv = this.createElement('div');
+      cheatDiv.style.marginBottom = '10px';
 
-    if (this.gameManager && this.gameManager.Module) {
-      this.gameManager.Module.postMainLoop =
-        this.netplayInitModulePostMainLoop.bind(this);
-    } else if (this.Module) {
-      this.Module.postMainLoop = this.netplayInitModulePostMainLoop.bind(this);
-    } else if (this.debug) {
-      console.warn("Module is undefined. postMainLoop will not be set.");
+      const checkbox = this.createElement('input');
+      checkbox.type = 'checkbox';
+      checkbox.id = `cheat_${index}`;
+      checkbox.checked = cheat.checked || false;
+      checkbox.onchange = () => {
+        cheat.checked = checkbox.checked;
+        // TODO: Apply/remove cheat code
+        console.log(`Cheat "${cheat.desc}" ${cheat.checked ? 'enabled' : 'disabled'}`);
+      };
+
+      const label = this.createElement('label');
+      label.htmlFor = `cheat_${index}`;
+      label.textContent = cheat.desc;
+      label.style.marginLeft = '8px';
+
+      cheatDiv.appendChild(checkbox);
+      cheatDiv.appendChild(label);
+      body.appendChild(cheatDiv);
+    });
+  }
+
+  // Helper method to get room list from SFU server
+  async netplayGetRoomList() {
+    try {
+      // Build URL with authentication token
+      const token = window.EJS_netplayToken;
+      let url = `${window.EJS_netplayUrl || this.config.netplayUrl}/list?domain=${window.location.host}&game_id=${this.config.gameId || ""}`;
+      if (token) {
+        url += `&token=${encodeURIComponent(token)}`;
+      }
+
+      const headers = {};
+      if (!token) {
+        // If no token in global var, try to get it from cookie
+        const cookies = document.cookie.split(';');
+        for (const cookie of cookies) {
+          const [name, value] = cookie.trim().split('=');
+          if (name === 'romm_sfu_token' || name === 'sfu_token') {
+            headers['Authorization'] = `Bearer ${decodeURIComponent(value)}`;
+            break;
+          }
+        }
+      }
+
+      const response = await fetch(url, { headers });
+      if (!response.ok) {
+        console.warn(`Room list fetch failed with status ${response.status}`);
+        return [];
+      }
+
+      const data = await response.json();
+
+      // Convert server response format to expected format
+      const rooms = [];
+      if (data && typeof data === "object") {
+        Object.entries(data).forEach(([roomId, roomInfo]) => {
+          if (roomInfo && roomInfo.room_name) {
+            rooms.push({
+              id: roomId,
+              name: roomInfo.room_name,
+              current: roomInfo.current || 0,
+              max: roomInfo.max || 4,
+              hasPassword: roomInfo.hasPassword || false,
+              netplay_mode: roomInfo.netplay_mode || 0,
+              sync_config: roomInfo.sync_config || null,
+              spectator_mode: roomInfo.spectator_mode || 1,
+              rom_hash: roomInfo.rom_hash || null,
+              core_type: roomInfo.core_type || null,
+            });
+          }
+        });
+      }
+
+      return rooms;
+    } catch (error) {
+      console.error("[Netplay] Failed to get room list:", error);
+      return [];
     }
   }
+
+  // Helper method to update the room table UI
+  netplayUpdateRoomTable(rooms) {
+    if (!this.netplay || !this.netplay.table) return;
+
+    const tbody = this.netplay.table;
+    tbody.innerHTML = ""; // Clear existing rows
+
+    if (rooms.length === 0) {
+      const row = this.createElement("tr");
+      const cell = this.createElement("td");
+      cell.colSpan = 4;
+      cell.style.textAlign = "center";
+      cell.style.padding = "20px";
+      cell.innerText = "No rooms available";
+      row.appendChild(cell);
+      tbody.appendChild(row);
+      return;
+    }
+
+    rooms.forEach((room) => {
+      // Main row
+      const row = this.createElement("tr");
+      row.style.cursor = "pointer";
+      row.classList.add("ejs_netplay_room_row");
+
+      // Room type cell
+      const typeCell = this.createElement("td");
+      typeCell.innerText = room.netplay_mode === 1 ? "Delay Sync" : "Live Stream";
+      typeCell.style.textAlign = "center";
+      typeCell.style.fontSize = "12px";
+      typeCell.style.fontWeight = "bold";
+      row.appendChild(typeCell);
+
+      // Room name cell
+      const nameCell = this.createElement("td");
+      nameCell.innerText = room.name + (room.hasPassword ? " 🔐" : "");
+      nameCell.style.textAlign = "center";
+      row.appendChild(nameCell);
+
+      // Players cell
+      const playersCell = this.createElement("td");
+      playersCell.innerText = `${room.current}/${room.max}`;
+      playersCell.style.textAlign = "center";
+      row.appendChild(playersCell);
+
+      // Join button cell
+      const joinCell = this.createElement("td");
+      joinCell.style.textAlign = "center";
+
+      const joinBtn = this.createElement("button");
+      joinBtn.classList.add("ejs_button_button");
+      joinBtn.innerText = room.hasPassword ? "Join (PW)" : "Join";
+      joinBtn.onclick = (e) => {
+        e.stopPropagation(); // Don't trigger row expansion
+        this.netplayJoinRoom(room.id, room.hasPassword);
+      };
+
+      joinCell.appendChild(joinBtn);
+      row.appendChild(joinCell);
+
+      tbody.appendChild(row);
+
+      // Expandable details row (initially hidden)
+      const detailsRow = this.createElement("tr");
+      detailsRow.style.display = "none";
+      detailsRow.classList.add("ejs_netplay_room_details");
+
+      const detailsCell = this.createElement("td");
+      detailsCell.colSpan = 4;
+      detailsCell.style.padding = "10px";
+      detailsCell.style.backgroundColor = "rgba(0,0,0,0.1)";
+
+      // Split details into two columns
+      const detailsContainer = this.createElement("div");
+      detailsContainer.style.display = "flex";
+      detailsContainer.style.justifyContent = "space-between";
+
+      const leftCol = this.createElement("div");
+      leftCol.innerText = `Core: ${room.core_type || "Unknown"}`;
+      leftCol.style.fontSize = "14px";
+
+      const rightCol = this.createElement("div");
+      rightCol.innerText = `ROM: ${room.rom_hash ? room.rom_hash.substring(0, 16) + "..." : "Unknown"}`;
+      rightCol.style.fontSize = "14px";
+      rightCol.style.textAlign = "right";
+
+      detailsContainer.appendChild(leftCol);
+      detailsContainer.appendChild(rightCol);
+      detailsCell.appendChild(detailsContainer);
+      detailsRow.appendChild(detailsCell);
+
+      tbody.appendChild(detailsRow);
+
+      // Make row clickable to toggle details
+      row.addEventListener("click", () => {
+        const isExpanded = detailsRow.style.display !== "none";
+        detailsRow.style.display = isExpanded ? "none" : "";
+      });
+    });
+  }
+
+  // Helper method to create a room
+  async netplayCreateRoom(roomName, maxPlayers, password, allowSpectators = true, roomType = "live_stream", frameDelay = 2, syncMode = "timeout") {
+    if (!this.netplay || !this.netplay.name) {
+      throw new Error("Player name not set");
+    }
+
+    // Determine netplay mode
+    const netplayMode = roomType === "delay_sync" ? 1 : 0;
+
+    // Create sync config for delay sync rooms
+    let syncConfig = null;
+    if (roomType === "delay_sync") {
+      syncConfig = {
+        frameDelay: frameDelay,
+        syncMode: syncMode
+      };
+    }
+
+    // Determine spectator mode (1 = allow spectators, 0 = no spectators)
+    const spectatorMode = allowSpectators ? 1 : 0;
+
+    console.log("[Netplay] Creating room:", {
+      roomName,
+      maxPlayers,
+      password,
+      allowSpectators,
+      roomType,
+      netplayMode,
+      syncConfig,
+      spectatorMode
+    });
+
+    // Here we would typically integrate with the NetplayEngine to create a room
+    // For now, we'll show a placeholder implementation
+    if (roomType === "live_stream") {
+      // Switch to live stream room UI
+      this.netplaySwitchToLiveStreamRoom(roomName, password);
+    } else if (roomType === "delay_sync") {
+      // Switch to delay sync room UI
+      this.netplaySwitchToDelaySyncRoom(roomName, password, maxPlayers);
+    }
+
+    // TODO: Integrate with actual NetplayEngine room creation logic
+  }
+
+  // Helper method to join a room
+  async netplayJoinRoom(roomId, hasPassword) {
+    if (!this.netplay || !this.netplay.name) {
+      throw new Error("Player name not set");
+    }
+
+    let password = null;
+    if (hasPassword) {
+      password = prompt("Enter room password:");
+      if (!password) return; // User cancelled
+    }
+
+    console.log("[Netplay] Joining room:", { roomId, password });
+
+    // This would normally call the NetplayEngine's joinRoom method
+    // For now, we'll show a placeholder implementation
+    alert(`Room joining not fully implemented yet. Would join room "${roomId}".`);
+
+    // TODO: Integrate with actual NetplayEngine room joining logic
+  }
+
+  // Switch to live stream room UI
+  netplaySwitchToLiveStreamRoom(roomName, password) {
+    if (!this.netplayMenu) return;
+
+    // Hide lobby tabs and show live stream room
+    if (this.netplay.tabs && this.netplay.tabs[0] && this.netplay.tabs[1]) {
+      this.netplay.tabs[0].style.display = "none";
+      this.netplay.tabs[1].style.display = "";
+    }
+
+    // Update title
+    const titleElement = this.netplayMenu.querySelector("h4");
+    if (titleElement) {
+      titleElement.innerText = "Live Stream Room";
+    }
+
+    // Update room name and password display
+    if (this.netplay.roomNameElem) {
+      this.netplay.roomNameElem.innerText = roomName;
+    }
+    if (this.netplay.passwordElem) {
+      this.netplay.passwordElem.innerText = password ? `Password: ${password}` : "";
+      this.netplay.passwordElem.style.display = password ? "" : "none";
+    }
+
+    // Add player slot selector
+    if (!this.netplay.playerSlotSelect) {
+      const slotContainer = this.createElement("div");
+      slotContainer.classList.add("ejs_netplay_header");
+      slotContainer.style.marginTop = "10px";
+
+      const slotLabel = this.createElement("strong");
+      slotLabel.innerText = "Player Slot: ";
+      const slotSelect = this.createElement("select");
+      for (let i = 1; i <= 4; i++) {
+        const option = this.createElement("option");
+        option.value = String(i - 1);
+        option.innerText = `P${i}`;
+        slotSelect.appendChild(option);
+      }
+
+      slotContainer.appendChild(slotLabel);
+      slotContainer.appendChild(slotSelect);
+      this.netplay.playerSlotSelect = slotSelect;
+
+      // Insert after password element
+      if (this.netplay.passwordElem && this.netplay.passwordElem.parentElement) {
+        this.netplay.passwordElem.parentElement.insertBefore(slotContainer, this.netplay.passwordElem.nextSibling);
+      }
+    }
+
+    // Hide create button and show leave/close buttons
+    const buttons = this.netplayMenu.querySelectorAll("a.ejs_button");
+    buttons.forEach(btn => {
+      if (btn.innerText === "Create a Room") {
+        btn.style.display = "none";
+      } else if (btn.innerText === "Close") {
+        btn.innerText = "Leave Room";
+      }
+    });
+
+    this.isNetplay = true;
+  }
+
+  // Switch to delay sync room UI
+  netplaySwitchToDelaySyncRoom(roomName, password, maxPlayers) {
+    if (!this.netplayMenu) return;
+
+    // Hide lobby tabs and show delay sync room
+    if (this.netplay.tabs && this.netplay.tabs[0] && this.netplay.tabs[1]) {
+      this.netplay.tabs[0].style.display = "none";
+      this.netplay.tabs[1].style.display = "";
+    }
+
+    // Update title
+    const titleElement = this.netplayMenu.querySelector("h4");
+    if (titleElement) {
+      titleElement.innerText = "Delay Sync Room";
+    }
+
+    // Update room name and password display
+    if (this.netplay.roomNameElem) {
+      this.netplay.roomNameElem.innerText = roomName;
+    }
+    if (this.netplay.passwordElem) {
+      this.netplay.passwordElem.innerText = password ? `Password: ${password}` : "";
+      this.netplay.passwordElem.style.display = password ? "" : "none";
+    }
+
+    // Add player slot selector above the table (inline layout)
+    if (!this.netplay.delaySyncPlayerSlotSelect) {
+      const slotContainer = this.createElement("div");
+      slotContainer.classList.add("ejs_netplay_header");
+      slotContainer.style.textAlign = "center";
+      slotContainer.style.marginTop = "10px";
+      slotContainer.style.marginBottom = "10px";
+
+      const slotLabel = this.createElement("strong");
+      slotLabel.innerText = "Player Slot: ";
+      slotLabel.style.marginRight = "10px";
+      const slotSelect = this.createElement("select");
+      for (let i = 1; i <= 4; i++) {
+        const option = this.createElement("option");
+        option.value = String(i - 1);
+        option.innerText = `P${i}`;
+        slotSelect.appendChild(option);
+      }
+
+      slotContainer.appendChild(slotLabel);
+      slotContainer.appendChild(slotSelect);
+      this.netplay.delaySyncPlayerSlotSelect = slotSelect;
+
+      // Insert after password element
+      if (this.netplay.passwordElem && this.netplay.passwordElem.parentElement) {
+        this.netplay.passwordElem.parentElement.insertBefore(slotContainer, this.netplay.passwordElem.nextSibling);
+      }
+    }
+
+    // Create player table for delay sync
+    if (!this.netplay.delaySyncPlayerTable) {
+      const table = this.createElement("table");
+      table.classList.add("ejs_netplay_table");
+      table.style.width = "100%";
+      table.setAttribute("cellspacing", "0");
+
+      // Table header
+      const thead = this.createElement("thead");
+      const headerRow = this.createElement("tr");
+      ["Player", "Name", "Ready"].forEach(text => {
+        const th = this.createElement("td");
+        th.innerText = text;
+        th.style.fontWeight = "bold"; // Make headers bold
+        if (text === "Ready") {
+          th.style.textAlign = "right"; // Align Ready column to the right
+        } else {
+          th.style.textAlign = "center";
+        }
+        if (text === "Player") th.style.width = "60px";
+        headerRow.appendChild(th);
+      });
+      thead.appendChild(headerRow);
+      table.appendChild(thead);
+
+      // Table body
+      const tbody = this.createElement("tbody");
+      this.netplay.delaySyncPlayerTable = tbody;
+      table.appendChild(tbody);
+
+      // Insert table after player slot selector
+      if (this.netplay.delaySyncPlayerSlotSelect && this.netplay.delaySyncPlayerSlotSelect.parentElement) {
+        this.netplay.delaySyncPlayerSlotSelect.parentElement.insertBefore(table, this.netplay.delaySyncPlayerSlotSelect.nextSibling);
+      }
+    }
+
+    // Hide Live Stream player slot if it exists
+    if (this.netplay.playerSlotSelect && this.netplay.playerSlotSelect.parentElement) {
+      this.netplay.playerSlotSelect.parentElement.style.display = "none";
+    }
+
+    // Modify bottom bar buttons for Delay Sync mode
+    this.setupDelaySyncBottomBar();
+
+    // Initialize player list (host is always player 1)
+    this.netplayInitializeDelaySyncPlayers(maxPlayers);
+
+    // Hide create button
+    const buttons = this.netplayMenu.querySelectorAll("a.ejs_button");
+    buttons.forEach(btn => {
+      if (btn.innerText === "Create a Room") {
+        btn.style.display = "none";
+      }
+    });
+
+    this.isNetplay = true;
+  }
+
+  // Initialize delay sync player table
+  netplayInitializeDelaySyncPlayers(maxPlayers) {
+    if (!this.netplay.delaySyncPlayerTable) return;
+
+    const tbody = this.netplay.delaySyncPlayerTable;
+    tbody.innerHTML = "";
+
+    // Host is always player 1 and ready by default
+    for (let i = 0; i < maxPlayers; i++) {
+      const row = this.createElement("tr");
+
+      // Player column
+      const playerCell = this.createElement("td");
+      playerCell.innerText = `P${i + 1}`;
+      playerCell.style.textAlign = "center";
+      row.appendChild(playerCell);
+
+      // Name column
+      const nameCell = this.createElement("td");
+      nameCell.innerText = i === 0 ? (this.netplay.name || "Host") : "Waiting...";
+      nameCell.style.textAlign = "center";
+      row.appendChild(nameCell);
+
+      // Ready column
+      const readyCell = this.createElement("td");
+      readyCell.innerText = i === 0 ? "✅" : "⛔"; // Host starts ready
+      readyCell.style.textAlign = "right"; // Align to the right
+      readyCell.classList.add("ready-status");
+      row.appendChild(readyCell);
+
+      tbody.appendChild(row);
+    }
+
+    // Store ready states
+    this.netplay.playerReadyStates = new Array(maxPlayers).fill(false);
+    this.netplay.playerReadyStates[0] = true; // Host starts ready
+  }
+
+  // Toggle ready status
+  netplayToggleReady() {
+    if (!this.netplay.readyButton) return;
+
+    // For now, just toggle the host's ready status (index 0)
+    const currentReady = this.netplay.playerReadyStates[0];
+    this.netplay.playerReadyStates[0] = !currentReady;
+
+    // Update UI
+    const tbody = this.netplay.delaySyncPlayerTable;
+    if (tbody && tbody.children[0]) {
+      const readyCell = tbody.children[0].querySelector(".ready-status");
+      if (readyCell) {
+        readyCell.innerText = this.netplay.playerReadyStates[0] ? "✅" : "⛔";
+      }
+    }
+
+    // Update button text
+    this.netplay.readyButton.innerText = this.netplay.playerReadyStates[0] ? "Not Ready" : "Ready";
+
+    // Check if all players are ready to enable launch button
+    this.netplayUpdateLaunchButton();
+  }
+
+  // Update launch game button state
+  netplayUpdateLaunchButton() {
+    if (!this.netplay.launchButton || !this.netplay.playerReadyStates) return;
+
+    const allReady = this.netplay.playerReadyStates.every(ready => ready);
+    this.netplay.launchButton.disabled = !allReady;
+  }
+
+  // Launch game (host only)
+  netplayLaunchGame() {
+    console.log("[Delay Sync] Launching game...");
+    // TODO: Implement game launch logic
+    alert("Game launch not implemented yet");
+  }
+
+  // Leave room
+  netplayLeaveRoom() {
+    console.log("[Netplay] Leaving room...");
+    // Reset netplay state
+    this.isNetplay = false;
+
+    // Restore normal bottom bar buttons
+    this.restoreNormalBottomBar();
+
+    // Hide menu
+    if (this.netplayMenu) {
+      this.netplayMenu.style.display = "none";
+    }
+
+    // Reset to lobby view
+    if (this.netplay.tabs && this.netplay.tabs[0] && this.netplay.tabs[1]) {
+      this.netplay.tabs[0].style.display = "";
+      this.netplay.tabs[1].style.display = "none";
+    }
+
+    // Reset title
+    const titleElement = this.netplayMenu.querySelector("h4");
+    if (titleElement) {
+      titleElement.innerText = "Netplay Lobby";
+    }
+
+    // Show create room button again
+    const buttons = this.netplayMenu.querySelectorAll("a.ejs_button");
+    buttons.forEach(btn => {
+      if (btn.innerText === "Create a Room" || btn.innerText === "Leave Room") {
+        btn.style.display = "";
+        if (btn.innerText === "Leave Room") {
+          btn.innerText = "Close";
+        }
+      }
+    });
+
+    // TODO: Implement actual room leaving logic
+  }
+
   createCheatsMenu() {
     const body = this.createPopup(
       "Cheats",
-      {
-        "Add Cheat": () => {
-          const popups = this.createSubPopup();
-          this.cheatMenu.appendChild(popups[0]);
-          popups[1].classList.add("ejs_cheat_parent");
-          popups[1].style.width = "100%";
-          const popup = popups[1];
-          const header = this.createElement("div");
-          header.classList.add("ejs_cheat_header");
-          const title = this.createElement("h2");
-          title.innerText = this.localization("Add Cheat Code");
-          title.classList.add("ejs_cheat_heading");
-          const close = this.createElement("button");
-          close.classList.add("ejs_cheat_close");
-          header.appendChild(title);
-          header.appendChild(close);
-          popup.appendChild(header);
-          this.addEventListener(close, "click", (e) => {
-            popups[0].remove();
-          });
-
-          const main = this.createElement("div");
-          main.classList.add("ejs_cheat_main");
-          const header3 = this.createElement("strong");
-          header3.innerText = this.localization("Code");
-          main.appendChild(header3);
-          main.appendChild(this.createElement("br"));
-          const mainText = this.createElement("textarea");
-          mainText.classList.add("ejs_cheat_code");
-          mainText.style.width = "100%";
-          mainText.style.height = "80px";
-          main.appendChild(mainText);
-          main.appendChild(this.createElement("br"));
-          const header2 = this.createElement("strong");
-          header2.innerText = this.localization("Description");
-          main.appendChild(header2);
-          main.appendChild(this.createElement("br"));
-          const mainText2 = this.createElement("input");
-          mainText2.type = "text";
-          mainText2.classList.add("ejs_cheat_code");
-          main.appendChild(mainText2);
-          main.appendChild(this.createElement("br"));
-          popup.appendChild(main);
-
-          const footer = this.createElement("footer");
-          const submit = this.createElement("button");
-          const closeButton = this.createElement("button");
-          submit.innerText = this.localization("Submit");
-          closeButton.innerText = this.localization("Close");
-          submit.classList.add("ejs_button_button");
-          closeButton.classList.add("ejs_button_button");
-          submit.classList.add("ejs_popup_submit");
-          closeButton.classList.add("ejs_popup_submit");
-          submit.style["background-color"] = "rgba(var(--ejs-primary-color),1)";
-          footer.appendChild(submit);
-          const span = this.createElement("span");
-          span.innerText = " ";
-          footer.appendChild(span);
-          footer.appendChild(closeButton);
-          popup.appendChild(footer);
-
-          this.addEventListener(submit, "click", (e) => {
-            if (!mainText.value.trim() || !mainText2.value.trim()) return;
-            popups[0].remove();
-            this.cheats.push({
-              code: mainText.value,
-              desc: mainText2.value,
-              checked: false,
-            });
-            this.updateCheatUI();
-            this.saveSettings();
-          });
-          this.addEventListener(closeButton, "click", (e) => {
-            popups[0].remove();
-          });
-        },
-        Close: () => {
-          this.cheatMenu.style.display = "none";
-        },
-      },
+      {},
       true
     );
-    this.cheatMenu = body.parentElement;
-    this.cheatMenu.getElementsByTagName("h4")[0].style["padding-bottom"] =
-      "0px";
-    const msg = this.createElement("div");
-    msg.style["padding-top"] = "0px";
-    msg.style["padding-bottom"] = "15px";
-    msg.innerText = this.localization(
-      "Note that some cheats require a restart to disable"
-    );
-    body.appendChild(msg);
-    const rows = this.createElement("div");
-    body.appendChild(rows);
-    rows.classList.add("ejs_cheat_rows");
-    this.elements.cheatRows = rows;
-  }
-  updateCheatUI() {
-    if (!this.gameManager) return;
-    this.elements.cheatRows.innerHTML = "";
-
-    const addToMenu = (desc, checked, code, is_permanent, i) => {
-      const row = this.createElement("div");
-      row.classList.add("ejs_cheat_row");
-      const input = this.createElement("input");
-      input.type = "checkbox";
-      input.checked = checked;
-      input.value = i;
-      input.id = "ejs_cheat_switch_" + i;
-      row.appendChild(input);
-      const label = this.createElement("label");
-      label.for = "ejs_cheat_switch_" + i;
-      label.innerText = desc;
-      row.appendChild(label);
-      label.addEventListener("click", (e) => {
-        input.checked = !input.checked;
-        this.cheats[i].checked = input.checked;
-        this.cheatChanged(input.checked, code, i);
-        this.saveSettings();
-      });
-      if (!is_permanent) {
-        const close = this.createElement("a");
-        close.classList.add("ejs_cheat_row_button");
-        close.innerText = "×";
-        row.appendChild(close);
-        close.addEventListener("click", (e) => {
-          this.cheatChanged(false, code, i);
-          this.cheats.splice(i, 1);
-          this.updateCheatUI();
-          this.saveSettings();
-        });
-      }
-      this.elements.cheatRows.appendChild(row);
-      this.cheatChanged(checked, code, i);
-    };
-    this.gameManager.resetCheat();
-    for (let i = 0; i < this.cheats.length; i++) {
-      addToMenu(
-        this.cheats[i].desc,
-        this.cheats[i].checked,
-        this.cheats[i].code,
-        this.cheats[i].is_permanent,
-        i
-      );
-    }
-  }
-  cheatChanged(checked, code, index) {
-    if (!this.gameManager) return;
-    this.gameManager.setCheat(index, checked, code);
-  }
-
-  enableShader(name) {
-    if (!this.gameManager) return;
-    try {
-      this.Module.FS.unlink("/shader/shader.glslp");
-    } catch (e) {}
-
-    if (name === "disabled" || !this.config.shaders[name]) {
-      this.gameManager.toggleShader(0);
-      return;
-    }
-
-    const shaderConfig = this.config.shaders[name];
-
-    if (typeof shaderConfig === "string") {
-      this.Module.FS.writeFile("/shader/shader.glslp", shaderConfig, {}, "w+");
-    } else {
-      const shader = shaderConfig.shader;
-      this.Module.FS.writeFile(
-        "/shader/shader.glslp",
-        shader.type === "base64" ? atob(shader.value) : shader.value,
-        {},
-        "w+"
-      );
-      if (shaderConfig.resources && shaderConfig.resources.length) {
-        shaderConfig.resources.forEach((resource) => {
-          this.Module.FS.writeFile(
-            `/shader/${resource.name}`,
-            resource.type === "base64" ? atob(resource.value) : resource.value,
-            {},
-            "w+"
-          );
-        });
-      }
-    }
-
-    this.gameManager.toggleShader(1);
-  }
-
-  screenshot(callback, source, format, upscale) {
-    const imageFormat =
-      format ||
-      this.getSettingValue("screenshotFormat") ||
-      this.capture.photo.format;
-    const imageUpscale =
-      upscale ||
-      parseInt(
-        this.getSettingValue("screenshotUpscale") || this.capture.photo.upscale
-      );
-    const screenshotSource =
-      source ||
-      this.getSettingValue("screenshotSource") ||
-      this.capture.photo.source;
-    const videoRotation = parseInt(this.getSettingValue("videoRotation") || 0);
-    const aspectRatio =
-      this.gameManager.getVideoDimensions("aspect") || 1.333333;
-    const gameWidth = this.gameManager.getVideoDimensions("width") || 256;
-    const gameHeight = this.gameManager.getVideoDimensions("height") || 224;
-    const videoTurned = videoRotation === 1 || videoRotation === 3;
-    let width = this.canvas.width;
-    let height = this.canvas.height;
-    let scaleHeight = imageUpscale;
-    let scaleWidth = imageUpscale;
-    let scale = 1;
-
-    if (screenshotSource === "retroarch") {
-      if (width >= height) {
-        width = height * aspectRatio;
-      } else if (width < height) {
-        height = width / aspectRatio;
-      }
-      this.gameManager.screenshot().then((screenshot) => {
-        const blob = new Blob([screenshot], { type: "image/png" });
-        if (imageUpscale === 0) {
-          callback(blob, "png");
-        } else if (imageUpscale > 1) {
-          scale = imageUpscale;
-          const img = new Image();
-          const screenshotUrl = URL.createObjectURL(blob);
-          img.src = screenshotUrl;
-          img.onload = () => {
-            const canvas = document.createElement("canvas");
-            canvas.width = width * scale;
-            canvas.height = height * scale;
-            const ctx = canvas.getContext("2d", { alpha: false });
-            ctx.imageSmoothingEnabled = false;
-            ctx.scale(scaleWidth, scaleHeight);
-            ctx.drawImage(img, 0, 0, width, height);
-            canvas.toBlob(
-              (blob) => {
-                callback(blob, imageFormat);
-                img.remove();
-                URL.revokeObjectURL(screenshotUrl);
-                canvas.remove();
-              },
-              "image/" + imageFormat,
-              1
-            );
-          };
-        }
-      });
-    } else if (screenshotSource === "canvas") {
-      if (width >= height && !videoTurned) {
-        width = height * aspectRatio;
-      } else if (width < height && !videoTurned) {
-        height = width / aspectRatio;
-      } else if (width >= height && videoTurned) {
-        width = height * (1 / aspectRatio);
-      } else if (width < height && videoTurned) {
-        width = height / (1 / aspectRatio);
-      }
-      if (imageUpscale === 0) {
-        scale = gameHeight / height;
-        scaleHeight = scale;
-        scaleWidth = scale;
-      } else if (imageUpscale > 1) {
-        scale = imageUpscale;
-      }
-      const captureCanvas = document.createElement("canvas");
-      captureCanvas.width = width * scale;
-      captureCanvas.height = height * scale;
-      captureCanvas.style.display = "none";
-      const captureCtx = captureCanvas.getContext("2d", { alpha: false });
-      captureCtx.imageSmoothingEnabled = false;
-      captureCtx.scale(scale, scale);
-      const imageAspect = this.canvas.width / this.canvas.height;
-      const canvasAspect = width / height;
-      let offsetX = 0;
-      let offsetY = 0;
-
-      if (imageAspect > canvasAspect) {
-        offsetX = (this.canvas.width - width) / -2;
-      } else if (imageAspect < canvasAspect) {
-        offsetY = (this.canvas.height - height) / -2;
-      }
-      const drawNextFrame = () => {
-        captureCtx.drawImage(
-          this.canvas,
-          offsetX,
-          offsetY,
-          this.canvas.width,
-          this.canvas.height
-        );
-        captureCanvas.toBlob(
-          (blob) => {
-            callback(blob, imageFormat);
-            captureCanvas.remove();
-          },
-          "image/" + imageFormat,
-          1
-        );
-      };
-      requestAnimationFrame(drawNextFrame);
-    }
-  }
-
-  takeScreenshot(source, format, upscale) {
-    return new Promise((resolve) => {
-      this.screenshot(
-        async (blob, returnFormat) => {
-          const arrayBuffer = await blob.arrayBuffer();
-          const uint8 = new Uint8Array(arrayBuffer);
-          resolve({ screenshot: uint8, format: returnFormat });
-        },
-        source,
-        format,
-        upscale
-      );
-    });
-  }
-
-  collectScreenRecordingMediaTracks(canvasEl, fps, options = {}) {
-    let videoTrack = null;
-
-    if (options.audioOnly === true) {
-      // Skip video capture entirely; used for audio-only SFU recovery.
-      videoTrack = null;
-    } else {
-      // If the source canvas has zero layout or logical size, create an
-      // intermediate hidden canvas with the native resolution and continuously
-      // draw frames into it. captureStream() will be taken from that canvas so
-      // the resulting MediaStream has valid dimensions.
-      let sourceCanvas = canvasEl;
-      let stopCopyLoop = null;
-      const needsCopy =
-        options.forceCopy === true ||
-        !canvasEl ||
-        canvasEl.width === 0 ||
-        canvasEl.height === 0 ||
-        canvasEl.clientWidth === 0 ||
-        canvasEl.clientHeight === 0;
-      if (needsCopy) {
-        const native = (this.getNativeResolution &&
-          this.getNativeResolution()) || { width: 640, height: 480 };
-        const captureCanvas = document.createElement("canvas");
-        captureCanvas.width = native.width;
-        captureCanvas.height = native.height;
-        captureCanvas.style.display = "none";
-        // Append to DOM so captureStream works consistently across browsers
-        try {
-          document.body.appendChild(captureCanvas);
-        } catch (e) {
-          /* ignore */
-        }
-        const ctx = captureCanvas.getContext("2d", { alpha: false });
-        let rafId = null;
-        const doCopy = () => {
-          try {
-            if (canvasEl && canvasEl.width > 0 && canvasEl.height > 0) {
-              ctx.drawImage(
-                canvasEl,
-                0,
-                0,
-                captureCanvas.width,
-                captureCanvas.height
-              );
-            }
-          } catch (err) {
-            // Swallow cross-origin or other draw errors
-          }
-          rafId = requestAnimationFrame(doCopy);
-        };
-        doCopy();
-        stopCopyLoop = () => {
-          if (rafId) cancelAnimationFrame(rafId);
-          try {
-            captureCanvas.remove();
-          } catch (e) {}
-        };
-        sourceCanvas = captureCanvas;
-      }
-
-      const videoTracks = sourceCanvas.captureStream(fps).getVideoTracks();
-      if (videoTracks.length !== 0) {
-        videoTrack = videoTracks[0];
-        if (stopCopyLoop) {
-          const origOnEnded = videoTrack.onended;
-          videoTrack.onended = (...args) => {
-            try {
-              stopCopyLoop();
-            } catch (e) {}
-            if (typeof origOnEnded === "function")
-              origOnEnded.apply(videoTrack, args);
-          };
-        }
-      } else {
-        if (this.debug) console.error("Unable to capture video stream");
-        if (stopCopyLoop) stopCopyLoop();
-        return null;
-      }
-    }
-
-    let audioTrack = null;
-    if (
-      this.Module.AL &&
-      this.Module.AL.currentCtx &&
-      this.Module.AL.currentCtx.audioCtx
-    ) {
-      const alContext = this.Module.AL.currentCtx;
-      const audioContext = alContext.audioCtx;
-
-      // IMPORTANT: OpenAL/emscripten may recreate source nodes over time.
-      // If we only connect the current `alContext.sources` once, the capture
-      // stream can go permanently silent after a source refresh. To avoid
-      // “audio drops and stays dropped”, keep wiring new source gain nodes
-      // into a stable mixer.
-      const mixer = audioContext.createGain();
-      mixer.gain.value = 1;
-      const destination = audioContext.createMediaStreamDestination();
-      mixer.connect(destination);
-
-      const connectedGains =
-        typeof WeakSet === "function" ? new WeakSet() : null;
-      const connectSourcesToMixer = () => {
-        try {
-          const sources = alContext.sources;
-          if (!sources) return;
-          for (const sourceIdx in sources) {
-            const src = sources[sourceIdx];
-            const g = src && src.gain;
-            if (!g || typeof g.connect !== "function") continue;
-            if (connectedGains && connectedGains.has(g)) continue;
-            try {
-              g.connect(mixer);
-              if (connectedGains) connectedGains.add(g);
-            } catch (e) {
-              // ignore connect failures
-            }
-          }
-        } catch (e) {
-          // ignore
-        }
-      };
-
-      connectSourcesToMixer();
-
-      // Periodically re-scan for newly created sources.
-      const rewireIntervalMs =
-        typeof options.audioRewireIntervalMs === "number" &&
-        options.audioRewireIntervalMs > 0
-          ? options.audioRewireIntervalMs
-          : 2000;
-      const rewireTimer = setInterval(connectSourcesToMixer, rewireIntervalMs);
-
-      const audioTracks = destination.stream.getAudioTracks();
-      if (audioTracks.length !== 0) {
-        audioTrack = audioTracks[0];
-        // Clean up the timer and graph when the track is stopped.
-        const cleanup = () => {
-          try {
-            clearInterval(rewireTimer);
-          } catch (e) {}
-          try {
-            mixer.disconnect();
-          } catch (e) {}
-          try {
-            destination.disconnect();
-          } catch (e) {}
-        };
-        try {
-          audioTrack.addEventListener("ended", cleanup, { once: true });
-        } catch (e) {
-          // ignore
-        }
-        try {
-          audioTrack._ejsAudioCaptureCleanup = cleanup;
-        } catch (e) {
-          // ignore
-        }
-      } else {
-        try {
-          clearInterval(rewireTimer);
-        } catch (e) {}
-        try {
-          mixer.disconnect();
-        } catch (e) {}
-        try {
-          destination.disconnect();
-        } catch (e) {}
-      }
-    }
-
-    const stream = new MediaStream();
-    if (videoTrack && videoTrack.readyState === "live") {
-      stream.addTrack(videoTrack);
-    }
-    if (audioTrack && audioTrack.readyState === "live") {
-      stream.addTrack(audioTrack);
-    }
-
-    if (options.audioOnly === true && stream.getAudioTracks().length === 0) {
-      return null;
-    }
-    return stream;
-  }
-
-  screenRecord() {
-    const captureFps =
-      this.getSettingValue("screenRecordingFPS") || this.capture.video.fps;
-    const captureFormat =
-      this.getSettingValue("screenRecordFormat") || this.capture.video.format;
-    const captureUpscale =
-      this.getSettingValue("screenRecordUpscale") || this.capture.video.upscale;
-    const captureVideoBitrate =
-      this.getSettingValue("screenRecordVideoBitrate") ||
-      this.capture.video.videoBitrate;
-    const captureAudioBitrate =
-      this.getSettingValue("screenRecordAudioBitrate") ||
-      this.capture.video.audioBitrate;
-    const aspectRatio =
-      this.gameManager.getVideoDimensions("aspect") || 1.333333;
-    const videoRotation = parseInt(this.getSettingValue("videoRotation") || 0);
-    const videoTurned = videoRotation === 1 || videoRotation === 3;
-    let width = 800;
-    let height = 600;
-    let frameAspect = this.canvas.width / this.canvas.height;
-    let canvasAspect = width / height;
-    let offsetX = 0;
-    let offsetY = 0;
-
-    const captureCanvas = document.createElement("canvas");
-    const captureCtx = captureCanvas.getContext("2d", { alpha: false });
-    captureCtx.fillStyle = "#000";
-    captureCtx.imageSmoothingEnabled = false;
-    const updateSize = () => {
-      width = this.canvas.width;
-      height = this.canvas.height;
-      frameAspect = width / height;
-      if (width >= height && !videoTurned) {
-        width = height * aspectRatio;
-      } else if (width < height && !videoTurned) {
-        height = width / aspectRatio;
-      } else if (width >= height && videoTurned) {
-        width = height * (1 / aspectRatio);
-      } else if (width < height && videoTurned) {
-        width = height / (1 / aspectRatio);
-      }
-      canvasAspect = width / height;
-      captureCanvas.width = width * captureUpscale;
-      captureCanvas.height = height * captureUpscale;
-      captureCtx.scale(captureUpscale, captureUpscale);
-      if (frameAspect > canvasAspect) {
-        offsetX = (this.canvas.width - width) / -2;
-      } else if (frameAspect < canvasAspect) {
-        offsetY = (this.canvas.height - height) / -2;
-      }
-    };
-    updateSize();
-    this.addEventListener(this.canvas, "resize", () => {
-      updateSize();
-    });
-
-    let animation = true;
-
-    const drawNextFrame = () => {
-      captureCtx.drawImage(
-        this.canvas,
-        offsetX,
-        offsetY,
-        this.canvas.width,
-        this.canvas.height
-      );
-      if (animation) {
-        requestAnimationFrame(drawNextFrame);
-      }
-    };
-    requestAnimationFrame(drawNextFrame);
-
-    const chunks = [];
-    const tracks = this.collectScreenRecordingMediaTracks(
-      captureCanvas,
-      captureFps
-    );
-    const recorder = new MediaRecorder(tracks, {
-      videoBitsPerSecond: captureVideoBitrate,
-      audioBitsPerSecond: captureAudioBitrate,
-      mimeType: "video/" + captureFormat,
-    });
-    recorder.addEventListener("dataavailable", (e) => {
-      chunks.push(e.data);
-    });
-    recorder.addEventListener("stop", () => {
-      const blob = new Blob(chunks);
-      const url = URL.createObjectURL(blob);
-      const date = new Date();
-      const a = document.createElement("a");
-      a.href = url;
-      a.download =
-        this.getBaseFileName() +
-        "-" +
-        date.getMonth() +
-        "-" +
-        date.getDate() +
-        "-" +
-        date.getFullYear() +
-        "." +
-        captureFormat;
-      a.click();
-
-      animation = false;
-      captureCanvas.remove();
-    });
-    recorder.start();
-
-    return recorder;
-  }
-
-  enableSaveUpdateEvent() {
-    // https://stackoverflow.com/questions/7616461
-    // Modified to accept a buffer instead of a string and return hex instead of an int
-    async function cyrb53(charBuffer, seed = 0) {
-      let h1 = 0xdeadbeef ^ seed,
-        h2 = 0x41c6ce57 ^ seed;
-      for (let i = 0, ch; i < charBuffer.length; i++) {
-        ch = charBuffer[i];
-        h1 = Math.imul(h1 ^ ch, 2654435761);
-        h2 = Math.imul(h2 ^ ch, 1597334677);
-      }
-      h1 = Math.imul(h1 ^ (h1 >>> 16), 2246822507);
-      h1 ^= Math.imul(h2 ^ (h2 >>> 13), 3266489909);
-      h2 = Math.imul(h2 ^ (h2 >>> 16), 2246822507);
-      h2 ^= Math.imul(h1 ^ (h1 >>> 13), 3266489909);
-
-      // Cyrb53 is a 53-bit hash; we need 14 hex characters to represent it, and the first char will
-      // always be 0 or 1 (since it is only 1 bit)
-      return (4294967296 * (2097151 & h2) + (h1 >>> 0))
-        .toString(16)
-        .padStart(14, "0");
-    }
-
-    function withGameSaveHash(saveFile, callback) {
-      if (saveFile) {
-        cyrb53(saveFile).then((digest) => callback(digest, saveFile));
-      } else {
-        console.warn("Save file not found when attempting to hash");
-        callback(null, null);
-      }
-    }
-
-    var recentHash = null;
-    if (this.gameManager) {
-      withGameSaveHash(this.gameManager.getSaveFile(false), (hash, _) => {
-        recentHash = hash;
-      });
-    }
-
-    this.on("saveSaveFiles", (saveFile) => {
-      withGameSaveHash(saveFile, (newHash, fileContents) => {
-        if (newHash && fileContents && newHash !== recentHash) {
-          recentHash = newHash;
-          this.takeScreenshot(
-            this.capture.photo.source,
-            this.capture.photo.format,
-            this.capture.photo.upscale
-          ).then(({ screenshot, format }) => {
-            this.callEvent("saveUpdate", {
-              hash: newHash,
-              save: fileContents,
-              screenshot: screenshot,
-              format: format,
-            });
-          });
-        }
-      });
-    });
+    this.cheatsMenu = body.parentElement;
+    this.updateCheatUI();
   }
 }
-window.EmulatorJS = EmulatorJS;
-// This is EmulatorJS-SFU, not EmulatorJS.  See https://github.com/TechnicallyComputers/EmulatorJS-SFU
