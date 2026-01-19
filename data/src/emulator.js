@@ -8620,6 +8620,7 @@ class EmulatorJS {
     body.appendChild(joined);
 
     this.openNetplayMenu = () => {
+      
       if (this.netplayShowTurnWarning && !this.netplayWarningShown) {
         const warningDiv = this.createElement("div");
         warningDiv.className = "ejs_netplay_warning";
@@ -8636,54 +8637,92 @@ class EmulatorJS {
       if (this.netplay && this.netplay.slotSelect && this.netplay.slotSelect.parentElement) {
         this.netplay.slotSelect.parentElement.style.display = "none";
       }
+      // Instead of removing the EJS side playername for now, we will simply
+      // overwrite it with the netplay ID from the auth token.
+      // This will preserve existing references to this playername,
+      // while keeping playername functions consistent with netplay ID.
+      let playerName = "Player"; // Default fallback before token is available
+
       if (!this.netplay || (this.netplay && !this.netplay.name)) {
-        this.netplay = {
-          table: tbody,
-          passwordElem: password,
-          roomNameElem: title2,
-          createButton: createButton,
-          tabs: [rooms, joined],
-          slotSelect: slotSelect,
-          ...this.netplay,
-        };
-        const popups = this.createSubPopup();
-        this.netplayMenu.appendChild(popups[0]);
-        popups[1].classList.add("ejs_cheat_parent");
-        const popup = popups[1];
+        // Extract player name from RomM netplay ID token
+        try {
+          // Get token from window.EJS_netplayToken or token cookie
+          let token = window.EJS_netplayToken;
+          if (!token) {
+            // Try to get token from cookie (same logic as NetplayEngine)
+            const cookies = document.cookie.split(';');
+            for (const cookie of cookies) {
+              const [name, value] = cookie.trim().split('=');
+              if (name === 'romm_sfu_token' || name === 'sfu_token') {
+                token = decodeURIComponent(value);
+                break;
+              }
+            }
+          }
 
-        const header = this.createElement("div");
-        const title = this.createElement("h2");
-        title.innerText = this.localization("Set Player Name");
-        title.classList.add("ejs_netplay_name_heading");
-        header.appendChild(title);
-        popup.appendChild(header);
-
-        const main = this.createElement("div");
-        main.classList.add("ejs_netplay_header");
-        const head = this.createElement("strong");
-        head.innerText = this.localization("Player Name");
-        const input = this.createElement("input");
-        input.type = "text";
-        input.setAttribute("maxlength", 20);
-
-        main.appendChild(head);
-        main.appendChild(this.createElement("br"));
-        main.appendChild(input);
-        popup.appendChild(main);
-
-        popup.appendChild(this.createElement("br"));
-        const submit = this.createElement("button");
-        submit.classList.add("ejs_button_button");
-        submit.classList.add("ejs_popup_submit");
-        submit.style["background-color"] = "rgba(var(--ejs-primary-color),1)";
-        submit.innerText = this.localization("Submit");
-        popup.appendChild(submit);
-        this.addEventListener(submit, "click", (e) => {
-          if (!input.value.trim()) return;
-          this.netplay.name = input.value.trim();
-          popups[0].remove();
-        });
+          if (token) {
+            // Decode JWT payload to get netplay ID from 'sub' field
+            // JWT uses base64url encoding, not standard base64, so we need to convert
+            // JWT uses base64url encoding, not standard base64, so we need to convert
+            const base64UrlDecode = (str) => {
+              // Convert base64url to base64 by replacing chars and adding padding
+              let base64 = str.replace(/-/g, '+').replace(/_/g, '/');
+              while (base64.length % 4) {
+                base64 += '=';
+              }
+              
+              // Decode base64 to binary string, then convert to proper UTF-8
+              const binaryString = atob(base64);
+              
+              // Convert binary string to UTF-8 using TextDecoder if available, otherwise fallback
+              if (typeof TextDecoder !== 'undefined') {
+                const bytes = new Uint8Array(binaryString.length);
+                for (let i = 0; i < binaryString.length; i++) {
+                  bytes[i] = binaryString.charCodeAt(i);
+                }
+                return new TextDecoder('utf-8').decode(bytes);
+              } else {
+                // Fallback for older browsers: this may not handle all UTF-8 correctly
+                return decodeURIComponent(escape(binaryString));
+              }
+            };
+            try {
+              const payloadStr = base64UrlDecode(token.split('.')[1]);
+              console.log("[EmulatorJS] Raw JWT payload:", payloadStr);
+              const payload = JSON.parse(payloadStr);
+              console.log("[EmulatorJS] Parsed JWT payload:", payload);
+              
+              if (payload.sub) {
+                console.log("[EmulatorJS] Original sub field:", payload.sub);
+                // Use the netplay ID as player name, truncate if too long (Unicode-safe)
+                playerName = Array.from(payload.sub).slice(0, 20).join('');
+                console.log("[EmulatorJS] Extracted player name:", playerName);
+                console.log("[EmulatorJS] Player name char codes:", Array.from(playerName).map(c => c.charCodeAt(0)));
+              }
+            } catch (parseError) {
+              console.error("[EmulatorJS] Failed to parse JWT payload:", parseError);
+            }
+          }
+        } catch (e) {
+          console.warn("[EmulatorJS] Failed to extract player name from token:", e);
+        }
       }
+
+      this.netplay = {
+        name: playerName,
+        table: tbody,
+        passwordElem: password,
+        roomNameElem: title2,
+        createButton: createButton,
+        tabs: [rooms, joined],
+        slotSelect: slotSelect,
+        // Single source of truth for netplay ID - prioritizes session state over fallbacks
+        getNetplayId: () => {
+          // Priority order: session state (authenticated) > getNetplayId()
+          return this.netplay.engine?.sessionState?.localPlayerId || this.netplay.name || "local";
+        },
+        ...this.netplay,
+      };
 
       // Always populate slot UI from current preference, and wire live switching once.
       try {
@@ -8743,7 +8782,10 @@ class EmulatorJS {
 
   defineNetplayFunctions() {
     const EJS_INSTANCE = this;
-
+    // Ensure this.netplay exists before accessing its properties.
+    if (!this.netplay) {
+      this.netplay = {};
+    }
     // Initialize NetplayEngine if modules are available
     // Note: This will only work after netplay modules are loaded/included
     // Check both global scope and window object for compatibility
@@ -8759,14 +8801,6 @@ class EmulatorJS {
         : typeof window !== "undefined" && window.EmulatorJSAdapter
         ? window.EmulatorJSAdapter
         : undefined;
-
-    // Initialize this.netplay if it doesn't exist
-    if (!this.netplay) {
-      this.netplay = {};
-    }
-
-    // NetplayEngine for room listing will be created on-demand in updateList
-    // Don't create it here to avoid conflicts with main netplay engine
 
     // Define updateList function for refreshing room lists
     if (!this.netplay.updateList) {
@@ -9083,7 +9117,7 @@ class EmulatorJS {
           this.netplay.currentRoomId = null;
           this.netplay.currentRoom = null;
 
-          // Stop room list updates
+          // Stop room list updates because we left netplay.
           if (this.netplay.updateList) {
             this.netplay.updateList.stop();
           }
@@ -9102,7 +9136,7 @@ class EmulatorJS {
     if (!this.netplay.reset) {
       this.netplay.reset = () => {
         console.log("[Netplay] Resetting netplay state");
-        // Stop room list updates
+        // Stop room list updates because we left netplay.
         if (this.netplay.updateList) {
           this.netplay.updateList.stop();
         }
@@ -9122,7 +9156,7 @@ class EmulatorJS {
       this.netplay.tabs[1].style.display = "";
     }
 
-    // Stop room list refresh
+    // Stop room list refresh because we started a lobby.
     if (this.netplay.updateList) {
       this.netplay.updateList.stop();
     }
@@ -9549,7 +9583,7 @@ class EmulatorJS {
 
   // Helper method to create a room
   async netplayCreateRoom(roomName, maxPlayers, password, allowSpectators = true, roomType = "live_stream", frameDelay = 2, syncMode = "timeout") {
-    if (!this.netplay || !this.netplay.name) {
+    if (!this.netplay || !this.netplay.getNetplayId()) {
       throw new Error("Player name not set");
     }
 
@@ -9577,7 +9611,7 @@ class EmulatorJS {
 
       // Prepare player info for engine
       const playerInfo = {
-        player_name: this.netplay.name,
+        player_name: this.netplay.getNetplayId(),
         player_slot: this.netplay.localSlot || 0,
         domain: window.location.host,
         game_id: this.config.gameId || "",
@@ -9609,6 +9643,8 @@ class EmulatorJS {
         // Switch to appropriate room UI and setup based on room type
         if (roomType === "live_stream") {
           this.netplaySwitchToLiveStreamRoom(roomName, password);
+          
+
 
           // LIVESTREAM ROOM: Set up WebRTC producer transports for host
           // Only hosts need to create producers for video/audio streaming
@@ -10001,7 +10037,7 @@ class EmulatorJS {
 
   // Helper method to join a room
   async netplayJoinRoom(roomId, hasPassword) {
-    if (!this.netplay || !this.netplay.name) {
+    if (!this.netplay || !this.netplay.getNetplayId()) {
       throw new Error("Player name not set");
     }
 
@@ -10029,7 +10065,7 @@ class EmulatorJS {
 
       // Prepare player info for engine
       const playerInfo = {
-        player_name: this.netplay.name,
+        player_name: this.netplay.getNetplayId(),
         player_slot: this.netplay.localSlot || 0,
         domain: window.location.host
       };
@@ -10142,7 +10178,7 @@ class EmulatorJS {
 
     const joinData = {
       password: password,
-      player_name: this.netplay.name,
+      player_name: this.netplay.getNetplayId(),
       domain: window.location.host
     };
 
@@ -10179,6 +10215,15 @@ class EmulatorJS {
   // Switch to live stream room UI
   netplaySwitchToLiveStreamRoom(roomName, password) {
     console.log("[Netplay] Switching to livestream room UI:", roomName);
+
+    // Stop listing updates since we're now in a room
+    if (this.netplay.updateList) {
+      this.netplay.updateList.stop();
+    }
+
+    // Show the netplay menus
+    this.netplayMenu.style.display = "";
+
     if (!this.netplayMenu) {
       console.warn("[Netplay] No netplayMenu available for livestream UI");
       return;
@@ -10290,9 +10335,14 @@ class EmulatorJS {
   netplaySwitchToDelaySyncRoom(roomName, password, maxPlayers) {
     if (!this.netplayMenu) return;
 
-    // Show the netplay menu
-    this.netplayMenu.style.display = "";
+    // Stop listing updates since we're now in a room
+    if (this.netplay.updateList) {
+      this.netplay.updateList.stop();
+    }
 
+    // Show the netplay menus
+    this.netplayMenu.style.display = "";
+    
     // Hide lobby tabs and show delay sync room
     if (this.netplay.tabs && this.netplay.tabs[0] && this.netplay.tabs[1]) {
       this.netplay.tabs[0].style.display = "none";
@@ -10400,7 +10450,7 @@ class EmulatorJS {
     // Initialize player list - only show host initially as P1
     this.netplay.joinedPlayers = [{
       slot: 0,
-      name: this.netplay.name || "Host",
+      name: this.netplay.name || this.netplay.getNetplayId(),
       ready: true
     }];
 
@@ -10421,18 +10471,21 @@ class EmulatorJS {
 
     const tbody = this.netplay.delaySyncPlayerTable;
       const row = this.createElement("tr");
-
       // Player column
       const playerCell = this.createElement("td");
-    playerCell.innerText = `P${slot + 1}`;
+      if (player.name === this.netplay.name) {
+        playerCell.innerText = `You (P${slot + 1})`;
+      } else {
+        playerCell.innerText = `P${slot + 1}`;
+      }
       playerCell.style.textAlign = "center";
       row.appendChild(playerCell);
 
       // Name column
       const nameCell = this.createElement("td");
     nameCell.innerText = player.name;
-      nameCell.style.textAlign = "center";
-      row.appendChild(nameCell);
+    nameCell.style.textAlign = "center";
+    row.appendChild(nameCell);
 
       // Ready column
       const readyCell = this.createElement("td");
@@ -10457,9 +10510,9 @@ class EmulatorJS {
     // Show current user initially
     this.netplayUpdatePlayerList({
       players: {
-        [this.netplay.name || "local"]: {
-          userid: this.netplay.name || "local",
-          player_name: this.netplay.name || "You",
+        [this.netplay.getNetplayId()]: {
+          userid: this.netplay.getNetplayId(),
+          player_name: this.netplay.getNetplayId(),
           isSpectator: false
         }
       }
@@ -10509,7 +10562,7 @@ class EmulatorJS {
         const statusCell = tbody.children[0].querySelector("td:nth-child(3)");
 
         if (playerCell) playerCell.innerText = "Spectator";
-        if (nameCell) nameCell.innerText = this.netplay.name || "You";
+        if (nameCell) nameCell.innerText = this.netplay.getNetplayId();
         if (statusCell) statusCell.innerText = "Watching";
       }
     }
@@ -10793,7 +10846,7 @@ class EmulatorJS {
     this.netplay.transport.emit("join-room", {
       extra: {
         room_name: roomName,
-        player_name: this.netplay.name || "Anonymous",
+        player_name: this.netplay.getNetplayId(),
         netplay_mode: this.netplay.currentRoom?.netplay_mode || 0,
         // Include other room metadata
       }
@@ -10854,7 +10907,7 @@ class EmulatorJS {
 
         // Player/Spectator indicator
         const playerCell = this.createElement("td");
-        if (player.userid === this.netplay.name || player.player_name === this.netplay.name) {
+        if (player.player_name === this.netplay.name) {
           playerCell.innerText = "You (P" + (player.player_slot + 1) + ")";
         } else {
           playerCell.innerText = "P" + (player.player_slot + 1);
@@ -10873,8 +10926,15 @@ class EmulatorJS {
         row.appendChild(nameCell);
 
         // Status
+        
         const statusCell = this.createElement("td");
-        statusCell.innerText = player.isSpectator ? "Watching" : "Playing";
+        let statusText = "";
+        if (this.netplay.engine?.sessionState?.isHostRole()) {
+          statusText = "🖥️";
+        } else {
+          statusText = player.isSpectator ? "👀" : "🎮";
+        }
+        statusCell.innerText = statusText;
         statusCell.style.textAlign = "center";
         row.appendChild(statusCell);
 
@@ -10893,6 +10953,18 @@ class EmulatorJS {
     // Exit spectator mode if we were in it
     this.netplay.isSpectator = false;
 
+    const netplayId = this.netplay.getNetplayId();
+
+    // Update slot manager with new slot assignment
+    if (this.netplay.engine?.slotManager) {
+      if (netplayId) {
+        // Release current slot if assigned
+        this.netplay.engine.slotManager.releaseSlot(netplayId);
+        // Assign new slot
+        this.netplay.engine.slotManager.assignSlot(netplayId, slot);
+      }
+    }
+
     // Update Delay Sync table if it exists
     if (this.netplay.delaySyncPlayerTable && this.netplay.joinedPlayers) {
       const hostPlayer = this.netplay.joinedPlayers.find(p => p.slot === 0);
@@ -10910,16 +10982,37 @@ class EmulatorJS {
 
     // Update Live Stream table if it exists
     if (this.netplay.liveStreamPlayerTable) {
-      const tbody = this.netplay.liveStreamPlayerTable;
-      if (tbody.children[0]) {
-        const playerCell = tbody.children[0].querySelector("td:first-child");
-        const nameCell = tbody.children[0].querySelector("td:nth-child(2)");
-        const statusCell = tbody.children[0].querySelector("td:nth-child(3)");
+      // Create player data in the format expected by the table update function
+      const playersData = {};
 
-        if (playerCell) playerCell.innerText = `P${slot + 1}`;
-        if (nameCell) nameCell.innerText = this.netplay.name || "Host";
-        if (statusCell) statusCell.innerText = "Host";
+      const isHost = this.netplay.engine?.sessionState?.isHostRole();
+      const isSpectator = this.netplay.engine?.sessionState?.isSpectatorRole();
+      
+      // Get the actualy netplay ID and display name
+      const netplayId = this.netplay.getNetplayId();
+      // Add local player with updated slot
+      playersData[netplayId] = {
+        userid: netplayId,
+        player_name: this.netplay.name,
+        player_slot: slot,
+        isSpectator: false,
+        isHost: isHost // Host is always the host regardless of slot, but don't make everyone host.
+      };
+      // Add other players from cached server data
+      if (this.netplay.lastServerPlayers) {
+        Object.entries(this.netplay.lastServerPlayers).forEach(([playerId, playerData]) => {
+          if (playerId !== netplayId) {
+            playersData[playerId] = {
+              userid: playerData.userid || playerId,
+              player_name: playerData.player_name || playerData.userid || playerId,
+              player_slot: playerData.player_slot,
+              isSpectator: playerData.isSpectator || false,
+              isHost: false // Only local player can be host in this context
+            };
+          }
+        });
       }
+      this.netplayUpdatePlayerList({ players: playersData });
     }
 
     // Update slot selector to reflect taken slots
