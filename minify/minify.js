@@ -54,20 +54,31 @@ function getSourceFiles() {
     
     // Adapter (depends on core)
     "netplay/adapters/emulatorjs/EmulatorJSAdapter.js",
+
+    // UI Modules
+    "netplay/ui/NetplayMenu.js",
   ];
   
   // Top-level files (existing structure)
   const topLevelFiles = fs.readdirSync(srcDir)
     .filter(file => file.endsWith(".js") && !file.startsWith("."))
     .map(file => file);
-  
-  // Build full paths for netplay modules
-  const netplayFiles = coreFiles
-    .map(file => path.join(srcDir, file))
-    .filter(filePath => fs.existsSync(filePath));
-  
+     
   // Combine: netplay modules first, then top-level files
   // Top-level files maintain their original order (important for emulator.js dependencies)
+
+  // Build full paths for netplay modules
+  const netplayFiles = coreFiles
+  .map(file => path.join(srcDir, file))
+  .filter(filePath => {
+    const exists = fs.existsSync(filePath);
+    if (filePath.includes('NetplayMenu')) {
+      console.log(`[Debug] NetplayMenu path: ${filePath} exists: ${exists}`);
+    }
+    return exists;
+  });
+
+  
   const allFiles = [...netplayFiles, ...topLevelFiles.map(f => path.join(srcDir, f))];
   
   // Filter to only existing files
@@ -76,19 +87,27 @@ function getSourceFiles() {
 
 async function doMinify() {
   const sourceFiles = getSourceFiles();
+
+  // Debug logging
   console.log(`[Minify] Including ${sourceFiles.length} source files`);
   console.log(`[Minify] Netplay modules: ${sourceFiles.filter(f => f.includes('netplay')).length} files`);
-  
-  // Minify with terser - it handles ES6 modules
-  // Note: Modules will need to be loaded as globals (via window assignments or script tags)
+  console.log(`[Minify] Files being processed:`, sourceFiles.map(f => path.basename(f)));
+
+  // Debug logging
+  console.log(`[Minify] Including ${sourceFiles.length} source files`);
+  console.log(`[Minify] Netplay modules: ${sourceFiles.filter(f => f.includes('netplay')).length} files`);
+  console.log(`[Minify] Files being processed:`, sourceFiles.map(f => path.basename(f)));
+
+  // Minify with terser - disable compression to debug
   const terserOptions = {
-    compress: {
-      drop_console: false, // Keep console for debugging
-    },
+    compress: false, // Disable compression entirely
     format: {
       comments: false,
     },
-    ecma: 2020, // Support ES6+ features
+    ecma: 2020,
+    mangle: false, // Don't mangle names
+    module: false,
+    toplevel: false, // Don't optimize top-level scope
   };
 
   await minify({

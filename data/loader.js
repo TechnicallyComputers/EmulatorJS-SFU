@@ -19,6 +19,7 @@
     "netplay/core/transport/DataChannelManager.js",
     "netplay/core/transport/SFUTransport.js",
     "netplay/core/NetplayEngine.js",
+    "netplay/ui/NetplayMenu.js",
     "netplay/adapters/emulatorjs/interface.js",
     "netplay/adapters/emulatorjs/EmulatorJSAdapter.js",
     // Top-level files (existing structure)
