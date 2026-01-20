@@ -53,8 +53,6 @@ class InputSync {
     // Frame delay is now handled by the controller
     this.frameDelay = this.controller.frameDelay;
 
-    // Edge-trigger optimization: track last known values to avoid sending unchanged inputs
-    this.lastInputValues = {}; // key: `${playerIndex}-${inputIndex}`, value: last sent value
 
     // Input serialization/deserialization
     this.InputPayload = null; // Will be set when available
@@ -100,23 +98,10 @@ class InputSync {
    * @returns {boolean} True if input was sent/queued successfully
    */
   sendInput(playerIndex, inputIndex, value) {
-    // Edge-trigger optimization: only send if value changed
-    const inputKey = `${playerIndex}-${inputIndex}`;
-    const lastValue = this.lastInputValues[inputKey];
-    if (lastValue === value) {
-      console.log("[InputSync] Skipping unchanged input:", { playerIndex, inputIndex, value });
-      return true; // Not an error, just no change
-    }
-    this.lastInputValues[inputKey] = value;
-
-    // Apply slot enforcement for clients
-    const actualPlayerIndex = this.getEffectivePlayerIndex(playerIndex);
-
     const isHost = this.sessionState?.isHostRole() || false;
 
     console.log("[InputSync] sendInput called:", {
-      requestedPlayerIndex: playerIndex,
-      actualPlayerIndex: actualPlayerIndex,
+      playerIndex,
       inputIndex,
       value,
       isHost
@@ -124,10 +109,10 @@ class InputSync {
 
     if (isHost) {
       // Host: Queue local input for processing
-      return this.controller.queueLocalInput(actualPlayerIndex, inputIndex, value);
+      return this.controller.queueLocalInput(playerIndex, inputIndex, value);
     } else {
       // Client: Send input to network
-      return this.controller.sendInput(actualPlayerIndex, inputIndex, value, this.sendInputCallback);
+      return this.controller.sendInput(playerIndex, inputIndex, value, this.sendInputCallback, this);
     }
   }
 
@@ -172,16 +157,26 @@ class InputSync {
   }
 
   /**
-   * Handle remote input data (deserialize and apply)
-   * @param {string|Object} inputData - Serialized input data from network
+   * Handle remote input data (deserialize if needed and apply)
+   * @param {string|Object|InputPayload} inputData - Serialized input data from network or InputPayload object
    * @param {string} fromSocketId - Source socket ID
    * @returns {boolean}
    */
   handleRemoteInput(inputData, fromSocketId = null) {
-    const payload = this.deserializeInput(inputData);
-    if (!payload) {
-      console.warn("[InputSync] Failed to deserialize remote input:", inputData);
-      return false;
+    let payload;
+
+    // Check if inputData is already an InputPayload object
+    if (inputData && typeof inputData.getFrame === 'function' && inputData.t === 'i') {
+      // Already deserialized InputPayload object
+      payload = inputData;
+      console.log("[InputSync] Received pre-deserialized InputPayload:", payload);
+    } else {
+      // Need to deserialize
+      payload = this.deserializeInput(inputData);
+      if (!payload) {
+        console.warn("[InputSync] Failed to deserialize remote input:", inputData);
+        return false;
+      }
     }
 
     console.log("[InputSync] Processing remote input:",
@@ -310,38 +305,18 @@ class InputSync {
   }
 
   /**
-   * Get effective player index (applies slot enforcement for clients).
-   * @param {number} requestedPlayerIndex - Requested player index
-   * @returns {number} Effective player index (0-3)
+   * Serialize input for network transmission (controller-agnostic).
+   * @param {number} playerIndex
+   * @param {number} inputIndex
+   * @param {number} value
+   * @returns {Object} Serialized input data
    */
-  getEffectivePlayerIndex(requestedPlayerIndex) {
-    let playerIndex = parseInt(requestedPlayerIndex, 10);
-    if (isNaN(playerIndex)) playerIndex = 0;
-    if (playerIndex < 0) playerIndex = 0;
-    if (playerIndex > 3) playerIndex = 3;
-
-    // Client slot enforcement: use the lobby-selected slot
-    const isHost = this.sessionState?.isHostRole() || false;
-    if (!isHost) {
-      // Check global slot preference first (updated when user changes slot in UI)
-      const globalPreferredSlot = typeof window.EJS_NETPLAY_PREFERRED_SLOT === "number" 
-        ? window.EJS_NETPLAY_PREFERRED_SLOT 
-        : null;
-      
-      const preferredSlot = globalPreferredSlot !== null ? globalPreferredSlot :
-                           this.config.preferredSlot || 
-                           this.sessionState?.localSlot || 
-                           0;
-      const slot = parseInt(preferredSlot, 10);
-      if (!isNaN(slot) && slot >= 0 && slot <= 3) {
-        if (playerIndex !== slot) {
-          console.log("[InputSync] Slot enforcement: requested playerIndex", playerIndex, "-> enforced slot", slot);
-        }
-        playerIndex = slot;
-      }
-    }
-
-    return playerIndex;
+  serializeInput(playerIndex, inputIndex, value) {
+    const targetFrame = this.currentFrame + this.frameDelay;
+    return {
+      frame: targetFrame,
+      connected_input: [playerIndex, inputIndex, value]
+    };
   }
 
   /**
@@ -350,7 +325,6 @@ class InputSync {
   reset() {
     this.controller.initializeFrames(0);
     this.inputQueue.clear();
-    this.lastInputValues = {};
   }
 
   /**

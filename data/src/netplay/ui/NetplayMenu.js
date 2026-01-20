@@ -879,7 +879,10 @@ class NetplayMenu {
 
     settingsContainer.appendChild(createSettingRow("Unordered Retries", unorderedRetriesSelect));
 
-    // Input Mode setting
+    // Input Mode setting - shows current active mode
+    const currentMode = this.engine?.dataChannelManager?.mode ||
+                       getSetting("netplayInputMode", "unorderedRelay");
+
     const inputModeSelect = createSelect(
       {
         unorderedRelay: "Unordered Relay",
@@ -887,11 +890,76 @@ class NetplayMenu {
         unorderedP2P: "Unordered P2P",
         orderedP2P: "Ordered P2P",
       },
-      getSetting("netplayInputMode", "unorderedRelay"),
-      (value) => saveSetting("netplayInputMode", value)
+      currentMode, // Use current active mode, not just saved setting
+      (value) => {
+        saveSetting("netplayInputMode", value);
+        // Trigger immediate mode switch for dynamic transport changes
+        if (this.engine?.dataChannelManager) {
+          console.log(`[NetplayMenu] 🔄 User changed input mode to ${value}, applying immediately`);
+
+          // Show visual feedback during switching
+          const selectedOption = inputModeSelect.options[inputModeSelect.selectedIndex];
+          const originalText = selectedOption.text;
+          selectedOption.text = `${originalText} (Switching...)`;
+          inputModeSelect.disabled = true;
+
+          this.netplayApplyInputMode("setting-change").finally(() => {
+            // Re-enable dropdown and update to show actual current mode
+            setTimeout(() => {
+              inputModeSelect.disabled = false;
+              selectedOption.text = originalText; // Restore original text
+
+              // Update dropdown to reflect the actual active mode
+              const activeMode = this.engine?.dataChannelManager?.mode;
+              if (activeMode && activeMode !== inputModeSelect.value) {
+                inputModeSelect.value = activeMode;
+                console.log(`[NetplayMenu] Updated dropdown to show active mode: ${activeMode}`);
+              }
+            }, 1500); // Allow time for mode switch to complete
+          });
+        }
+      }
     );
 
     settingsContainer.appendChild(createSettingRow("Input Mode", inputModeSelect));
+
+    // P2P Connectivity Test button
+    const testButton = this.createElement("button");
+    testButton.innerText = "Test P2P Connectivity";
+    testButton.className = "ejs_button";
+    testButton.onclick = () => {
+      if (this.engine?.testP2PConnectivity) {
+        console.log("[NetplayMenu] 🔬 Starting P2P connectivity test...");
+        this.engine.testP2PConnectivity().catch(err => {
+          console.error("[NetplayMenu] P2P connectivity test failed:", err);
+        });
+      } else {
+        console.warn("[NetplayMenu] P2P connectivity test not available - engine not ready");
+      }
+    };
+
+    // ICE Server Configuration Test button
+    const iceTestButton = this.createElement("button");
+    iceTestButton.innerText = "Test ICE Server Config";
+    iceTestButton.className = "ejs_button";
+    iceTestButton.onclick = () => {
+      if (this.engine?.testIceServerConfiguration) {
+        console.log("[NetplayMenu] 🧊 Starting ICE server configuration test...");
+        this.engine.testIceServerConfiguration().then(result => {
+          if (result) {
+            console.log("[NetplayMenu] ICE server test completed successfully:", result);
+          } else {
+            console.warn("[NetplayMenu] ICE server test failed or returned no results");
+          }
+        }).catch(err => {
+          console.error("[NetplayMenu] ICE server configuration test failed:", err);
+        });
+      } else {
+        console.warn("[NetplayMenu] ICE server test not available - engine not ready");
+      }
+    };
+    settingsContainer.appendChild(createSettingRow("P2P Test", testButton));
+    settingsContainer.appendChild(createSettingRow("ICE Config Test", iceTestButton));
 
     content.appendChild(settingsContainer);
 
@@ -3135,7 +3203,7 @@ class NetplayMenu {
    * Handle netplay setting changes (called from emulator.js).
    * @param {string} changeType - Type of change ("unordered-retries-change", "setting-change", etc.)
    */
-  netplayApplyInputMode(changeType) {
+  async netplayApplyInputMode(changeType) {
     console.log(`[NetplayMenu] 📝 Applying input mode change: ${changeType}`);
 
     if (changeType === "unordered-retries-change") {
@@ -3147,7 +3215,47 @@ class NetplayMenu {
       }
     } else if (changeType === "setting-change") {
       // Handle other setting changes, including input mode changes
+      console.log(`[NetplayMenu] 🔄 Applying live input mode change`);
       this.netplaySetupLiveStreamInputSync();
+
+      // Additional handling for dynamic P2P mode switching
+      const inputMode = this.emulator.getSettingValue("netplayInputMode") || "unorderedRelay";
+      const isHost = typeof window !== 'undefined' && window.EJS_netplay?.isHost;
+
+      // Clean up any stale P2P initiation state before attempting new connections
+      if (this.engine) {
+        console.log(`[NetplayMenu] Resetting P2P initiation state for mode switch to ${inputMode}`);
+        this.engine._p2pInitiating = false; // Reset the initiation flag
+      }
+
+      // If switching TO P2P mode mid-game, ensure P2P connections are established
+      if ((inputMode === "unorderedP2P" || inputMode === "orderedP2P")) {
+        console.log(`[NetplayMenu] 🌐 Switching to P2P mode ${inputMode}, ensuring connections are established`);
+
+        if (isHost) {
+          // Host: Set up P2P channels if not already done
+          if (this.engine?.netplaySetupP2PChannels) {
+            try {
+              await new Promise(resolve => setTimeout(resolve, 500));
+              console.log(`[NetplayMenu] Host re-establishing P2P channels for ${inputMode}`);
+              await this.engine.netplaySetupP2PChannels();
+            } catch (err) {
+              console.error("[NetplayMenu] Failed to re-establish host P2P channels:", err);
+            }
+          }
+        } else {
+          // Client: Initiate P2P connection if not already done
+          if (this.engine?.netplayInitiateP2PConnection) {
+            try {
+              await new Promise(resolve => setTimeout(resolve, 1000));
+              console.log(`[NetplayMenu] Client re-initiating P2P connection for ${inputMode}`);
+              await this.engine.netplayInitiateP2PConnection();
+            } catch (err) {
+              console.error("[NetplayMenu] Failed to re-initiate P2P connection:", err);
+            }
+          }
+        }
+      }
     }
   }
 

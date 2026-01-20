@@ -18,6 +18,9 @@ class SimpleController {
     this.inputsData = {};
     this.currentFrame = null;
     this.frameDelay = 20; // Default frame delay for input synchronization
+
+    // Edge-trigger optimization: track last known values to avoid sending unchanged inputs
+    this.lastInputValues = {}; // key: `${playerIndex}-${inputIndex}`, value: last sent value
   }
 
   /**
@@ -66,15 +69,27 @@ class SimpleController {
   }
 
   /**
-   * Queue local input for processing.
+   * Queue local input for processing (simple controller specific logic).
    * @param {number} playerIndex
    * @param {number} inputIndex
    * @param {number} value
    * @returns {boolean}
    */
   queueLocalInput(playerIndex, inputIndex, value) {
-    if (!this.validateInput({ playerIndex, inputIndex, value })) {
-      console.warn("[SimpleController] Invalid local input:", { playerIndex, inputIndex, value });
+    // Apply slot enforcement (simple controller specific)
+    const effectivePlayerIndex = this.getEffectivePlayerIndex(playerIndex);
+
+    // Edge-trigger optimization (simple controller specific)
+    const inputKey = `${effectivePlayerIndex}-${inputIndex}`;
+    const lastValue = this.lastInputValues[inputKey];
+    if (lastValue === value) {
+      console.log("[SimpleController] Skipping unchanged input:", { playerIndex: effectivePlayerIndex, inputIndex, value });
+      return true; // Not an error, just no change
+    }
+    this.lastInputValues[inputKey] = value;
+
+    if (!this.validateInput({ playerIndex: effectivePlayerIndex, inputIndex, value })) {
+      console.warn("[SimpleController] Invalid local input:", { playerIndex: effectivePlayerIndex, inputIndex, value });
       return false;
     }
 
@@ -87,18 +102,53 @@ class SimpleController {
 
     this.inputsData[currentFrame].push({
       frame: currentFrame,
-      connected_input: [playerIndex, inputIndex, value],
+      connected_input: [effectivePlayerIndex, inputIndex, value],
       fromRemote: false
     });
 
     console.log("[SimpleController] Queued local input:", {
       frame: currentFrame,
-      playerIndex,
+      playerIndex: effectivePlayerIndex,
       inputIndex,
       value
     });
 
     return true;
+  }
+
+  /**
+   * Apply effective player index with slot enforcement (simple controller specific).
+   * @param {number} requestedPlayerIndex - Requested player index
+   * @returns {number} Effective player index (0-3)
+   */
+  getEffectivePlayerIndex(requestedPlayerIndex) {
+    let playerIndex = parseInt(requestedPlayerIndex, 10);
+    if (isNaN(playerIndex)) playerIndex = 0;
+    if (playerIndex < 0) playerIndex = 0;
+    if (playerIndex > 3) playerIndex = 3;
+
+    // Client slot enforcement: use the lobby-selected slot
+    // This is specific to simple controller's player assignment model
+    const isHost = typeof window !== 'undefined' && window.EJS_netplay?.isHost;
+    if (!isHost) {
+      // Check global slot preference first (updated when user changes slot in UI)
+      const globalPreferredSlot = typeof window.EJS_NETPLAY_PREFERRED_SLOT === "number"
+        ? window.EJS_NETPLAY_PREFERRED_SLOT
+        : null;
+
+      const preferredSlot = globalPreferredSlot !== null ? globalPreferredSlot :
+                           (typeof window !== 'undefined' && window.EJS_netplay?.localSlot) ||
+                           0;
+      const slot = parseInt(preferredSlot, 10);
+      if (!isNaN(slot) && slot >= 0 && slot <= 3) {
+        if (playerIndex !== slot) {
+          console.log("[SimpleController] Slot enforcement: requested playerIndex", playerIndex, "-> enforced slot", slot);
+        }
+        playerIndex = slot;
+      }
+    }
+
+    return playerIndex;
   }
 
   /**
@@ -199,20 +249,35 @@ class SimpleController {
    * @param {Function} sendCallback
    * @returns {boolean}
    */
-  sendInput(playerIndex, inputIndex, value, sendCallback) {
-    if (!this.validateInput({ playerIndex, inputIndex, value })) {
+  sendInput(playerIndex, inputIndex, value, sendCallback, inputSync) {
+    // Apply slot enforcement (simple controller specific)
+    const effectivePlayerIndex = this.getEffectivePlayerIndex(playerIndex);
+
+    // Edge-trigger optimization (simple controller specific)
+    const inputKey = `${effectivePlayerIndex}-${inputIndex}`;
+    const lastValue = this.lastInputValues[inputKey];
+    if (lastValue === value) {
+      console.log("[SimpleController] Skipping unchanged input:", { playerIndex: effectivePlayerIndex, inputIndex, value });
+      return true; // Not an error, just no change
+    }
+    this.lastInputValues[inputKey] = value;
+
+    if (!this.validateInput({ playerIndex: effectivePlayerIndex, inputIndex, value })) {
       return false;
     }
 
-    const targetFrame = this.currentFrame + this.frameDelay;
+    console.log("[SimpleController] Sending input to network:", {
+      currentFrame: this.currentFrame,
+      playerIndex: effectivePlayerIndex,
+      inputIndex,
+      value
+    });
 
-    if (sendCallback) {
-      const inputData = {
-        frame: targetFrame,
-        connected_input: [playerIndex, inputIndex, value]
-      };
-      console.log("[SimpleController] Sending input to network:", inputData);
-      sendCallback(targetFrame, inputData);
+    if (sendCallback && inputSync) {
+      // Use InputSync's serialization (maintains frame delay logic)
+      const inputData = inputSync.serializeInput(effectivePlayerIndex, inputIndex, value);
+      console.log("[SimpleController] Sending input via callback:", inputData);
+      sendCallback(inputData.frame, inputData);
     }
 
     return true;

@@ -149,6 +149,75 @@ class SFUTransport {
   }
 
   /**
+   * Fetch ICE servers from the SFU server.
+   * @returns {Promise<Array>} Array of ICE server configurations
+   */
+  async getIceServers() {
+    console.log("[SFUTransport] Fetching ICE servers from SFU...");
+
+    if (!this.socket || !this.socket.isConnected()) {
+      console.warn("[SFUTransport] Cannot fetch ICE servers: Socket not connected");
+      return [];
+    }
+
+    try {
+      // Get the SFU base URL from the socket
+      const sfuUrl = this.socket?.serverUrl;
+      if (!sfuUrl) {
+        console.warn("[SFUTransport] Cannot fetch ICE servers: No SFU URL available");
+        return [];
+      }
+
+      // Extract the base URL (remove /socket.io/...)
+      const baseUrl = sfuUrl.replace(/\/socket\.io.*$/, '');
+
+      // Get auth token for the request
+      const token = this.socket?.authToken;
+      if (!token) {
+        console.warn("[SFUTransport] Cannot fetch ICE servers: No auth token available");
+        return [];
+      }
+
+      const iceEndpoint = `${baseUrl}/ice`;
+
+      console.log(`[SFUTransport] Fetching ICE servers from: ${iceEndpoint}`);
+
+      const response = await fetch(iceEndpoint, {
+        method: 'GET',
+        headers: {
+          'Authorization': `Bearer ${token}`,
+          'Content-Type': 'application/json'
+        }
+      });
+
+      if (!response.ok) {
+        console.warn(`[SFUTransport] ICE server fetch failed: ${response.status} ${response.statusText}`);
+        return [];
+      }
+
+      const data = await response.json();
+      console.log("[SFUTransport] Received ICE servers from SFU:", data);
+
+      // Store announced IP for future use if provided
+      if (data.announcedIp) {
+        console.log(`[SFUTransport] SFU provided announced IP: ${data.announcedIp}`);
+        this.announcedIp = data.announcedIp;
+      }
+
+      if (data && Array.isArray(data.iceServers)) {
+        console.log(`[SFUTransport] Successfully retrieved ${data.iceServers.length} ICE servers from SFU`);
+        return data.iceServers;
+      } else {
+        console.warn("[SFUTransport] Invalid ICE server response format:", data);
+        return [];
+      }
+    } catch (error) {
+      console.error("[SFUTransport] Error fetching ICE servers from SFU:", error);
+      return [];
+    }
+  }
+
+  /**
    * Pick video codec based on configuration and router capabilities.
    * @returns {Object|null} Selected codec or null
    */

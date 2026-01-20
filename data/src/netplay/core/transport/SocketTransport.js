@@ -21,6 +21,8 @@ class SocketTransport {
     this.connected = false;
     this.callbacks = config.callbacks || {};
     this.pendingListeners = []; // Queue listeners registered before socket connection
+    this.serverUrl = null; // Store the server URL for later access
+    this.authToken = null; // Store the auth token for later access
   }
 
   /**
@@ -49,6 +51,10 @@ class SocketTransport {
     while (url.endsWith("/")) {
       url = url.substring(0, url.length - 1);
     }
+
+    // Store the server URL and auth token for later access by other transports
+    this.serverUrl = url;
+    this.authToken = token;
 
     console.log("[SocketTransport] Initializing Socket.IO connection to:", url);
 

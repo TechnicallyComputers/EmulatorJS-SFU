@@ -289,14 +289,6 @@ getPlayerName() {
       this.roomManager.config.callbacks = this.config.callbacks;
       this.roomManager.setupEventListeners();
 
-      // 14. Input Sync (create callback for sending inputs)
-      const sendInputCallback = this.inputSync.createSendInputCallback(
-        this.dataChannelManager,
-        this.configManager,
-        this.emulator,
-        this.socketTransport
-      );
-
       // Create emulator adapter for InputSync
       const EmulatorJSAdapterClass =
         typeof EmulatorJSAdapter !== "undefined"
@@ -307,12 +299,24 @@ getPlayerName() {
 
       const emulatorAdapter = new EmulatorJSAdapterClass(this.emulator);
 
+      // 14. Input Sync (initialize first, then get callback)
       this.inputSync = new InputSync(
         emulatorAdapter,
         this.configManager?.loadConfig() || {},
         this.sessionState,
-        sendInputCallback
+        null // Will set callback after creation
       );
+
+      // Get the callback from InputSync
+      const sendInputCallback = this.inputSync.createSendInputCallback(
+        this.dataChannelManager,
+        this.configManager,
+        this.emulator,
+        this.socketTransport
+      );
+
+      // Set the callback on InputSync
+      this.inputSync.sendInputCallback = sendInputCallback;
 
       // Setup data channel input receiver
       if (this.dataChannelManager) {
@@ -2421,25 +2425,87 @@ getPlayerName() {
       return;
     }
 
-    // Use the host player ID as the target (server will resolve it)
-    const target = hostPlayerId;
-    console.log("[Netplay] Will send P2P offer to target:", target);
+    // Send to "host" - server will resolve to room owner
+    const target = "host";
+    console.log("[Netplay] Will send P2P offer to target:", target, "(resolved by server to room owner)");
 
     try {
       console.log("[Netplay] Initiating P2P connection to host...");
 
-      // Get ICE servers from config, fallback to multiple STUN + public TURN
-      const iceServers = this.configManager?.getSetting("netplayIceServers") || [
-        { urls: 'stun:stun.l.google.com:19302' },
-        { urls: 'stun:stun1.l.google.com:19302' },
-        { urls: 'stun:stun2.l.google.com:19302' },
-        // Public TURN servers (may have rate limits)
-        {
-          urls: 'turn:turn.anyfirewall.com:443?transport=tcp',
-          username: 'webrtc',
-          credential: 'webrtc'
+      // Get ICE servers - prioritize SFU-provided servers, then fall back to RomM config
+      let iceServers = [];
+
+      // First, try to get ICE servers from the SFU
+      console.log("[Netplay] Checking SFU transport availability:", {
+        hasSfuTransport: !!this.sfuTransport,
+        sfuTransportType: typeof this.sfuTransport,
+        sfuTransportInitialized: this.sfuTransport?.useSFU
+      });
+
+      if (this.sfuTransport) {
+        console.log("[Netplay] Attempting to fetch ICE servers from SFU...");
+        try {
+          const sfuIceServers = await this.sfuTransport.getIceServers();
+          console.log("[Netplay] SFU getIceServers() returned:", {
+            servers: sfuIceServers,
+            count: sfuIceServers?.length || 0,
+            isArray: Array.isArray(sfuIceServers)
+          });
+
+          if (sfuIceServers && sfuIceServers.length > 0) {
+            iceServers = [...sfuIceServers];
+            console.log(`[Netplay] ✅ Using ${iceServers.length} ICE servers from SFU:`, iceServers);
+          } else {
+            console.log("[Netplay] SFU returned no ICE servers, falling back to config");
+          }
+        } catch (error) {
+          console.warn("[Netplay] Failed to fetch ICE servers from SFU:", error);
+          console.warn("[Netplay] Error details:", {
+            message: error.message,
+            stack: error.stack,
+            name: error.name
+          });
         }
-      ];
+      } else {
+        console.log("[Netplay] No SFU transport available, skipping SFU ICE server fetch");
+      }
+
+      // If no SFU servers or SFU fetch failed, fall back to RomM config
+      if (iceServers.length === 0) {
+        const rommIceServers = this.configManager?.getSetting("netplayIceServers") ||
+                              this.configManager?.getSetting("netplayICEServers") ||
+                              this.config?.netplayICEServers ||
+                              window.EJS_netplayICEServers;
+
+        if (rommIceServers && Array.isArray(rommIceServers) && rommIceServers.length > 0) {
+          iceServers = [...rommIceServers];
+          console.log(`[Netplay] ✅ Using ${iceServers.length} ICE servers from RomM config`);
+        } else {
+          console.log("[Netplay] No RomM ICE servers configured, falling back to public servers");
+        }
+      }
+
+      // Final fallback to public STUN/TURN servers if nothing else is available
+      if (iceServers.length === 0) {
+        iceServers = [
+          { urls: 'stun:stun.l.google.com:19302' },
+          { urls: 'stun:stun1.l.google.com:19302' },
+          { urls: 'stun:stun2.l.google.com:19302' },
+          // Public TURN servers (may have rate limits)
+          {
+            urls: 'turn:turn.anyfirewall.com:443?transport=tcp',
+            username: 'webrtc',
+            credential: 'webrtc'
+          }
+        ];
+        console.log("[Netplay] ⚠️ Using public STUN/TURN servers as final fallback");
+      }
+
+      // Log ICE server configuration for debugging
+      console.log("[Netplay] 🎯 Using ICE servers for P2P:", JSON.stringify(iceServers, null, 2));
+      const stunCount = iceServers.filter(s => s.urls && (Array.isArray(s.urls) ? s.urls : [s.urls]).some(u => u.startsWith('stun:'))).length;
+      const turnCount = iceServers.filter(s => s.urls && (Array.isArray(s.urls) ? s.urls : [s.urls]).some(u => u.startsWith('turn:'))).length;
+      console.log(`[Netplay] 📊 ICE server summary: ${stunCount} STUN, ${turnCount} TURN servers configured`);
 
       // Get unordered retries setting
       const unorderedRetries = this.configManager?.getSetting("netplayUnorderedRetries") || 0;
@@ -2477,31 +2543,36 @@ getPlayerName() {
 
       pc.onicecandidate = (event) => {
         if (event.candidate) {
-          console.log(`[Netplay] P2P ICE candidate (${target}): ${event.candidate.type} ${event.candidate.protocol}:${event.candidate.port}`);
+          console.log(`[Netplay] P2P ICE candidate (${target}): ${event.candidate.type} ${event.candidate.protocol}:${event.candidate.port} priority:${event.candidate.priority}`);
         } else {
-          console.log(`[Netplay] P2P ICE candidate gathering complete (${target})`);
+          console.log(`[Netplay] P2P ICE candidate gathering complete (${target}) - gathered ${pc.localDescription?.sdp?.split('\n').filter(line => line.startsWith('a=candidate')).length || 0} candidates`);
         }
       };
 
       pc.onconnectionstatechange = () => {
         console.log(`[Netplay] P2P connection state (${target}): ${pc.connectionState}`);
+        if (pc.connectionState === 'connected' || pc.connectionState === 'completed') {
+          console.log(`[Netplay] ✅ P2P connection established with ${target}`);
+        } else if (pc.connectionState === 'failed' || pc.connectionState === 'disconnected') {
+          console.warn(`[Netplay] ⚠️ P2P connection ${pc.connectionState} with ${target}`);
+        }
       };
 
-      // Set timeout for connection establishment
+      // Set timeout for connection establishment (longer for local networks)
       connectionTimeout = setTimeout(() => {
         if (pc.connectionState !== 'connected' && pc.connectionState !== 'completed') {
           console.error(`[Netplay] ❌ P2P connection timeout with ${target} - falling back to relay mode`);
           pc.close();
           this.handleP2PFallback(target);
         }
-      }, 15000); // 15 second timeout
+      }, 30000); // 30 second timeout for local networks
 
-      // Set timeout for ICE gathering
+      // Set timeout for ICE gathering (increased for coturn servers)
       iceGatheringTimeout = setTimeout(() => {
         if (pc.iceGatheringState !== 'complete') {
-          console.warn(`[Netplay] ⚠️ P2P ICE gathering timeout with ${target}`);
+          console.warn(`[Netplay] ⚠️ P2P ICE gathering timeout with ${target} - gathered ${pc.localDescription?.sdp?.split('\n').filter(line => line.startsWith('a=candidate')).length || 0} candidates`);
         }
-      }, 5000); // 5 second timeout
+      }, 10000); // 10 second timeout for ICE gathering
 
       // Create data channels as offerer (client creates channels, host receives them)
       console.log(`[Netplay] Creating data channels for P2P connection`);
@@ -2725,56 +2796,334 @@ getPlayerName() {
   }
 
   /**
-   * Test P2P connectivity and log diagnostics
+   * Test P2P connectivity and log comprehensive diagnostics
    */
   async testP2PConnectivity() {
-    console.log("[Netplay] 🔍 Testing P2P connectivity...");
+    console.log("[Netplay] 🔍 Testing P2P connectivity and ICE server configuration...");
 
     try {
-      // Test ICE servers
-      const iceServers = this.configManager?.getSetting("netplayIceServers") || [
-        { urls: 'stun:stun.l.google.com:19302' },
-        { urls: 'stun:stun1.l.google.com:19302' },
-        { urls: 'stun:stun2.l.google.com:19302' }
-      ];
+      // Test all possible ICE server sources
+      const iceSources = {
+        configManager_netplayIceServers: this.configManager?.getSetting("netplayIceServers"),
+        configManager_netplayICEServers: this.configManager?.getSetting("netplayICEServers"),
+        config_netplayICEServers: this.config?.netplayICEServers,
+        window_EJS_netplayICEServers: window.EJS_netplayICEServers
+      };
 
-      console.log(`[Netplay] Testing ICE servers:`, iceServers);
+      console.log("[Netplay] 🔧 ICE server configuration sources:", iceSources);
+
+      // Also test SFU ICE servers if available
+      let sfuIceServers = [];
+      if (this.sfuTransport) {
+        console.log("[Netplay] Testing SFU ICE server availability...");
+        try {
+          sfuIceServers = await this.sfuTransport.getIceServers();
+          console.log(`[Netplay] SFU provided ${sfuIceServers.length} ICE servers:`, sfuIceServers);
+        } catch (sfuError) {
+          console.warn("[Netplay] Failed to fetch ICE servers from SFU:", sfuError);
+        }
+      } else {
+        console.log("[Netplay] No SFU transport available for ICE server testing");
+      }
+
+      // Determine which source is being used (same logic as in P2P initiation)
+      let iceServers = [];
+
+      // First, use SFU servers if available
+      if (sfuIceServers && sfuIceServers.length > 0) {
+        iceServers = [...sfuIceServers];
+        console.log(`[Netplay] Test will use ${iceServers.length} ICE servers from SFU`);
+      } else {
+        // Fall back to RomM config
+        const rommIceServers = iceSources.configManager_netplayIceServers ||
+                              iceSources.configManager_netplayICEServers ||
+                              iceSources.config_netplayICEServers ||
+                              iceSources.window_EJS_netplayICEServers;
+
+        if (rommIceServers && Array.isArray(rommIceServers) && rommIceServers.length > 0) {
+          iceServers = [...rommIceServers];
+          console.log(`[Netplay] Test will use ${iceServers.length} ICE servers from RomM config`);
+        } else {
+          iceServers = [
+            { urls: 'stun:stun.l.google.com:19302' },
+            { urls: 'stun:stun1.l.google.com:19302' },
+            { urls: 'stun:stun2.l.google.com:19302' }
+          ];
+          console.log("[Netplay] Test will use public STUN servers as final fallback");
+        }
+      }
+
+      console.log(`[Netplay] 🎯 Using ICE servers:`, JSON.stringify(iceServers, null, 2));
+
+      // Analyze ICE server configuration
+      const stunServers = [];
+      const turnServers = [];
+      iceServers.forEach(server => {
+        if (server.urls) {
+          const urls = Array.isArray(server.urls) ? server.urls : [server.urls];
+          urls.forEach(url => {
+            if (url.startsWith('stun:')) {
+              stunServers.push(url);
+            } else if (url.startsWith('turn:')) {
+              turnServers.push({ url, username: server.username, credential: server.credential });
+            }
+          });
+        }
+      });
+
+      console.log(`[Netplay] 📡 STUN servers found: ${stunServers.length}`, stunServers);
+      console.log(`[Netplay] 🔄 TURN servers found: ${turnServers.length}`, turnServers.map(t => `${t.url} (${t.username ? 'auth' : 'no-auth'})`));
+
+      if (turnServers.length === 0) {
+        console.warn("[Netplay] ⚠️ No TURN servers configured - P2P may fail for clients behind NAT/firewalls");
+      }
 
       // Create test RTCPeerConnection
-      const testPC = new RTCPeerConnection({ iceServers });
+      const testPC = new RTCPeerConnection({
+        iceServers,
+        iceTransportPolicy: 'all',
+        bundlePolicy: 'balanced',
+        rtcpMuxPolicy: 'require'
+      });
+
+      let candidateCount = 0;
+      let stunCandidates = 0;
+      let turnCandidates = 0;
+      let hostCandidates = 0;
 
       testPC.onicecandidate = (event) => {
         if (event.candidate) {
-          console.log(`[Netplay] ✅ ICE candidate found: ${event.candidate.type} ${event.candidate.protocol}:${event.candidate.port}`);
+          candidateCount++;
+          const type = event.candidate.type;
+          if (type === 'srflx') stunCandidates++;
+          else if (type === 'relay') turnCandidates++;
+          else if (type === 'host') hostCandidates++;
+
+          console.log(`[Netplay] 🎯 ICE candidate ${candidateCount}: ${type} ${event.candidate.protocol}:${event.candidate.port} (${event.candidate.address})`);
+        } else {
+          console.log(`[Netplay] ✅ ICE gathering complete - Total candidates: ${candidateCount} (Host: ${hostCandidates}, STUN: ${stunCandidates}, TURN: ${turnCandidates})`);
         }
       };
 
       testPC.onicegatheringstatechange = () => {
-        console.log(`[Netplay] ICE gathering state: ${testPC.iceGatheringState}`);
+        console.log(`[Netplay] 🔄 ICE gathering state: ${testPC.iceGatheringState}`);
+        if (testPC.iceGatheringState === 'complete') {
+          console.log(`[Netplay] 📊 Final candidate summary: ${candidateCount} total (${hostCandidates} host, ${stunCandidates} STUN, ${turnCandidates} TURN)`);
+        }
       };
 
       testPC.oniceconnectionstatechange = () => {
-        console.log(`[Netplay] ICE connection state: ${testPC.iceConnectionState}`);
+        console.log(`[Netplay] 🔗 ICE connection state: ${testPC.iceConnectionState}`);
       };
 
       // Create data channel to trigger ICE
-      const testChannel = testPC.createDataChannel('test');
-      console.log(`[Netplay] Created test data channel: ${testChannel.readyState}`);
+      const testChannel = testPC.createDataChannel('test-connectivity');
+      console.log(`[Netplay] 📺 Created test data channel: ${testChannel.readyState}`);
 
       // Create offer to start ICE process
+      console.log("[Netplay] 📤 Creating offer to trigger ICE gathering...");
       const offer = await testPC.createOffer();
       await testPC.setLocalDescription(offer);
 
-      console.log("[Netplay] ✅ P2P connectivity test initiated - check ICE candidate logs above");
+      console.log("[Netplay] ✅ P2P connectivity test initiated - monitoring ICE for 15 seconds");
 
-      // Clean up after 10 seconds
+      // Clean up after 15 seconds
       setTimeout(() => {
+        const finalState = {
+          gatheringState: testPC.iceGatheringState,
+          connectionState: testPC.iceConnectionState,
+          candidatesFound: candidateCount,
+          hostCandidates,
+          stunCandidates,
+          turnCandidates
+        };
+
         testPC.close();
-        console.log("[Netplay] 🧹 P2P connectivity test completed");
-      }, 10000);
+        console.log("[Netplay] 🧹 P2P connectivity test completed:", finalState);
+
+        // Provide recommendations
+        if (turnCandidates === 0 && iceServers.some(s => s.urls && (Array.isArray(s.urls) ? s.urls : [s.urls]).some(u => u.startsWith('turn:')))) {
+          console.warn("[Netplay] ⚠️ TURN servers configured but no relay candidates found - check TURN server credentials and connectivity");
+        }
+        if (stunCandidates === 0 && stunServers.length > 0) {
+          console.warn("[Netplay] ⚠️ STUN servers configured but no server reflexive candidates found - check STUN server connectivity");
+        }
+        if (candidateCount === hostCandidates) {
+          console.warn("[Netplay] ⚠️ Only host candidates found - this suggests NAT/firewall issues that may prevent P2P connectivity");
+        }
+      }, 15000);
 
     } catch (error) {
       console.error("[Netplay] ❌ P2P connectivity test failed:", error);
+    }
+  }
+
+  /**
+   * Test ICE server configuration and STUN negotiation.
+   * This method verifies that ICE servers are properly configured and accessible.
+   */
+  async testIceServerConfiguration() {
+    console.log("[Netplay] 🔍 Testing ICE server configuration and STUN negotiation...");
+
+    try {
+      // Test SFU /ice endpoint directly
+      console.log("[Netplay] 📡 Testing SFU /ice endpoint directly...");
+      if (this.socket?.serverUrl) {
+        const baseUrl = this.socket.serverUrl.replace(/\/socket\.io.*$/, '');
+        const iceEndpoint = `${baseUrl}/ice`;
+        const token = this.socket?.authToken;
+
+        console.log("[Netplay] Direct /ice endpoint test:", {
+          endpoint: iceEndpoint,
+          hasToken: !!token,
+          tokenPreview: token ? `${token.substring(0, 20)}...` : 'none'
+        });
+
+        try {
+          const response = await fetch(iceEndpoint, {
+            method: 'GET',
+            headers: {
+              'Authorization': `Bearer ${token}`,
+              'Content-Type': 'application/json'
+            }
+          });
+
+          console.log("[Netplay] /ice endpoint response:", {
+            status: response.status,
+            statusText: response.statusText,
+            ok: response.ok
+          });
+
+          if (response.ok) {
+            const data = await response.json();
+            console.log("[Netplay] /ice endpoint returned data:", data);
+          } else {
+            const text = await response.text();
+            console.error("[Netplay] /ice endpoint error response:", text);
+          }
+        } catch (fetchError) {
+          console.error("[Netplay] Direct /ice endpoint fetch failed:", fetchError);
+        }
+      } else {
+        console.warn("[Netplay] No socket available for direct /ice endpoint test");
+      }
+
+      // Test SFU ICE server fetching
+      console.log("[Netplay] 📡 Testing SFU ICE server endpoint via SFUTransport...");
+      let sfuIceServers = [];
+      if (this.sfuTransport) {
+        try {
+          sfuIceServers = await this.sfuTransport.getIceServers();
+          console.log(`[Netplay] ✅ SFU returned ${sfuIceServers.length} ICE servers:`, sfuIceServers);
+        } catch (error) {
+          console.error("[Netplay] ❌ Failed to fetch ICE servers from SFU:", error);
+        }
+      } else {
+        console.warn("[Netplay] ⚠️ No SFU transport available - cannot test SFU ICE servers");
+      }
+
+      // Test RomM config ICE servers
+      console.log("[Netplay] 🔧 Testing RomM ICE server configuration...");
+      const rommIceServers = this.configManager?.getSetting("netplayIceServers") ||
+                            this.configManager?.getSetting("netplayICEServers") ||
+                            this.config?.netplayICEServers ||
+                            window.EJS_netplayICEServers;
+
+      if (rommIceServers && Array.isArray(rommIceServers) && rommIceServers.length > 0) {
+        console.log(`[Netplay] ✅ RomM config has ${rommIceServers.length} ICE servers:`, rommIceServers);
+      } else {
+        console.warn("[Netplay] ⚠️ No ICE servers configured in RomM");
+      }
+
+      // Determine final ICE server list (same logic as P2P initiation)
+      let finalIceServers = [];
+      if (sfuIceServers && sfuIceServers.length > 0) {
+        finalIceServers = [...sfuIceServers];
+        console.log(`[Netplay] 🎯 Will use ${finalIceServers.length} ICE servers from SFU (preferred)`);
+      } else if (rommIceServers && Array.isArray(rommIceServers) && rommIceServers.length > 0) {
+        finalIceServers = [...rommIceServers];
+        console.log(`[Netplay] 🎯 Will use ${finalIceServers.length} ICE servers from RomM config`);
+      } else {
+        finalIceServers = [
+          { urls: 'stun:stun.l.google.com:19302' },
+          { urls: 'stun:stun1.l.google.com:19302' },
+          { urls: 'stun:stun2.l.google.com:19302' }
+        ];
+        console.warn("[Netplay] ⚠️ Will use public STUN servers as fallback");
+      }
+
+      // Analyze ICE server types
+      const stunServers = finalIceServers.filter(s => {
+        const urls = Array.isArray(s.urls) ? s.urls : [s.urls];
+        return urls.some(url => url.startsWith('stun:') || url.startsWith('stuns:'));
+      });
+
+      const turnServers = finalIceServers.filter(s => {
+        const urls = Array.isArray(s.urls) ? s.urls : [s.urls];
+        return urls.some(url => url.startsWith('turn:') || url.startsWith('turns:'));
+      });
+
+      console.log(`[Netplay] 📊 Final ICE server analysis:`);
+      console.log(`  - STUN servers: ${stunServers.length}`);
+      console.log(`  - TURN servers: ${turnServers.length}`);
+
+      if (turnServers.length === 0) {
+        console.warn("[Netplay] ⚠️ No TURN servers configured - P2P may fail for clients behind NAT/firewalls");
+      }
+
+      // Test STUN server reachability (basic connectivity test)
+      console.log("[Netplay] 🌐 Testing STUN server reachability...");
+      for (const server of stunServers.slice(0, 2)) { // Test first 2 STUN servers
+        const urls = Array.isArray(server.urls) ? server.urls : [server.urls];
+        for (const url of urls) {
+          if (url.startsWith('stun:') || url.startsWith('stuns:')) {
+            try {
+              // Create a minimal RTCPeerConnection just to test STUN reachability
+              const testPC = new RTCPeerConnection({
+                iceServers: [{ urls: url }]
+              });
+
+              let stunReachable = false;
+              testPC.onicecandidate = (event) => {
+                if (event.candidate && event.candidate.type === 'srflx') {
+                  stunReachable = true;
+                  console.log(`[Netplay] ✅ STUN server ${url} is reachable (got server-reflexive candidate)`);
+                  testPC.close();
+                }
+              };
+
+              // Create a dummy offer to trigger ICE
+              const offer = await testPC.createOffer();
+              await testPC.setLocalDescription(offer);
+
+              // Wait a bit for ICE candidates
+              await new Promise(resolve => setTimeout(resolve, 3000));
+              testPC.close();
+
+              if (!stunReachable) {
+                console.warn(`[Netplay] ⚠️ STUN server ${url} may not be reachable (no server-reflexive candidate received)`);
+              }
+            } catch (error) {
+              console.error(`[Netplay] ❌ Error testing STUN server ${url}:`, error);
+            }
+            break; // Only test first URL for each server
+          }
+        }
+      }
+
+      console.log("[Netplay] ✅ ICE server configuration test completed");
+
+      return {
+        sfuIceServers,
+        rommIceServers,
+        finalIceServers,
+        stunCount: stunServers.length,
+        turnCount: turnServers.length
+      };
+
+    } catch (error) {
+      console.error("[Netplay] ❌ ICE server configuration test failed:", error);
+      return null;
     }
   }
 
@@ -2814,8 +3163,11 @@ getPlayerName() {
             if (offer) {
               console.log(`[Netplay] Received WebRTC offer from ${sender}, creating answer...`);
               
-              // Get ICE servers from config, fallback to multiple STUN + public TURN
-              const iceServers = this.configManager?.getSetting("netplayIceServers") || [
+              // Get ICE servers from config, check both lowercase and uppercase variants
+              const iceServers = this.configManager?.getSetting("netplayIceServers") ||
+                                this.configManager?.getSetting("netplayICEServers") ||
+                                this.config?.netplayICEServers ||
+                                window.EJS_netplayICEServers || [
                 { urls: 'stun:stun.l.google.com:19302' },
                 { urls: 'stun:stun1.l.google.com:19302' },
                 { urls: 'stun:stun2.l.google.com:19302' },
@@ -2826,6 +3178,12 @@ getPlayerName() {
                   credential: 'webrtc'
                 }
               ];
+
+              // Log ICE server configuration for debugging
+              console.log("[Netplay] 🎯 Host using ICE servers for P2P:", JSON.stringify(iceServers, null, 2));
+              const stunCount = iceServers.filter(s => s.urls && (Array.isArray(s.urls) ? s.urls : [s.urls]).some(u => u.startsWith('stun:'))).length;
+              const turnCount = iceServers.filter(s => s.urls && (Array.isArray(s.urls) ? s.urls : [s.urls]).some(u => u.startsWith('turn:'))).length;
+              console.log(`[Netplay] 📊 Host ICE server summary: ${stunCount} STUN, ${turnCount} TURN servers configured`);
 
               // Create RTCPeerConnection for P2P data channels
               const pc = new RTCPeerConnection({
@@ -2860,31 +3218,36 @@ getPlayerName() {
 
               pc.onicecandidate = (event) => {
                 if (event.candidate) {
-                  console.log(`[Netplay] Host P2P ICE candidate (${sender}): ${event.candidate.type} ${event.candidate.protocol}:${event.candidate.port}`);
+                  console.log(`[Netplay] Host P2P ICE candidate (${sender}): ${event.candidate.type} ${event.candidate.protocol}:${event.candidate.port} priority:${event.candidate.priority}`);
                 } else {
-                  console.log(`[Netplay] Host P2P ICE candidate gathering complete (${sender})`);
+                  console.log(`[Netplay] Host P2P ICE candidate gathering complete (${sender}) - gathered ${pc.localDescription?.sdp?.split('\n').filter(line => line.startsWith('a=candidate')).length || 0} candidates`);
                 }
               };
 
               pc.onconnectionstatechange = () => {
                 console.log(`[Netplay] Host P2P connection state (${sender}): ${pc.connectionState}`);
+                if (pc.connectionState === 'connected' || pc.connectionState === 'completed') {
+                  console.log(`[Netplay] ✅ Host P2P connection established with ${sender}`);
+                } else if (pc.connectionState === 'failed' || pc.connectionState === 'disconnected') {
+                  console.warn(`[Netplay] ⚠️ Host P2P connection ${pc.connectionState} with ${sender}`);
+                }
               };
 
-              // Set timeout for connection establishment
+              // Set timeout for connection establishment (longer for local networks)
               connectionTimeout = setTimeout(() => {
                 if (pc.connectionState !== 'connected' && pc.connectionState !== 'completed') {
                   console.error(`[Netplay] ❌ Host P2P connection timeout with ${sender} - falling back to relay mode`);
                   pc.close();
                   this.handleP2PFallback(sender);
                 }
-              }, 15000); // 15 second timeout
+              }, 30000); // 30 second timeout for local networks
 
-              // Set timeout for ICE gathering
+              // Set timeout for ICE gathering (increased for coturn servers)
               iceGatheringTimeout = setTimeout(() => {
                 if (pc.iceGatheringState !== 'complete') {
-                  console.warn(`[Netplay] ⚠️ Host P2P ICE gathering timeout with ${sender}`);
+                  console.warn(`[Netplay] ⚠️ Host P2P ICE gathering timeout with ${sender} - gathered ${pc.localDescription?.sdp?.split('\n').filter(line => line.startsWith('a=candidate')).length || 0} candidates`);
                 }
-              }, 5000); // 5 second timeout
+              }, 10000); // 10 second timeout for ICE gathering
 
               // Host receives data channels created by client (offerer)
               // Set up event handler to receive channels from client
