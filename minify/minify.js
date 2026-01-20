@@ -102,9 +102,14 @@ async function doMinify() {
     console.log(`[Minify] SFUTransport exists: ${fs.existsSync(sfuFile)}`);
   }
 
-  // Minify with terser - disable compression to debug
+  // Minify with terser - minimal processing to preserve our changes
   const terserOptions = {
-    compress: false, // Disable compression entirely
+    compress: {
+      dead_code: false, // Don't remove dead code
+      unused: false, // Don't remove unused code
+      drop_debugger: false,
+      drop_console: false,
+    },
     format: {
       comments: false,
     },

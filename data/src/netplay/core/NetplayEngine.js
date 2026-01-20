@@ -247,6 +247,7 @@ getPlayerName() {
         this.configManager?.getSetting("inputMode") ||
         this.config.inputMode ||
         "orderedRelay";
+      console.log("[NetplayEngine] 🎮 Initializing DataChannelManager with mode:", inputMode);
       this.dataChannelManager = new DataChannelManager({
         mode: inputMode,
       });
@@ -308,18 +309,19 @@ getPlayerName() {
 
         if (this.dataChannelManager && this.dataChannelManager.isReady()) {
           // Use data channel (for SFU relay modes)
+          const slot = this.emulator?.netplay?.localSlot || 0;
           if (Array.isArray(inputData)) {
             // Multiple inputs to send
             inputData.forEach((data) => {
               if (data.connected_input && data.connected_input.length === 3) {
                 const [playerIndex, inputIndex, value] = data.connected_input;
-                this.dataChannelManager.sendInput(playerIndex, inputIndex, value);
+                this.dataChannelManager.sendInput(playerIndex, inputIndex, value, frame, slot);
               }
             });
           } else if (inputData.connected_input && inputData.connected_input.length === 3) {
             // Single input
             const [playerIndex, inputIndex, value] = inputData.connected_input;
-            this.dataChannelManager.sendInput(playerIndex, inputIndex, value);
+            this.dataChannelManager.sendInput(playerIndex, inputIndex, value, frame, slot);
           }
         } else if (this.socketTransport && this.socketTransport.isConnected()) {
           // Fallback to Socket.IO "sync-control" message
@@ -357,9 +359,20 @@ getPlayerName() {
         console.log('[NetplayEngine] Setting up DataChannelManager input receiver');
         this.dataChannelManager.onInput((playerIndex, inputIndex, value, fromSocketId) => {
           console.log('[NetplayEngine] Received input from DataChannelManager:', { playerIndex, inputIndex, value, fromSocketId });
-          // Receive input from data channel
+
+          const isHost = this.sessionState?.isHostRole() || false;
           const frame = this.frameCounter?.getCurrentFrame() || 0;
-          this.inputSync.receiveInput(frame, [playerIndex, inputIndex, value], fromSocketId);
+
+          if (isHost) {
+            // Host: Store input for frame processing (delay-sync mode)
+            this.inputSync.receiveInput(frame, [playerIndex, inputIndex, value], fromSocketId);
+          } else {
+            // Client (delay-sync mode): DO NOT apply inputs locally
+            // Clients only receive video/audio streams from host
+            // All input simulation is handled by host only
+            console.log(`[NetplayEngine] Client received input (not applying locally): player ${playerIndex}, input ${inputIndex}, value ${value}`);
+            console.log(`[NetplayEngine] Client in delay-sync mode - inputs only simulated by host`);
+          }
         });
       } else {
         console.warn('[NetplayEngine] DataChannelManager not available for input receiver setup');
@@ -475,24 +488,35 @@ getPlayerName() {
   handleDataMessage(data) {
     // Handle sync-control inputs
     if (data["sync-control"]) {
+      const isHost = this.sessionState?.isHostRole() || false;
+
       data["sync-control"].forEach((value) => {
         const inFrame = parseInt(value.frame, 10);
         if (!value.connected_input || value.connected_input[0] < 0) return;
 
-        // Receive input via InputSync
-        this.inputSync.receiveInput(
-          inFrame,
-          value.connected_input,
-          value.fromPlayerId || null
-        );
+        if (isHost) {
+          // Host: Queue input for frame processing
+          this.inputSync.receiveInput(
+            inFrame,
+            value.connected_input,
+            value.fromPlayerId || null
+          );
+        } else {
+          // Client (live stream mode): Apply input immediately
+          const [playerIndex, inputIndex, inputValue] = value.connected_input;
+          console.log(`[NetplayEngine] Client applying socket input immediately: player ${playerIndex}, input ${inputIndex}, value ${inputValue}`);
+          try {
+            this.emulator.simulateInput(playerIndex, inputIndex, inputValue);
+            console.log(`[NetplayEngine] ✅ Socket input applied successfully to emulator`);
+          } catch (error) {
+            console.error(`[NetplayEngine] ❌ Failed to apply socket input to emulator:`, error);
+          }
+        }
 
         // Send frame acknowledgment
         if (this.socketTransport) {
           this.socketTransport.sendFrameAck(inFrame);
         }
-
-        // If host, apply input immediately (InputSync will handle this via processFrameInputs)
-        // Note: Actual input application happens in processFrameInputs() called from emulator frame loop
       });
     }
 
@@ -516,10 +540,22 @@ getPlayerName() {
       const emulatorFrame = this.emulator.getCurrentFrame();
       this.frameCounter.setCurrentFrame(emulatorFrame);
       this.inputSync.updateCurrentFrame(emulatorFrame);
+
+      // Debug: Check if we have queued inputs for this frame
+      const queuedInputs = this.inputSync.inputsData[emulatorFrame];
+      if (queuedInputs && queuedInputs.length > 0) {
+        console.log(`[NetplayEngine] Processing ${queuedInputs.length} queued inputs for frame ${emulatorFrame}`);
+      }
     }
 
     // Process inputs for current frame
-    return this.inputSync.processFrameInputs();
+    const processedInputs = this.inputSync.processFrameInputs();
+
+    if (processedInputs && processedInputs.length > 0) {
+      console.log(`[NetplayEngine] Processed ${processedInputs.length} inputs for frame processing`);
+    }
+
+    return processedInputs;
   }
 
   /**
@@ -1548,6 +1584,29 @@ getPlayerName() {
                   console.error("[Netplay] Failed to setup data producers:", err);
                 });
               }, 1500);
+
+              // Check if P2P mode is enabled and initiate P2P connection
+              // First check emulator settings, then configManager, then DataChannelManager mode
+              const emulatorInputMode = this.emulator?.getSettingValue?.("netplayInputMode") ||
+                                       this.emulator?.netplayInputMode;
+              const configInputMode = this.configManager?.getSetting("netplayInputMode");
+              const dataChannelMode = this.dataChannelManager?.mode;
+              const inputMode = emulatorInputMode || configInputMode || dataChannelMode || this.config.inputMode || "orderedRelay";
+
+              console.log(`[Netplay] P2P mode check: emulator=${emulatorInputMode}, config=${configInputMode}, dataChannel=${dataChannelMode}, final=${inputMode}`);
+
+              console.log(`[Netplay] Client checking P2P setup: mode=${inputMode}, hasSlot=${hasPlayerSlot}`);
+
+              if ((inputMode === "unorderedP2P" || inputMode === "orderedP2P") && hasPlayerSlot) {
+                console.log(`[Netplay] Client input mode is ${inputMode}, initiating P2P connection to host...`);
+                setTimeout(() => {
+                  this.netplayInitiateP2PConnection().catch(err => {
+                    console.error("[Netplay] Failed to initiate P2P connection:", err);
+                  });
+                }, 2000);
+              } else {
+                console.log(`[Netplay] Client not setting up P2P: mode=${inputMode}, hasSlot=${hasPlayerSlot}`);
+              }
             } else {
               console.log("[Netplay] Client has no player slot assigned - spectator mode");
             }
@@ -2135,6 +2194,7 @@ getPlayerName() {
       if (inputMode === "unorderedP2P" || inputMode === "orderedP2P") {
         console.log(`[Netplay] Input mode is ${inputMode}, setting up P2P data channels...`);
         await this.netplaySetupP2PChannels();
+        console.log(`[Netplay] P2P setup complete, checking channels:`, this.dataChannelManager?.p2pChannels?.size || 0);
       }
 
     } catch (error) {
@@ -2161,7 +2221,8 @@ getPlayerName() {
       } else {
         await this.initializeClientTransports(); // Creates recv for client
         // Clients also need send transport for data producers
-        await this.initializeSendTransport();
+        console.log("[Netplay] Creating send transport for client data producers");
+        await this.sfuTransport.createSendTransport('data');
       }
 
       // Create data producer for input synchronization
@@ -2259,6 +2320,292 @@ getPlayerName() {
     }
   }
 
+  // Client-side P2P connection initiation for unorderedP2P/orderedP2P modes
+  async netplayInitiateP2PConnection() {
+    console.log("[Netplay] 🔗 netplayInitiateP2PConnection called");
+
+    // Prevent duplicate P2P initiations
+    if (this._p2pInitiating) {
+      console.log("[Netplay] P2P initiation already in progress, skipping");
+      return;
+    }
+    this._p2pInitiating = true;
+
+    if (!this.socketTransport || this.sessionState?.isHostRole()) {
+      console.log("[Netplay] Not a client or no socket transport, skipping P2P initiation");
+      this._p2pInitiating = false;
+      return;
+    }
+
+    console.log("[Netplay] ✅ Client starting P2P connection initiation");
+
+    // Find the host's player ID (first player in the room, usually the one with the earliest join time)
+    let hostPlayerId = null;
+
+    // Try multiple sources for player data
+    let players = null;
+
+    // Source 1: currentRoom.players
+    if (this.emulator?.netplay?.currentRoom?.players) {
+      players = this.emulator.netplay.currentRoom.players;
+      console.log("[Netplay] Using players from currentRoom:", Object.keys(players));
+    }
+    // Source 2: NetplayMenu.joinedPlayers
+    else if (this.emulator?.netplayMenu?.netplay?.joinedPlayers) {
+      // Convert joinedPlayers array back to object format
+      players = {};
+      this.emulator.netplayMenu.netplay.joinedPlayers.forEach(player => {
+        players[player.id] = player;
+      });
+      console.log("[Netplay] Using players from NetplayMenu joinedPlayers:", Object.keys(players));
+    }
+
+    if (players) {
+      console.log("[Netplay] Looking for host among players:", Object.keys(players));
+
+      const playerEntries = Object.entries(players);
+      if (playerEntries.length > 0) {
+        // For simplicity, assume the first player in the list is the host
+        // This is a heuristic - in practice, the server should provide host information
+        [hostPlayerId] = playerEntries[0];
+        console.log("[Netplay] Assuming first player is host:", hostPlayerId);
+        console.log("[Netplay] All available players:", playerEntries.map(([id]) => id));
+      }
+
+      // Alternative: look for a player that might have host privileges or special markers
+      for (const [playerId, playerData] of Object.entries(players)) {
+        console.log(`[Netplay] Checking player ${playerId}:`, {
+          slot: playerData.slot || playerData.player_slot,
+          isHost: playerData.isHost || playerData.host,
+          ready: playerData.ready
+        });
+        if (playerData.isHost || playerData.host) {
+          hostPlayerId = playerId;
+          console.log("[Netplay] Found explicit host flag:", hostPlayerId);
+          break;
+        }
+      }
+    } else {
+      console.log("[Netplay] No player data available from any source");
+    }
+
+    if (!hostPlayerId) {
+      console.error("[Netplay] Could not determine host player ID for P2P connection - will retry in 2 seconds");
+
+      // Retry after a short delay in case data becomes available
+      setTimeout(() => {
+        console.log("[Netplay] Retrying P2P connection initiation...");
+        this.netplayInitiateP2PConnection().catch(err => {
+          console.error("[Netplay] P2P connection retry failed:", err);
+        });
+      }, 2000);
+      return;
+    }
+
+    // Use the host player ID as the target (server will resolve it)
+    const target = hostPlayerId;
+    console.log("[Netplay] Will send P2P offer to target:", target);
+
+    try {
+      console.log("[Netplay] Initiating P2P connection to host...");
+
+      // Get ICE servers from config
+      const iceServers = this.configManager?.getSetting("netplayIceServers") ||
+                         [{ urls: 'stun:stun.l.google.com:19302' }];
+
+      // Get unordered retries setting
+      const unorderedRetries = this.configManager?.getSetting("netplayUnorderedRetries") || 0;
+
+      // Create RTCPeerConnection for P2P data channels
+      const pc = new RTCPeerConnection({
+        iceServers: iceServers
+      });
+
+      // Create data channels as offerer (client creates channels, host receives them)
+      console.log(`[Netplay] Creating data channels for P2P connection`);
+      const unorderedChannel = pc.createDataChannel('input-unordered', {
+        ordered: false,
+        maxRetransmits: unorderedRetries > 0 ? unorderedRetries : undefined,
+        maxPacketLifeTime: unorderedRetries === 0 ? 3000 : undefined
+      });
+      console.log(`[Netplay] Created unordered channel: ${unorderedChannel.label}, id: ${unorderedChannel.id}, readyState: ${unorderedChannel.readyState}`);
+
+      const orderedChannel = pc.createDataChannel('input-ordered', {
+        ordered: true
+      });
+      console.log(`[Netplay] Created ordered channel: ${orderedChannel.label}, id: ${orderedChannel.id}, readyState: ${orderedChannel.readyState}`);
+
+      // Add channels to DataChannelManager immediately
+      if (this.dataChannelManager) {
+        console.log(`[Netplay] Adding P2P channels for host to DataChannelManager`);
+        this.dataChannelManager.addP2PChannel('host', {
+          ordered: orderedChannel,
+          unordered: unorderedChannel
+        });
+        console.log(`[Netplay] Client DataChannelManager now has ${this.dataChannelManager.p2pChannels.size} P2P connections`);
+      }
+
+      // Set up channel event handlers
+      unorderedChannel.onopen = () => {
+        console.log(`[Netplay] Client unordered P2P channel opened with host - READY FOR INPUTS!`);
+        console.log(`[Netplay] Unordered channel state:`, {
+          label: unorderedChannel.label,
+          id: unorderedChannel.id,
+          readyState: unorderedChannel.readyState,
+          bufferedAmount: unorderedChannel.bufferedAmount
+        });
+      };
+      orderedChannel.onopen = () => {
+        console.log(`[Netplay] Client ordered P2P channel opened with host`);
+        console.log(`[Netplay] Ordered channel state:`, {
+          label: orderedChannel.label,
+          id: orderedChannel.id,
+          readyState: orderedChannel.readyState,
+          bufferedAmount: orderedChannel.bufferedAmount
+        });
+      };
+
+      unorderedChannel.onmessage = (event) => {
+        console.log(`[Netplay] Client received P2P message on unordered channel:`, event.data);
+      };
+      orderedChannel.onmessage = (event) => {
+        console.log(`[Netplay] Client received P2P message on ordered channel:`, event.data);
+      };
+
+      unorderedChannel.onclose = () => {
+        console.log(`[Netplay] Client unordered P2P channel closed with host`);
+      };
+      orderedChannel.onclose = () => {
+        console.log(`[Netplay] Client ordered P2P channel closed with host`);
+      };
+
+      unorderedChannel.onerror = (error) => {
+        console.error(`[Netplay] Client unordered P2P channel error:`, error);
+      };
+      orderedChannel.onerror = (error) => {
+        console.error(`[Netplay] Client ordered P2P channel error:`, error);
+      };
+
+      // Listen for data channels (though we created them, this handles any additional ones)
+      pc.ondatachannel = (event) => {
+        const channel = event.channel;
+        console.log(`[Netplay] Client received data channel: ${channel.label}, id: ${channel.id}, readyState: ${channel.readyState}`);
+
+        // Determine channel type and add to DataChannelManager
+        if (this.dataChannelManager) {
+          if (channel.label === 'input-unordered') {
+            console.log(`[Netplay] Adding unordered channel to DataChannelManager`);
+            this.dataChannelManager.addP2PChannel('host', {
+              unordered: channel,
+              ordered: null // Will be set when ordered channel arrives
+            });
+          } else if (channel.label === 'input-ordered') {
+            console.log(`[Netplay] Adding ordered channel to DataChannelManager`);
+            // Update existing entry with ordered channel
+            const existing = this.dataChannelManager.p2pChannels.get('host');
+            if (existing) {
+              existing.ordered = channel;
+            } else {
+              this.dataChannelManager.addP2PChannel('host', {
+                ordered: channel,
+                unordered: null
+              });
+            }
+          }
+          console.log(`[Netplay] Client DataChannelManager now has ${this.dataChannelManager.p2pChannels.size} P2P connections`);
+        }
+
+        // Set up event handlers
+        channel.onopen = () => {
+          console.log(`[Netplay] Client ${channel.label} P2P channel opened with host`);
+        };
+
+        channel.onerror = (error) => {
+          console.error(`[Netplay] Client ${channel.label} P2P channel error:`, error);
+        };
+
+        channel.onclose = () => {
+          console.log(`[Netplay] Client ${channel.label} P2P channel closed with host`);
+          if (this.dataChannelManager) {
+            this.dataChannelManager.removeP2PChannel('host');
+          }
+        };
+      };
+
+      // Handle ICE candidates
+      pc.onicecandidate = (event) => {
+        if (event.candidate) {
+          // Send ICE candidate to host via signaling
+          this.socketTransport.sendDataMessage({
+            "webrtc-signal": {
+              candidate: event.candidate
+            }
+          });
+        }
+      };
+
+      // Create offer and send to host
+      const offer = await pc.createOffer();
+      await pc.setLocalDescription(offer);
+
+      // Send offer to host via signaling
+      const clientId = this.socketTransport?.socket?.id || 'client';
+      console.log("[Netplay] Sending WebRTC offer to host:", target, "from client:", clientId);
+      this.socketTransport.emit("webrtc-signal", {
+        target: target,
+        sender: clientId,
+        offer: offer
+      });
+
+      // Listen for host's answer and remote ICE candidates
+      const handleWebRTCSignal = async (data) => {
+        try {
+          console.log("[Netplay] Client received WebRTC signal:", data);
+          const { answer, candidate, target, sender } = data;
+
+          // Only process signals targeted at this client
+          const clientId = this.socketTransport?.socket?.id || 'client';
+          if (target && target !== clientId) {
+            console.log(`[Netplay] Ignoring WebRTC signal targeted at ${target}, we are ${clientId}`);
+            return;
+          }
+
+          // Note: We trust the server to only relay legitimate signals from the host
+          console.log(`[Netplay] Processing WebRTC signal from sender: ${sender}`);
+
+          if (answer) {
+            console.log(`[Netplay] Received answer from host, current signaling state: ${pc.signalingState}`);
+            console.log(`[Netplay] Answer SDP type: ${answer.type}, contains 'm=application': ${answer.sdp?.includes('m=application')}`);
+            if (pc.signalingState === "have-local-offer") {
+              console.log("[Netplay] Setting remote description with answer...");
+              await pc.setRemoteDescription(new RTCSessionDescription(answer));
+              console.log("[Netplay] Remote description set successfully, new signaling state:", pc.signalingState);
+            } else if (pc.signalingState === "stable") {
+              console.log("[Netplay] Connection already stable, ignoring duplicate answer");
+            } else {
+              console.warn(`[Netplay] Cannot set remote description: wrong signaling state: ${pc.signalingState}`);
+            }
+          }
+
+          if (candidate) {
+            console.log("[Netplay] Received ICE candidate from host, adding to PC...");
+            await pc.addIceCandidate(new RTCIceCandidate(candidate));
+          }
+        } catch (error) {
+          console.error("[Netplay] Error handling WebRTC signal:", error);
+        }
+      };
+
+      this.socketTransport.on("webrtc-signal", handleWebRTCSignal);
+
+      console.log("[Netplay] P2P connection offer sent to host");
+    } catch (error) {
+      console.error("[Netplay] Failed to initiate P2P connection:", error);
+    } finally {
+      this._p2pInitiating = false;
+    }
+  }
+
   // Setup P2P data channels for unorderedP2P/orderedP2P input modes
   async netplaySetupP2PChannels() {
     if (!this.emulator.netplay.engine || !this.sessionState?.isHostRole()) {
@@ -2295,60 +2642,76 @@ getPlayerName() {
             if (offer) {
               console.log(`[Netplay] Received WebRTC offer from ${sender}, creating answer...`);
               
+              // Get ICE servers from config
+              const iceServers = this.configManager?.getSetting("netplayIceServers") ||
+                               [{ urls: 'stun:stun.l.google.com:19302' }];
+
               // Create RTCPeerConnection for P2P data channels
               const pc = new RTCPeerConnection({
-                iceServers: [{ urls: 'stun:stun.l.google.com:19302' }]
+                iceServers: iceServers
               });
 
-              // Set up data channels (unordered for unorderedP2P, ordered for orderedP2P)
-              const unorderedChannel = pc.createDataChannel('input-unordered', {
-                ordered: false,
-                maxPacketLifeTime: 3000
-              });
+              // Host receives data channels created by client (offerer)
+              // Set up event handler to receive channels from client
+              pc.ondatachannel = (event) => {
+                const channel = event.channel;
+                console.log(`[Netplay] Host received data channel from ${sender}: ${channel.label}, id: ${channel.id}, readyState: ${channel.readyState}`);
 
-              const orderedChannel = pc.createDataChannel('input-ordered', {
-                ordered: true
-              });
-
-              // Add channels to DataChannelManager
-              if (this.dataChannelManager) {
-                this.dataChannelManager.addP2PChannel(sender, {
-                  ordered: orderedChannel,
-                  unordered: unorderedChannel
-                });
-              }
-
-              // Set up event handlers
-              unorderedChannel.onopen = () => {
-                console.log(`[Netplay] Unordered P2P channel opened with ${sender}`);
-              };
-              orderedChannel.onopen = () => {
-                console.log(`[Netplay] Ordered P2P channel opened with ${sender}`);
-              };
-
-              unorderedChannel.onerror = (error) => {
-                console.error(`[Netplay] Unordered P2P channel error:`, error);
-              };
-              orderedChannel.onerror = (error) => {
-                console.error(`[Netplay] Ordered P2P channel error:`, error);
-              };
-
-              unorderedChannel.onclose = () => {
-                console.log(`[Netplay] Unordered P2P channel closed with ${sender}`);
+                // Add channel to DataChannelManager
                 if (this.dataChannelManager) {
-                  this.dataChannelManager.removeP2PChannel(sender);
+                  if (channel.label === 'input-unordered') {
+                    console.log(`[Netplay] Adding unordered channel to DataChannelManager for ${sender}`);
+                    this.dataChannelManager.addP2PChannel(sender, {
+                      unordered: channel,
+                      ordered: null // Will be set when ordered channel arrives
+                    });
+                  } else if (channel.label === 'input-ordered') {
+                    console.log(`[Netplay] Adding ordered channel to DataChannelManager for ${sender}`);
+                    // Update existing entry with ordered channel
+                    const existing = this.dataChannelManager.p2pChannels.get(sender);
+                    if (existing) {
+                      existing.ordered = channel;
+                    } else {
+                      this.dataChannelManager.addP2PChannel(sender, {
+                        ordered: channel,
+                        unordered: null
+                      });
+                    }
+                  }
+                  console.log(`[Netplay] Host DataChannelManager now has ${this.dataChannelManager.p2pChannels.size} P2P connections`);
                 }
-              };
-              orderedChannel.onclose = () => {
-                console.log(`[Netplay] Ordered P2P channel closed with ${sender}`);
-                if (this.dataChannelManager) {
-                  this.dataChannelManager.removeP2PChannel(sender);
-                }
+
+                // Set up channel event handlers
+                channel.onopen = () => {
+                  console.log(`[Netplay] Host ${channel.label} P2P channel opened with ${sender} - READY FOR INPUTS!`);
+                  console.log(`[Netplay] Host channel state:`, {
+                    label: channel.label,
+                    id: channel.id,
+                    readyState: channel.readyState,
+                    bufferedAmount: channel.bufferedAmount
+                  });
+                };
+
+                channel.onmessage = (event) => {
+                  console.log(`[Netplay] Host received P2P message on ${channel.label}:`, event.data);
+                };
+
+                channel.onerror = (error) => {
+                  console.error(`[Netplay] Host ${channel.label} P2P channel error:`, error);
+                };
+
+                channel.onclose = () => {
+                  console.log(`[Netplay] Host ${channel.label} P2P channel closed with ${sender}`);
+                  if (this.dataChannelManager) {
+                    this.dataChannelManager.removeP2PChannel(sender);
+                  }
+                };
               };
 
               // Handle ICE candidates
               pc.onicecandidate = (event) => {
                 if (event.candidate) {
+                  console.log(`[Netplay] Sending ICE candidate to client:`, sender);
                   this.socketTransport.emit("webrtc-signal", {
                     target: sender,
                     candidate: event.candidate
@@ -2362,6 +2725,8 @@ getPlayerName() {
               await pc.setLocalDescription(answer);
 
               // Send answer back to client
+              console.log(`[Netplay] Sending WebRTC answer to client:`, sender);
+              console.log(`[Netplay] Answer SDP type: ${answer.type}, contains 'm=application': ${answer.sdp?.includes('m=application')}`);
               this.socketTransport.emit("webrtc-signal", {
                 target: sender,
                 answer: answer
@@ -2467,87 +2832,55 @@ getPlayerName() {
         }
       }
 
-      // SECOND: Try to capture audio directly from the EmulatorJS instance
-      // This taps into the OpenAL/Web Audio sources used by the emulator
+      // SECOND: Try to capture audio directly from the EmulatorJS instance using the proper WebAudio approach
+      // This uses the clean hook to tap into the WebAudio graph
       try {
-        console.log("[Netplay] Checking for EmulatorJS instance:", {
+        console.log("[Netplay] Checking for EmulatorJS instance with audio hook:", {
           hasEJS: !!window.EJS_emulator,
-          hasModule: !!window.EJS_emulator?.Module,
-          hasAL: !!window.EJS_emulator?.Module?.AL,
-          hasCurrentCtx: !!window.EJS_emulator?.Module?.AL?.currentCtx,
-          EJSKeys: window.EJS_emulator ? Object.keys(window.EJS_emulator).slice(0, 10) : null,
-          ModuleKeys: window.EJS_emulator?.Module ? Object.keys(window.EJS_emulator.Module).slice(0, 10) : null
+          hasGetAudioOutputNode: typeof window.EJS_emulator?.getAudioOutputNode === 'function'
         });
 
-        if (window.EJS_emulator && window.EJS_emulator.Module && window.EJS_emulator.Module.AL && window.EJS_emulator.Module.AL.currentCtx) {
-          const openALContext = window.EJS_emulator.Module.AL.currentCtx;
-          console.log("[Netplay] Found EmulatorJS OpenAL context, attempting direct audio capture", {
-            hasSources: !!openALContext.sources,
-            sourcesCount: openALContext.sources?.length || 0,
-            contextKeys: Object.keys(openALContext).slice(0, 10)
+        if (window.EJS_emulator && typeof window.EJS_emulator.getAudioOutputNode === 'function') {
+          const audioOutputNode = window.EJS_emulator.getAudioOutputNode();
+          console.log("[Netplay] EmulatorJS getAudioOutputNode returned:", {
+            hasNode: !!audioOutputNode,
+            nodeType: audioOutputNode?.constructor?.name,
+            context: audioOutputNode?.context?.constructor?.name
           });
 
-          if (openALContext.sources && openALContext.sources.length > 0) {
-            // Create our own Web Audio context for capture
-            const webAudioContext = new (window.AudioContext || window.webkitAudioContext)();
-            const destination = webAudioContext.createMediaStreamDestination();
+          if (audioOutputNode && audioOutputNode.context && typeof audioOutputNode.connect === 'function') {
+            try {
+              // Create MediaStreamDestinationNode in the same audio context
+              const audioContext = audioOutputNode.context;
+              const destination = audioContext.createMediaStreamDestination();
 
-            let tappedSources = 0;
+              // Connect the emulator's audio output to our capture destination
+              // This taps the audio BEFORE it goes to speakers
+              audioOutputNode.connect(destination);
 
-            // Try to tap each OpenAL source
-            for (const openALSource of openALContext.sources) {
-              if (openALSource && openALSource.gain && openALSource.gain.connect) {
-                try {
-                  console.log(`[Netplay] Tapping EmulatorJS OpenAL source ${tappedSources + 1}`);
-
-                  // Create a gain node at unity gain for our capture chain
-                  const captureGain = webAudioContext.createGain();
-                  captureGain.gain.value = 1.0;
-
-                  // Connect the OpenAL gain node to our capture destination
-                  // Note: This connects AFTER volume control, so it includes volume changes
-                  if (openALSource.gain.context === webAudioContext) {
-                    openALSource.gain.connect(captureGain);
-                    captureGain.connect(destination);
-                    tappedSources++;
-                    console.log(`[Netplay] Successfully tapped EmulatorJS OpenAL source ${tappedSources}`);
-                  } else {
-                    console.log(`[Netplay] OpenAL source ${tappedSources + 1} in different context, trying cross-context connection`);
-                    // Try cross-context connection (may not work due to browser security)
-                    try {
-                      openALSource.gain.connect(captureGain);
-                      captureGain.connect(destination);
-                      tappedSources++;
-                      console.log(`[Netplay] Cross-context connection successful for EmulatorJS OpenAL source ${tappedSources}`);
-                    } catch (crossContextError) {
-                      console.log(`[Netplay] Cross-context connection failed:`, crossContextError.message);
-                    }
-                  }
-                } catch (tapError) {
-                  console.log(`[Netplay] Failed to tap EmulatorJS OpenAL source ${tappedSources + 1}:`, tapError.message);
-                }
-              }
-            }
-
-            if (tappedSources > 0) {
               const audioTrack = destination.stream.getAudioTracks()[0];
               if (audioTrack) {
-                console.log("[Netplay] Audio captured directly from EmulatorJS OpenAL sources", {
-                  sourcesTapped: tappedSources,
-                  totalSources: openALContext.sources.length,
+                console.log("[Netplay] Audio captured from EmulatorJS WebAudio graph", {
                   trackId: audioTrack.id,
-                  enabled: audioTrack.enabled
+                  enabled: audioTrack.enabled,
+                  settings: audioTrack.getSettings(),
+                  audioContextState: audioContext.state,
+                  nodeType: audioOutputNode.constructor.name
                 });
                 return audioTrack;
+              } else {
+                console.log("[Netplay] MediaStreamDestinationNode created but no audio track available");
               }
-            } else {
-              console.log("[Netplay] No EmulatorJS OpenAL sources could be tapped for audio capture");
+            } catch (webAudioError) {
+              console.log("[Netplay] Failed to create MediaStreamDestinationNode:", webAudioError.message);
             }
+          } else if (audioOutputNode === null) {
+            console.log("[Netplay] EmulatorJS reports no audio output node available (expected for some cores)");
           } else {
-            console.log("[Netplay] EmulatorJS OpenAL context exists but has no sources yet");
+            console.log("[Netplay] EmulatorJS audio output node not suitable for capture");
           }
         } else {
-          console.log("[Netplay] EmulatorJS instance or OpenAL context not available");
+          console.log("[Netplay] EmulatorJS audio hook not available");
         }
       } catch (emulatorError) {
         console.log("[Netplay] EmulatorJS audio capture failed:", emulatorError.message);
@@ -2882,6 +3215,41 @@ getPlayerName() {
       }
 
       return null;
+  }
+
+  /**
+   * Start ping test to debug channel connectivity.
+   */
+  startPingTest() {
+    if (this.dataChannelManager) {
+      this.dataChannelManager.startPingTest();
+    } else {
+      console.warn("[NetplayEngine] No data channel manager available for ping test");
+    }
+  }
+
+  /**
+   * Stop ping test.
+   */
+  stopPingTest() {
+    if (this.dataChannelManager) {
+      this.dataChannelManager.stopPingTest();
+    }
+  }
+
+  /**
+   * Temporarily force ordered mode to test for packet loss issues.
+   * @param {boolean} ordered - True to force ordered, false to use configured mode
+   */
+  forceOrderedMode(ordered = true) {
+    if (this.dataChannelManager) {
+      const originalMode = this.dataChannelManager.mode;
+      const newMode = ordered ? "orderedRelay" : "unorderedRelay";
+      console.log(`[NetplayEngine] Forcing mode from ${originalMode} to ${newMode} for testing`);
+      this.dataChannelManager.mode = newMode;
+      return originalMode; // Return original mode so it can be restored
+    }
+    return null;
   }
 }
 

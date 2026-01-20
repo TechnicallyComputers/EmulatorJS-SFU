@@ -21,7 +21,11 @@ class ConfigManager {
       netplayClientSimulcastQuality: "medium",
       netplayRetryConnectionTimerSeconds: 5,
       netplayUnorderedRetries: 0,
-      netplayInputMode: "ordered",
+      netplayInputMode: "orderedRelay",
+      netplayIceServers: [
+        { urls: 'stun:stun.l.google.com:19302' },
+        { urls: 'stun:stun1.l.google.com:19302' }
+      ],
       netplayPreferredSlot: 0,
       ...defaultConfig,
     };

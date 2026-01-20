@@ -165,6 +165,140 @@ class NetplayMenu {
   
     // Mark as in lobby mode
     this.netplay.isInDelaySyncLobby = true;
+
+    // Add debug ping test button for lobby
+    this.addPingTestButton();
+  }
+
+  /**
+   * Add a debug button to test ping functionality in lobby
+   */
+  addPingTestButton() {
+    // Remove existing ping test button if it exists
+    const existingButton = document.getElementById('ejs-netplay-ping-test');
+    if (existingButton) {
+      existingButton.remove();
+    }
+
+    // Create ping test button
+    const pingButton = document.createElement('button');
+    pingButton.id = 'ejs-netplay-ping-test';
+    pingButton.innerHTML = '🔄 Test Ping';
+    pingButton.style.cssText = `
+      position: fixed;
+      top: 60px;
+      right: 10px;
+      z-index: 10000;
+      background: #007bff;
+      color: white;
+      border: none;
+      padding: 8px 12px;
+      border-radius: 4px;
+      cursor: pointer;
+      font-size: 12px;
+      box-shadow: 0 2px 4px rgba(0,0,0,0.2);
+    `;
+
+    pingButton.onclick = () => {
+      try {
+        if (window.EJS_emulator && window.EJS_emulator.netplayEngine) {
+          const engine = window.EJS_emulator.netplayEngine;
+
+          if (pingButton.innerHTML.includes('Test Ping')) {
+            // Start ping test
+            console.log('[NetplayMenu] Starting ping test...');
+            engine.startPingTest();
+            pingButton.innerHTML = '⏹️ Stop Ping';
+            pingButton.style.background = '#dc3545';
+          } else {
+            // Stop ping test
+            console.log('[NetplayMenu] Stopping ping test...');
+            engine.stopPingTest();
+            pingButton.innerHTML = '🔄 Test Ping';
+            pingButton.style.background = '#007bff';
+          }
+        } else {
+          console.error('[NetplayMenu] Netplay engine not available for ping test');
+          alert('Netplay engine not available');
+        }
+      } catch (error) {
+        console.error('[NetplayMenu] Error with ping test:', error);
+        alert('Error with ping test: ' + error.message);
+      }
+    };
+
+    // Create ordered mode test button
+    const orderedButton = document.createElement('button');
+    orderedButton.id = 'ejs-netplay-ordered-test';
+    orderedButton.innerHTML = '📋 Ordered Mode';
+    orderedButton.style.cssText = `
+      position: fixed;
+      top: 90px;
+      right: 10px;
+      z-index: 10000;
+      background: #28a745;
+      color: white;
+      border: none;
+      padding: 8px 12px;
+      border-radius: 4px;
+      cursor: pointer;
+      font-size: 12px;
+      box-shadow: 0 2px 4px rgba(0,0,0,0.2);
+    `;
+
+    orderedButton.onclick = () => {
+      try {
+        if (window.EJS_emulator && window.EJS_emulator.netplayEngine) {
+          const engine = window.EJS_emulator.netplayEngine;
+
+          if (orderedButton.innerHTML.includes('Ordered Mode')) {
+            // Force ordered mode
+            console.log('[NetplayMenu] Forcing ordered mode for testing...');
+            const originalMode = engine.forceOrderedMode(true);
+            orderedButton.innerHTML = '🔄 Unordered Mode';
+            orderedButton.style.background = '#ffc107';
+            orderedButton.style.color = 'black';
+            orderedButton._originalMode = originalMode;
+          } else {
+            // Restore original mode
+            console.log('[NetplayMenu] Restoring unordered mode...');
+            if (orderedButton._originalMode) {
+              engine.forceOrderedMode(false);
+            }
+            orderedButton.innerHTML = '📋 Ordered Mode';
+            orderedButton.style.background = '#28a745';
+            orderedButton.style.color = 'white';
+          }
+        } else {
+          console.error('[NetplayMenu] Netplay engine not available for ordered mode test');
+          alert('Netplay engine not available');
+        }
+      } catch (error) {
+        console.error('[NetplayMenu] Error with ordered mode test:', error);
+        alert('Error with ordered mode test: ' + error.message);
+      }
+    };
+
+    // Add hover effect
+    orderedButton.onmouseover = () => {
+      orderedButton.style.opacity = '0.8';
+    };
+    orderedButton.onmouseout = () => {
+      orderedButton.style.opacity = '1';
+    };
+
+    document.body.appendChild(orderedButton);
+
+    // Add hover effect
+    pingButton.onmouseover = () => {
+      pingButton.style.opacity = '0.8';
+    };
+    pingButton.onmouseout = () => {
+      pingButton.style.opacity = '1';
+    };
+
+    document.body.appendChild(pingButton);
+    console.log('[NetplayMenu] Added ping test button to lobby');
   }
 
   // Switch to live stream room UI
@@ -1518,6 +1652,19 @@ class NetplayMenu {
 
   netplayRestoreMenu() {
     this.netplay.isInDelaySyncLobby = false;
+
+    // Remove debug buttons when leaving lobby
+    const pingButton = document.getElementById('ejs-netplay-ping-test');
+    if (pingButton) {
+      pingButton.remove();
+      console.log('[NetplayMenu] Removed ping test button');
+    }
+
+    const orderedButton = document.getElementById('ejs-netplay-ordered-test');
+    if (orderedButton) {
+      orderedButton.remove();
+      console.log('[NetplayMenu] Removed ordered mode test button');
+    }
   }
 
   defineNetplayFunctions() {
@@ -2882,6 +3029,18 @@ class NetplayMenu {
     if (engine.dataChannelManager) {
       engine.dataChannelManager.mode = inputMode;
       console.log("[NetplayMenu] DataChannelManager mode set to:", inputMode);
+
+      // For hosts in P2P mode, set up P2P channels now
+      if (isHost && (inputMode === "unorderedP2P" || inputMode === "orderedP2P")) {
+        console.log("[NetplayMenu] Host setting up P2P channels for mode:", inputMode);
+        if (engine.netplaySetupP2PChannels) {
+          setTimeout(() => {
+            engine.netplaySetupP2PChannels().catch(err => {
+              console.error("[NetplayMenu] Failed to setup host P2P channels:", err);
+            });
+          }, 500); // Small delay to ensure everything is ready
+        }
+      }
     }
 
     // Set global preferred slot for InputSync (so it maps inputs to correct slot)
@@ -2932,9 +3091,45 @@ class NetplayMenu {
       }
     }
 
-    // The emulator's simulateInput will automatically route through InputSync
-    // which will send inputs via DataChannelManager using the configured mode
+    // Hook into the emulator's simulateInput to forward inputs through netplay
+    if (this.emulator?.gameManager?.functions?.simulateInput) {
+      const originalSimulateInput = this.emulator.gameManager.functions.simulateInput;
+      this.emulator.gameManager.functions.simulateInput = (playerIndex, inputIndex, value, ...args) => {
+        // Call original simulateInput
+        originalSimulateInput.call(this.emulator.gameManager.functions, playerIndex, inputIndex, value, ...args);
+
+        // Forward to netplay if this is a local input (not from network)
+        if (this.engine?.inputSync && !args.includes?.('netplay-remote')) {
+          console.log(`[NetplayMenu] Forwarding local input to netplay: player ${playerIndex}, input ${inputIndex}, value ${value}`);
+          this.engine.inputSync.sendInput(playerIndex, inputIndex, value);
+        }
+      };
+      console.log("[NetplayMenu] Hooked into emulator simulateInput for netplay forwarding");
+    } else {
+      console.warn("[NetplayMenu] Could not hook into emulator simulateInput - netplay input forwarding disabled");
+    }
+
     console.log("[NetplayMenu] Input sync setup complete for slot", playerSlot, "with mode", inputMode);
+
+    // For clients in P2P mode, initiate P2P connection after room is fully set up
+    console.log(`[NetplayMenu] Checking P2P initiation: isHost=${isHost}, inputMode=${inputMode}, hasEngine=${!!this.engine}, hasMethod=${!!this.engine?.netplayInitiateP2PConnection}`);
+    if (!isHost && (inputMode === "unorderedP2P" || inputMode === "orderedP2P")) {
+      console.log("[NetplayMenu] Client will initiate P2P connection after room setup completes");
+      // Delay P2P initiation to allow room data to settle
+      setTimeout(() => {
+        console.log("[NetplayMenu] Executing delayed P2P connection initiation");
+        if (this.engine?.netplayInitiateP2PConnection) {
+          console.log("[NetplayMenu] Calling netplayInitiateP2PConnection");
+          this.engine.netplayInitiateP2PConnection().catch(err => {
+            console.error("[NetplayMenu] Failed to initiate P2P connection:", err);
+          });
+        } else {
+          console.error("[NetplayMenu] P2P connection method not available on engine:", this.engine);
+        }
+      }, 3000); // Increased delay to allow room data to settle
+    } else {
+      console.log(`[NetplayMenu] Skipping P2P initiation: isHost=${isHost}, mode=${inputMode}`);
+    }
   }
 
   // Join room via socket (legacy method)

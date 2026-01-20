@@ -25,6 +25,10 @@ class DataChannelManager {
     
     // Input send callback
     this.onInputCallback = null;
+
+    // Ping test
+    this.pingInterval = null;
+    this.pingCount = 0;
   }
 
   /**
@@ -81,16 +85,25 @@ class DataChannelManager {
    * @param {number} playerIndex - Player index
    * @param {number} inputIndex - Input index
    * @param {number} value - Input value
+   * @param {number} frame - Current frame number
+   * @param {number} slot - Player slot number
    * @returns {boolean} True if sent successfully
    */
-  sendInput(playerIndex, inputIndex, value) {
+  sendInput(playerIndex, inputIndex, value, frame = 0, slot = 0) {
+    console.log("[DataChannelManager] 🚀 sendInput called:", { playerIndex, inputIndex, value, frame, slot, mode: this.mode });
+
     const payload = JSON.stringify({
-      player: playerIndex,
-      index: inputIndex,
-      value: value,
+      type: "input",
+      slot: slot,
+      frame: frame,
+      input: {
+        player: playerIndex,
+        index: inputIndex,
+        value: value,
+      }
     });
 
-    console.log("[DataChannelManager] 📤 Sending input:", { playerIndex, inputIndex, value, mode: this.mode });
+    console.log("[DataChannelManager] 📤 Sending input payload:", payload);
 
     try {
       // Relay modes: use SFU data producer
@@ -111,14 +124,28 @@ class DataChannelManager {
 
       // Unordered P2P: try unordered channels first
       if (this.mode === "unorderedP2P") {
+        console.log("[DataChannelManager] 🔍 Checking P2P channels:", Array.from(this.p2pChannels.keys()));
         let sent = false;
         this.p2pChannels.forEach((channels, socketId) => {
+          console.log(`[DataChannelManager] 📡 Checking channel for ${socketId}:`, {
+            hasUnordered: !!channels.unordered,
+            unorderedState: channels.unordered?.readyState,
+            hasOrdered: !!channels.ordered,
+            orderedState: channels.ordered?.readyState
+          });
           if (channels.unordered && channels.unordered.readyState === "open") {
             channels.unordered.send(payload);
+            console.log(`[DataChannelManager] ✅ Sent input via unordered P2P channel to ${socketId}`);
             sent = true;
           }
         });
-        if (sent) return true;
+        if (sent) {
+          console.log("[DataChannelManager] ✅ Sent input via unordered P2P channels");
+          return true;
+        } else {
+          console.warn("[DataChannelManager] ❌ No open unordered P2P channels available");
+          return false;
+        }
       }
 
       // Ordered P2P: fallback or primary mode
@@ -143,6 +170,12 @@ class DataChannelManager {
    * @param {string|null} fromSocketId - Source socket ID (for P2P)
    */
   handleIncomingMessage(message, fromSocketId = null) {
+    console.log("[DataChannelManager] 🔄 handleIncomingMessage called with:", {
+      messageType: typeof message,
+      messageLength: message?.length || message?.byteLength,
+      fromSocketId
+    });
+
     try {
       let data;
       if (typeof message === "string") {
@@ -155,18 +188,35 @@ class DataChannelManager {
         return;
       }
 
-      console.log("[DataChannelManager] 📥 Received input message:", { data, fromSocketId });
+      console.log("[DataChannelManager] 📥 Received message:", { data, fromSocketId });
 
-      // Parse input data
-      if (data.player !== undefined && data.index !== undefined && data.value !== undefined) {
-        if (this.onInputCallback) {
-          console.log("[DataChannelManager] 🎮 Calling input callback for received input");
-          this.onInputCallback(data.player, data.index, data.value, fromSocketId);
+      // Handle ping messages
+      if (data.type === "ping") {
+        console.log("[DataChannelManager] 🏓 Received ping:", {
+          count: data.count,
+          timestamp: data.timestamp,
+          latency: Date.now() - data.timestamp
+        });
+        return;
+      }
+
+      // Parse input data (new format: {type: "input", slot, frame, input: {player, index, value}})
+      if (data.type === "input" && data.input) {
+        const { player, index, value } = data.input;
+        if (player !== undefined && index !== undefined && value !== undefined) {
+          console.log("[DataChannelManager] 📨 Received input packet for slot", data.slot, "frame", data.frame, ":", { player, index, value });
+          if (this.onInputCallback) {
+            console.log("[DataChannelManager] 🎮 Calling input callback for received input");
+            this.onInputCallback(player, index, value, fromSocketId);
+            console.log("[DataChannelManager] ✅ Input callback called successfully");
+          } else {
+            console.warn("[DataChannelManager] No input callback set for received input");
+          }
         } else {
-          console.warn("[DataChannelManager] No input callback set for received input");
+          console.warn("[DataChannelManager] Invalid input data in received payload:", data);
         }
       } else {
-        console.warn("[DataChannelManager] Invalid input data received:", data);
+        console.warn("[DataChannelManager] Unknown message type received:", data);
       }
     } catch (error) {
       console.error("[DataChannelManager] Failed to parse incoming message:", error);
@@ -225,9 +275,64 @@ class DataChannelManager {
   }
 
   /**
+   * Start ping test to verify channel connectivity.
+   */
+  startPingTest() {
+    if (this.pingInterval) {
+      console.log("[DataChannelManager] Ping test already running");
+      return;
+    }
+
+    console.log("[DataChannelManager] Starting ping test every 1 second");
+    this.pingInterval = setInterval(() => {
+      this.pingCount++;
+      const pingPayload = JSON.stringify({
+        type: "ping",
+        count: this.pingCount,
+        timestamp: Date.now()
+      });
+
+      console.log("[DataChannelManager] 📡 Sending ping:", pingPayload);
+
+      try {
+        // Relay modes: use SFU data producer
+        if (this.mode === "orderedRelay" || this.mode === "unorderedRelay") {
+          if (this.dataProducer && !this.dataProducer.closed && typeof this.dataProducer.send === "function") {
+            this.dataProducer.send(pingPayload);
+          }
+        }
+
+        // P2P modes: send to all channels
+        this.p2pChannels.forEach((channels, socketId) => {
+          if (channels.unordered && channels.unordered.readyState === "open") {
+            channels.unordered.send(pingPayload);
+          } else if (channels.ordered && channels.ordered.readyState === "open") {
+            channels.ordered.send(pingPayload);
+          }
+        });
+      } catch (error) {
+        console.error("[DataChannelManager] Failed to send ping:", error);
+      }
+    }, 1000);
+  }
+
+  /**
+   * Stop ping test.
+   */
+  stopPingTest() {
+    if (this.pingInterval) {
+      console.log("[DataChannelManager] Stopping ping test");
+      clearInterval(this.pingInterval);
+      this.pingInterval = null;
+      this.pingCount = 0;
+    }
+  }
+
+  /**
    * Cleanup all data channels.
    */
   cleanup() {
+    this.stopPingTest();
     this.dataProducer = null;
     this.p2pChannels.clear();
     this.onInputCallback = null;

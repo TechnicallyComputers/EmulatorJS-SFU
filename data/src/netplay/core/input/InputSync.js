@@ -35,7 +35,7 @@ class InputSync {
     // Input storage: frame -> array of input data
     this.inputsData = {};
     this.initFrame = 0;
-    this.currentFrame = 0;
+    this.currentFrame = null; // Null until frames are initialized
 
     // Input queue and slot management
     this.inputQueue = new InputQueue(config);
@@ -102,10 +102,16 @@ class InputSync {
       return false;
     }
 
+    // Guard: Don't accept inputs until frames are initialized
+    if (this.currentFrame === null || this.currentFrame === undefined) {
+      console.warn("[InputSync] Frames not initialized yet, rejecting input:", { playerIndex, inputIndex, value });
+      return false;
+    }
+
     // Apply slot enforcement for clients
     const actualPlayerIndex = this.getEffectivePlayerIndex(playerIndex);
 
-    const frame = this.currentFrame || 0;
+    const frame = this.currentFrame;
     const isHost = this.sessionState?.isHostRole() || false;
 
     console.log("[InputSync] sendInput called:", {
@@ -128,21 +134,19 @@ class InputSync {
         connected_input: [actualPlayerIndex, inputIndex, value],
       });
 
-      // Apply input immediately on host
-      this.emulator.simulateInput(actualPlayerIndex, inputIndex, value);
-      
-      // For live stream mode, also send immediately via callback if available
-      if (this.sendInputCallback) {
-        const inputData = {
-          frame: frame + this.frameDelay,
-          connected_input: [actualPlayerIndex, inputIndex, value],
-        };
-        console.log("[InputSync] Host sending input via callback:", inputData);
-        this.sendInputCallback(frame + this.frameDelay, inputData);
-      }
+      // Queue input for processing in processFrameInputs() - host does NOT send immediately
+      // This prevents double-sending and ensures proper frame alignment
+      console.log("[InputSync] Host queued input for frame processing:", {
+        frame,
+        connected_input: [actualPlayerIndex, inputIndex, value]
+      });
     } else {
-      // Client: Apply input immediately, then send over network
-      this.emulator.simulateInput(actualPlayerIndex, inputIndex, value);
+      // Client (delay-sync mode): DO NOT apply input locally
+      // Clients only send inputs to host - all simulation is done by host
+      console.log("[InputSync] Client queuing input for network send (not applying locally):", {
+        frame: frame + this.frameDelay,
+        connected_input: [actualPlayerIndex, inputIndex, value]
+      });
 
       // Send input with frame delay
       if (this.sendInputCallback) {
@@ -207,16 +211,25 @@ class InputSync {
     const frame = this.currentFrame;
     const isHost = this.sessionState?.isHostRole() || false;
 
+    console.log(`[InputSync] processFrameInputs called for frame ${frame}, isHost: ${isHost}`);
+
     if (!isHost || !this.inputsData[frame]) {
+      if (!this.inputsData[frame]) {
+        console.log(`[InputSync] No inputs queued for frame ${frame}`);
+      }
       return [];
     }
 
     const toSend = [];
     const inputsForFrame = this.inputsData[frame];
 
+    console.log(`[InputSync] Processing ${inputsForFrame.length} inputs for frame ${frame}`);
+
     // Process each input for this frame
-    inputsForFrame.forEach((inputData) => {
+    inputsForFrame.forEach((inputData, index) => {
       const [playerIndex, inputIndex, value] = inputData.connected_input;
+
+      console.log(`[InputSync] Applying input ${index + 1}/${inputsForFrame.length}: player ${playerIndex}, input ${inputIndex}, value ${value}`);
 
       // Apply input (replay for host, including remote inputs)
       // Note: Host applies both local and remote inputs here

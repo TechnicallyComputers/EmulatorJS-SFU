@@ -254,9 +254,20 @@ IF EXIST AUTORUN.BAT AUTORUN.BAT
         })();
     }
     simulateInput(player, index, value) {
-        console.log('[GameManager] simulateInput called:', { player, index, value, isNetplay: this.EJS.isNetplay });
+        const isNetplayGlobal = window.EJS?.isNetplay;
+        const isNetplayLocal = !!(this.EJS?.netplay && typeof this.EJS.netplay.simulateInput === 'function');
+        const isNetplay = isNetplayGlobal || isNetplayLocal;
 
-        if (this.EJS.isNetplay) {
+        console.log('[GameManager] simulateInput called:', {
+            player,
+            index,
+            value,
+            isNetplayGlobal,
+            isNetplayLocal,
+            isNetplay
+        });
+
+        if (isNetplay) {
             console.log('[GameManager] In netplay mode, calling netplay.simulateInput');
             if (this.EJS.netplay && typeof this.EJS.netplay.simulateInput === 'function') {
                 console.log('[GameManager] Calling EJS.netplay.simulateInput');

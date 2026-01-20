@@ -1028,10 +1028,13 @@ class SFUTransport {
       this.dataProducer = await this.dataSendTransport.produceData({
         ordered: false, // Unordered for better performance
         maxPacketLifeTime: 3000, // 3 second TTL for reliability
+        label: "netplay-input", // Explicitly label for filtering
       });
 
       console.log("[SFUTransport] Created data producer:", {
         id: this.dataProducer.id,
+        label: this.dataProducer.label,
+        readyState: this.dataProducer.readyState,
         transportId: this.dataSendTransport.id,
       });
 
@@ -1088,15 +1091,52 @@ class SFUTransport {
           label: consumerParams.label,
           protocol: consumerParams.protocol,
         });
-        
-        console.log(`[SFUTransport] Created data consumer:`, consumer.id);
+
+        console.log(`[SFUTransport] Created data consumer:`, {
+          id: consumer.id,
+          label: consumer.label,
+          paused: consumer.paused,
+          readyState: consumer.readyState
+        });
+
+        // Resume consumer if paused (mediasoup consumers start paused by default)
+        if (consumer.paused) {
+          console.log(`[SFUTransport] Resuming paused data consumer:`, consumer.id);
+          await consumer.resume();
+          console.log(`[SFUTransport] Data consumer resumed:`, consumer.id);
+        }
 
         // Set up message handling for data consumers
         if (this.dataChannelManager) {
+          // Track consumer state
+          consumer.on('transportclose', () => {
+            console.log(`[SFUTransport] Data consumer transport closed:`, consumer.id);
+          });
+
+          consumer.on('close', () => {
+            console.log(`[SFUTransport] Data consumer closed:`, consumer.id);
+          });
+
+          consumer.on('open', () => {
+            console.log(`[SFUTransport] Data consumer opened:`, consumer.id);
+          });
+
           consumer.on('message', (message) => {
+            console.log(`[SFUTransport] 📨 Data consumer received message:`, message);
             // For SFU, we don't have the socketId mapping, so pass null
             this.dataChannelManager.handleIncomingMessage(message, null);
           });
+
+          // Check ready state after a delay
+          setTimeout(() => {
+            console.log(`[SFUTransport] Data consumer state after delay:`, {
+              id: consumer.id,
+              label: consumer.label,
+              readyState: consumer.readyState,
+              paused: consumer.paused,
+              closed: consumer.closed
+            });
+          }, 2000);
         }
       } else {
         // Video/audio consumers use sfu-consume endpoint
