@@ -238,15 +238,18 @@ class RoomManager {
       this.sessionState.reset();
       return;
     }
-
+  
     return new Promise((resolve) => {
-      this.socket.emit("leave-room", { reason: reason }, () => {
+      this.socket.emit("leave-room", { 
+        roomName: this.sessionState.roomName,
+        reason: reason 
+      }, () => {
         // Always cleanup, even if server doesn't respond
         this.sessionState.clearRoom();
         this.sessionState.reset();
         resolve();
       });
-
+  
       // Timeout after 2 seconds
       setTimeout(() => {
         this.sessionState.clearRoom();

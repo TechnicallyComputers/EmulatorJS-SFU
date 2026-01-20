@@ -61,6 +61,70 @@ class NetplayEngine {
     this._initialized = false;
   }
 
+  // Helper method to get player name from token/cookies (same logic as NetplayMenu)
+getPlayerName() {
+  let playerName = "Player"; // Default fallback
+  
+  try {
+    // Get token from window.EJS_netplayToken or token cookie
+    let token = window.EJS_netplayToken;
+    if (!token) {
+      // Try to get token from cookie
+      const cookies = document.cookie.split(';');
+      for (const cookie of cookies) {
+        const [name, value] = cookie.trim().split('=');
+        if (name === 'romm_sfu_token' || name === 'sfu_token') {
+          token = decodeURIComponent(value);
+          break;
+        }
+      }
+    }
+
+    if (token) {
+      // Decode JWT payload to get netplay ID from 'sub' field
+      // JWT uses base64url encoding, not standard base64, so we need to convert
+      const base64UrlDecode = (str) => {
+        // Convert base64url to base64 by replacing chars and adding padding
+        let base64 = str.replace(/-/g, '+').replace(/_/g, '/');
+        while (base64.length % 4) {
+          base64 += '=';
+        }
+        
+        // Decode base64 to binary string, then convert to proper UTF-8
+        const binaryString = atob(base64);
+        
+        // Convert binary string to UTF-8 using TextDecoder if available, otherwise fallback
+        if (typeof TextDecoder !== 'undefined') {
+          const bytes = new Uint8Array(binaryString.length);
+          for (let i = 0; i < binaryString.length; i++) {
+            bytes[i] = binaryString.charCodeAt(i);
+          }
+          return new TextDecoder('utf-8').decode(bytes);
+        } else {
+          // Fallback for older browsers: this may not handle all UTF-8 correctly
+          return decodeURIComponent(escape(binaryString));
+        }
+      };
+      
+      try {
+        const payloadStr = base64UrlDecode(token.split('.')[1]);
+        const payload = JSON.parse(payloadStr);
+        
+        if (payload.sub) {
+          // Use the netplay ID as player name, truncate if too long (Unicode-safe)
+          playerName = Array.from(payload.sub).slice(0, 20).join('');
+        }
+      } catch (parseError) {
+        console.error("[NetplayEngine] Failed to parse JWT payload:", parseError);
+      }
+    }
+  } catch (e) {
+    console.warn("[NetplayEngine] Failed to extract player name from token:", e);
+  }
+
+  return playerName;
+}
+
   /**
    * Initialize the netplay engine and all subsystems.
    * @returns {Promise<void>}
@@ -208,33 +272,24 @@ class NetplayEngine {
       );
 
       // 13. Room Manager
-      const roomCallbacks = {
+      // Set up callbacks for room events
+      this.config.callbacks = {
         onUsersUpdated: (users) => {
-          console.log(`[NetplayEngine:${this.id}] roomCallbacks.onUsersUpdated called with users:`, Object.keys(users || {}));
-
-          // Update player manager
-          if (this.playerManager) {
-            Object.entries(users || {}).forEach(([playerId, playerData]) => {
-              this.playerManager.addPlayer(playerId, playerData);
-            });
-          }
-
-          if (this.config.callbacks?.onUsersUpdated) {
-            this.config.callbacks.onUsersUpdated(users);
+          console.log("[NetplayEngine] onUsersUpdated callback called with users:", Object.keys(users || {}));
+          if (this.netplayMenu && this.netplayMenu.netplayUpdatePlayerList) {
+            this.netplayMenu.netplayUpdatePlayerList({ players: users });
           }
         },
         onRoomClosed: (data) => {
-          if (this.config.callbacks?.onRoomClosed) {
-            this.config.callbacks.onRoomClosed(data);
-          }
-        },
+          console.log("[NetplayEngine] Room closed:", data);
+        }
       };
       this.roomManager = new RoomManager(
         this.socketTransport,
         this.configManager?.loadConfig() || {},
         this.sessionState
       );
-      this.roomManager.config.callbacks = roomCallbacks;
+      this.roomManager.config.callbacks = this.config.callbacks;
       this.roomManager.setupEventListeners();
 
       // 14. Input Sync (needs callback for sending inputs)
@@ -449,11 +504,10 @@ class NetplayEngine {
    */
   async leaveRoom(reason = null) {
     if (!this.roomManager) {
-      throw new Error("NetplayEngine not initialized");
+      throw new Error("NetplayEngine not initialized - no roomManager");
     }
     return await this.roomManager.leaveRoom(reason);
-  }
-
+  }  
   /**
    * List available rooms.
    * @returns {Promise<Array>} Array of room objects
@@ -768,7 +822,8 @@ class NetplayEngine {
   }
   // Helper method to create a room
   async netplayCreateRoom(roomName, maxPlayers, password, allowSpectators = true, roomType = "live_stream", frameDelay = 2, syncMode = "timeout") {
-    if (!this.emulator.netplay || !this.emulator.netplay.getNetplayId()) {
+    const playerName = this.getPlayerName();
+    if (!playerName || playerName === "Player") {
       throw new Error("Player name not set");
     }
 
@@ -822,8 +877,21 @@ class NetplayEngine {
         // Keep the room listing engine - it will be upgraded to a main engine
 
         // Store room info for later use
-        this.emulator.netplay.currentRoomId = result.room_id || result.id;
-        this.emulator.netplay.currentRoom = result;
+        this.emulator.netplay.currentRoomId = roomName; // RoomManager returns sessionid, but room ID is roomName
+        this.emulator.netplay.currentRoom = {
+          room_name: roomName,
+          current: 1, // Creator is already joined
+          max: maxPlayers,
+          hasPassword: !!password,
+          netplay_mode: roomType === "delay_sync" ? 1 : 0,
+          sync_config: roomType === "delay_sync" ? {
+            frameDelay: frameDelay,
+            syncMode: syncMode
+          } : null,
+          spectator_mode: allowSpectators ? 1 : 0,
+          rom_hash: this.config.romHash || this.config.romName || null,
+          core_type: this.config.system || this.config.core || null
+        };
 
         // Switch to appropriate room UI and setup based on room type
         if (roomType === "live_stream") {
@@ -966,7 +1034,7 @@ class NetplayEngine {
 
     // Store room info for later use
     this.emulator.netplay.currentRoomId = result.room_id || result.id;
-    this.emulator.netplay.currentRoom = result;
+    this.emulator.netplay.currentRoom = result.room || result;
 
     // Switch to appropriate room UI
     if (roomType === "live_stream") {
@@ -1173,20 +1241,21 @@ class NetplayEngine {
 
   // Helper method to join a room
   async netplayJoinRoom(roomId, hasPassword) {
-    if (!this.netplay || !this.emulator.netplay.getNetplayId()) {
+    const playerName = this.getPlayerName();
+    if (!playerName || playerName === "Player") {
       throw new Error("Player name not set");
     }
-
+  
     let password = null;
     if (hasPassword) {
       password = prompt("Enter room password:");
       if (!password) return; // User cancelled
     }
-
+  
     // Use NetplayEngine if available
     if (this.emulator.netplay.engine) {
       console.log("[Netplay] Joining room via NetplayEngine:", { roomId, password });
-
+  
       // Initialize engine if not already initialized
       if (!this.isInitialized()) {
         console.log("[Netplay] Engine not initialized, initializing now...");
@@ -1198,21 +1267,27 @@ class NetplayEngine {
           throw new Error(`NetplayEngine initialization failed: ${initError.message}`);
         }
       }
-
+  
       // Prepare player info for engine
       const playerInfo = {
-        player_name: this.emulator.netplay.getNetplayId(),
+        player_name: playerName,
         player_slot: this.emulator.netplay.localSlot || 0,
         domain: window.location.host
       };
-
+  
       try {
         const result = await this.joinRoom(null, roomId, 4, password, playerInfo);
         console.log("[Netplay] Room join successful via engine:", result);
-
+  
         // Store room info
         this.emulator.netplay.currentRoomId = roomId;
         this.emulator.netplay.currentRoom = result;
+  
+        // Immediately update player list with users from join result
+        if (result && result.users) {
+          console.log("[Netplay] Updating player list immediately after join with users:", Object.keys(result.users));
+          this.netplayMenu.netplayUpdatePlayerList({ players: result.users });
+        }
 
         // Switch to appropriate room UI and setup based on room type
         const roomType = result.netplay_mode === 1 ? "delay_sync" : "live_stream";
@@ -1601,9 +1676,53 @@ class NetplayEngine {
       this.gameManager.simulateInput = this.gameManager.originalSimulateInput;
       delete this.gameManager.originalSimulateInput;
     }
+
+    // Handle UI cleanup via netplayMenu reference
+    if (this.netplayMenu) {
+
+      // Clean up room-specific UI elements
+      if (this.netplayMenu.cleanupRoomUI) {
+        this.netplayMenu.cleanupRoomUI();
+      }
+      // Reset netplay state
+      this.netplayMenu.isNetplay = false;
+
+      // Restore normal bottom bar buttons
+      if (this.netplayMenu.restoreNormalBottomBar) {
+        this.netplayMenu.restoreNormalBottomBar();
+      }
+
+      // Hide menu
+      if (this.netplayMenu.hide) {
+        this.netplayMenu.hide();
+      }
+
+      // Reset to lobby view
+      if (this.netplayMenu.netplay && this.netplayMenu.netplay.tabs && 
+          this.netplayMenu.netplay.tabs[0] && this.netplayMenu.netplay.tabs[1]) {
+        this.netplayMenu.netplay.tabs[0].style.display = "";
+        this.netplayMenu.netplay.tabs[1].style.display = "none";
+      }
+
+      // Reset title
+      if (this.netplayMenu.netplayMenu) {
+        const titleElement = this.netplayMenu.netplayMenu.querySelector("h4");
+        if (titleElement) {
+          titleElement.innerText = "Netplay Listings";
+        }
+      }
+
+      // Clear room state
+      if (this.emulator.netplay) {
+        this.emulator.netplay.currentRoomId = null;
+        this.emulator.netplay.currentRoom = null;
+        this.emulator.netplay.joinedPlayers = [];
+        this.emulator.netplay.takenSlots = new Set();
+      }
+    }
   }
 
-    // Setup WebRTC video/audio producers for LIVESTREAM hosts only
+  // Setup WebRTC video/audio producers for LIVESTREAM hosts only
   // Called only for livestream rooms where user is the host
   async netplaySetupProducers() {
     if (!this.emulator.netplay.engine || !this.sessionState?.isHostRole()) {

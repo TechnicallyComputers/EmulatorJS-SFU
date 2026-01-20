@@ -3515,6 +3515,7 @@ class EmulatorJS {
       this.menu.open(true);
     };
   }
+
   openCacheMenu() {
     (async () => {
       const list = this.createElement("table");
@@ -8450,34 +8451,6 @@ class EmulatorJS {
     if (hidden) popup.setAttribute("hidden", "");
     popup.appendChild(popupMsg);
     return [popup, popupMsg];
-  }
-  // Restore normal bottom bar buttons (hide Delay Sync buttons)
-  restoreNormalBottomBar() {
-    if (!this.elements.bottomBar) return;
-
-    // Hide Delay Sync buttons
-    const bar = this.elements.bottomBar;
-    if (bar.delaySyncReady && bar.delaySyncReady[0]) {
-      bar.delaySyncReady[0].remove();
-      delete bar.delaySyncReady;
-    }
-    if (bar.delaySyncLaunch && bar.delaySyncLaunch[0]) {
-      bar.delaySyncLaunch[0].remove();
-      delete bar.delaySyncLaunch;
-    }
-    if (bar.delaySyncLeave && bar.delaySyncLeave[0]) {
-      bar.delaySyncLeave[0].remove();
-      delete bar.delaySyncLeave;
-    }
-
-    // Show normal buttons
-    Object.keys(this.elements.bottomBar).forEach(key => {
-      if (this.elements.bottomBar[key] && Array.isArray(this.elements.bottomBar[key])) {
-        this.elements.bottomBar[key].forEach(btn => {
-          if (btn && btn.style) btn.style.display = "";
-        });
-      }
-    });
   }
 
   updateCheatUI() {
