@@ -20,6 +20,13 @@ class InputSync {
    * @param {Function} sendInputCallback - Callback to send input over network (frame, inputData)
    */
   constructor(emulatorAdapter, config, sessionState, sendInputCallback) {
+    console.log('[InputSync] Constructor called with:', {
+      hasEmulatorAdapter: !!emulatorAdapter,
+      config: config,
+      hasSessionState: !!sessionState,
+      hasSendInputCallback: !!sendInputCallback
+    });
+
     this.emulator = emulatorAdapter;
     this.config = config || {};
     this.sessionState = sessionState;
@@ -101,6 +108,16 @@ class InputSync {
     const frame = this.currentFrame || 0;
     const isHost = this.sessionState?.isHostRole() || false;
 
+    console.log("[InputSync] sendInput called:", {
+      requestedPlayerIndex: playerIndex,
+      actualPlayerIndex: actualPlayerIndex,
+      inputIndex,
+      value,
+      frame,
+      isHost,
+      slot: actualPlayerIndex
+    });
+
     if (isHost) {
       // Host: Store input in queue and apply immediately
       if (!this.inputsData[frame]) {
@@ -113,6 +130,16 @@ class InputSync {
 
       // Apply input immediately on host
       this.emulator.simulateInput(actualPlayerIndex, inputIndex, value);
+      
+      // For live stream mode, also send immediately via callback if available
+      if (this.sendInputCallback) {
+        const inputData = {
+          frame: frame + this.frameDelay,
+          connected_input: [actualPlayerIndex, inputIndex, value],
+        };
+        console.log("[InputSync] Host sending input via callback:", inputData);
+        this.sendInputCallback(frame + this.frameDelay, inputData);
+      }
     } else {
       // Client: Apply input immediately, then send over network
       this.emulator.simulateInput(actualPlayerIndex, inputIndex, value);
@@ -123,13 +150,16 @@ class InputSync {
           frame: frame + this.frameDelay,
           connected_input: [actualPlayerIndex, inputIndex, value],
         };
+        console.log("[InputSync] Client sending input via callback:", inputData);
         this.sendInputCallback(frame + this.frameDelay, inputData);
+      } else {
+        console.warn("[InputSync] sendInputCallback not available, input not sent");
       }
     }
 
     return true;
   }
-
+  
   /**
    * Receive input from network (called when input arrives over network).
    * @param {number} frame - Target frame number
@@ -228,7 +258,13 @@ class InputSync {
     // Client slot enforcement: use the lobby-selected slot
     const isHost = this.sessionState?.isHostRole() || false;
     if (!isHost) {
-      const preferredSlot = this.config.preferredSlot || 
+      // Check global slot preference first (updated when user changes slot in UI)
+      const globalPreferredSlot = typeof window.EJS_NETPLAY_PREFERRED_SLOT === "number" 
+        ? window.EJS_NETPLAY_PREFERRED_SLOT 
+        : null;
+      
+      const preferredSlot = globalPreferredSlot !== null ? globalPreferredSlot :
+                           this.config.preferredSlot || 
                            this.sessionState?.localSlot || 
                            0;
       const slot = parseInt(preferredSlot, 10);

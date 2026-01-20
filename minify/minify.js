@@ -93,10 +93,14 @@ async function doMinify() {
   console.log(`[Minify] Netplay modules: ${sourceFiles.filter(f => f.includes('netplay')).length} files`);
   console.log(`[Minify] Files being processed:`, sourceFiles.map(f => path.basename(f)));
 
-  // Debug logging
-  console.log(`[Minify] Including ${sourceFiles.length} source files`);
-  console.log(`[Minify] Netplay modules: ${sourceFiles.filter(f => f.includes('netplay')).length} files`);
-  console.log(`[Minify] Files being processed:`, sourceFiles.map(f => path.basename(f)));
+  // Check if SFUTransport is in the list
+  const hasSFU = sourceFiles.some(f => f.includes('SFUTransport'));
+  console.log(`[Minify] SFUTransport included: ${hasSFU}`);
+  if (hasSFU) {
+    const sfuFile = sourceFiles.find(f => f.includes('SFUTransport'));
+    console.log(`[Minify] SFUTransport file: ${sfuFile}`);
+    console.log(`[Minify] SFUTransport exists: ${fs.existsSync(sfuFile)}`);
+  }
 
   // Minify with terser - disable compression to debug
   const terserOptions = {
@@ -110,18 +114,33 @@ async function doMinify() {
     toplevel: false, // Don't optimize top-level scope
   };
 
-  await minify({
-    compressor: terser,
-    compressorOptions: terserOptions,
-    input: sourceFiles,
-    output: path.join(rootPath, "data/emulator.min.js"),
-  })
-    .catch(function (err) {
-      console.error(err);
-    })
-    .then(function () {
-      console.log("Minified JS");
+  console.log(`[Minify] About to minify ${sourceFiles.length} files to:`, path.join(rootPath, "data/emulator.min.js"));
+  console.log(`[Minify] First few input files:`, sourceFiles.slice(0, 3).map(f => path.basename(f)));
+
+  try {
+    await minify({
+      compressor: terser,
+      compressorOptions: terserOptions,
+      input: sourceFiles,
+      output: path.join(rootPath, "data/emulator.min.js"),
     });
+    console.log("Minified JS");
+
+    // Check if output file was created and has content
+    const outputPath = path.join(rootPath, "data/emulator.min.js");
+    if (fs.existsSync(outputPath)) {
+      const stats = fs.statSync(outputPath);
+      console.log(`[Minify] Output file size: ${stats.size} bytes`);
+      const content = fs.readFileSync(outputPath, 'utf8');
+      console.log(`[Minify] Output contains NetplayEngine: ${content.includes('NetplayEngine')}`);
+      console.log(`[Minify] Output contains SFUTransport: ${content.includes('SFUTransport')}`);
+    } else {
+      console.error("[Minify] Output file was not created!");
+    }
+  } catch (err) {
+    console.error("Error minifying JS:", err);
+    throw err;
+  }
 
   // Hybrid bundle
   await minify({

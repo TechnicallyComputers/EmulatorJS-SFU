@@ -254,11 +254,17 @@ IF EXIST AUTORUN.BAT AUTORUN.BAT
         })();
     }
     simulateInput(player, index, value) {
+        console.log('[GameManager] simulateInput called:', { player, index, value, isNetplay: this.EJS.isNetplay });
+
         if (this.EJS.isNetplay) {
+            console.log('[GameManager] In netplay mode, calling netplay.simulateInput');
             if (this.EJS.netplay && typeof this.EJS.netplay.simulateInput === 'function') {
+                console.log('[GameManager] Calling EJS.netplay.simulateInput');
                 this.EJS.netplay.simulateInput(player, index, value);
             } else {
                 console.warn('[GameManager] Netplay simulateInput not available yet');
+                console.log('[GameManager] EJS.netplay exists:', !!this.EJS.netplay);
+                console.log('[GameManager] simulateInput function exists:', typeof this.EJS.netplay?.simulateInput === 'function');
             }
             return;
         }

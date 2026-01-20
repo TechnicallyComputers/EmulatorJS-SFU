@@ -278,6 +278,35 @@ class RoomManager {
   }
 
   /**
+   * Update player slot.
+   * @param {number} slot - New slot number (0-3)
+   * @returns {Promise<void>}
+   */
+  async updatePlayerSlot(slot) {
+    if (!this.socket.isConnected()) {
+      throw new Error("Socket not connected");
+    }
+
+    const roomName = this.sessionState?.roomName;
+    if (!roomName) {
+      throw new Error("Not in a room");
+    }
+
+    return new Promise((resolve, reject) => {
+      this.socket.emit("update-player-slot", {
+        roomName: roomName,
+        playerSlot: slot
+      }, (error) => {
+        if (error) {
+          reject(new Error(error));
+          return;
+        }
+        resolve();
+      });
+    });
+  }
+
+  /**
    * Generate a GUID.
    * @private
    * @returns {string}
@@ -327,6 +356,29 @@ class RoomManager {
         this.config.callbacks.onUsersUpdated(users);
       } else {
         console.log("[RoomManager] No onUsersUpdated callback available, skipping UI update");
+      }
+    });
+
+    // Listen for player slot updates
+    this.socket.on("player-slot-updated", (data) => {
+      console.log("[RoomManager] Received player-slot-updated:", data);
+      if (data && data.playerId && data.playerSlot !== undefined) {
+        // Update session state
+        if (this.sessionState) {
+          const player = this.sessionState.getPlayer(data.playerId);
+          if (player) {
+            player.player_slot = data.playerSlot;
+            player.slot = data.playerSlot;
+            this.sessionState.updatePlayer(data.playerId, { player_slot: data.playerSlot, slot: data.playerSlot });
+          }
+        }
+
+        // Trigger UI update
+        if (this.config.callbacks?.onUsersUpdated) {
+          // Get current users and trigger update
+          const currentUsers = this.sessionState?.getPlayersObject() || {};
+          this.config.callbacks.onUsersUpdated(currentUsers);
+        }
       }
     });
 

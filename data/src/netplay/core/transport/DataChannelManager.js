@@ -90,14 +90,23 @@ class DataChannelManager {
       value: value,
     });
 
+    console.log("[DataChannelManager] 📤 Sending input:", { playerIndex, inputIndex, value, mode: this.mode });
+
     try {
       // Relay modes: use SFU data producer
       if (this.mode === "orderedRelay" || this.mode === "unorderedRelay") {
         if (this.dataProducer && !this.dataProducer.closed && typeof this.dataProducer.send === "function") {
           this.dataProducer.send(payload);
+          console.log("[DataChannelManager] ✅ Sent input via SFU data producer");
           return true;
+        } else {
+          console.warn("[DataChannelManager] ❌ SFU data producer not available:", {
+            hasProducer: !!this.dataProducer,
+            closed: this.dataProducer?.closed,
+            hasSend: typeof this.dataProducer?.send === "function"
+          });
+          return false;
         }
-        return false;
       }
 
       // Unordered P2P: try unordered channels first
@@ -146,11 +155,18 @@ class DataChannelManager {
         return;
       }
 
+      console.log("[DataChannelManager] 📥 Received input message:", { data, fromSocketId });
+
       // Parse input data
       if (data.player !== undefined && data.index !== undefined && data.value !== undefined) {
         if (this.onInputCallback) {
+          console.log("[DataChannelManager] 🎮 Calling input callback for received input");
           this.onInputCallback(data.player, data.index, data.value, fromSocketId);
+        } else {
+          console.warn("[DataChannelManager] No input callback set for received input");
         }
+      } else {
+        console.warn("[DataChannelManager] Invalid input data received:", data);
       }
     } catch (error) {
       console.error("[DataChannelManager] Failed to parse incoming message:", error);
@@ -170,18 +186,42 @@ class DataChannelManager {
    * @returns {boolean}
    */
   isReady() {
-    if (this.mode === "orderedRelay" || this.mode === "unorderedRelay") {
-      return this.dataProducer && !this.dataProducer.closed;
-    }
+    let ready = false;
 
-    // P2P modes: check if at least one channel is open
-    for (const channels of this.p2pChannels.values()) {
-      if (channels.ordered?.readyState === "open" || channels.unordered?.readyState === "open") {
-        return true;
+    if (this.mode === "orderedRelay" || this.mode === "unorderedRelay") {
+      ready = this.dataProducer && !this.dataProducer.closed;
+      console.log("[DataChannelManager] isReady check for relay mode:", {
+        mode: this.mode,
+        hasDataProducer: !!this.dataProducer,
+        dataProducerClosed: this.dataProducer?.closed,
+        ready
+      });
+    } else {
+      // P2P modes: check if at least one channel is open
+      for (const [socketId, channels] of this.p2pChannels.entries()) {
+        if (channels.ordered?.readyState === "open" || channels.unordered?.readyState === "open") {
+          console.log("[DataChannelManager] isReady check for P2P mode:", {
+            mode: this.mode,
+            socketId,
+            orderedState: channels.ordered?.readyState,
+            unorderedState: channels.unordered?.readyState,
+            ready: true
+          });
+          ready = true;
+          break;
+        }
+      }
+
+      if (!ready) {
+        console.log("[DataChannelManager] isReady check for P2P mode - no open channels:", {
+          mode: this.mode,
+          channelCount: this.p2pChannels.size,
+          ready: false
+        });
       }
     }
 
-    return false;
+    return ready;
   }
 
   /**
