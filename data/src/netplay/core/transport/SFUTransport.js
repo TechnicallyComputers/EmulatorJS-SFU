@@ -977,13 +977,14 @@ class SFUTransport {
 
     try {
       // Create producer on dedicated audio transport
-      // Disable DTX (Discontinuous Transmission) for game audio to prevent sync drift
-      // DTX causes periodic silence that breaks A/V synchronization
+      // Configure Opus codec for optimal game audio streaming
       this.audioProducer = await this.audioSendTransport.produce({
         track: audioTrack,
         codecOptions: {
-          opusStereo: true,
-          opusDtx: false,
+          opusStereo: true,      // Enable stereo for game audio
+          opusFec: true,         // Forward Error Correction for reliability
+          opusDtx: false,        // Disable DTX to prevent sync drift
+          opusPtime: 20,         // 20ms packet time for optimal latency/bandwidth
         },
       });
 
@@ -995,6 +996,50 @@ class SFUTransport {
       return this.audioProducer;
     } catch (error) {
       console.error("[SFUTransport] Failed to create audio producer:", error);
+      throw error;
+    }
+  }
+
+  /**
+   * Create mic audio producer (voice chat).
+   * @param {MediaStreamTrack} micTrack - Microphone audio track
+   * @returns {Promise<Object>} Mic audio producer
+   */
+  async createMicAudioProducer(micTrack) {
+    if (!this.useSFU || !this.device) {
+      throw new Error("SFU not available or device not initialized");
+    }
+
+    // Ensure audio send transport exists (separate from video transport)
+    if (!this.audioSendTransport) {
+      await this.createSendTransport('audio');
+    }
+
+    if (!this.audioSendTransport) {
+      throw new Error("Audio send transport not available");
+    }
+
+    try {
+      // Create mic producer on dedicated audio transport
+      // Configure Opus codec for voice chat (mono)
+      this.micAudioProducer = await this.audioSendTransport.produce({
+        track: micTrack,
+        codecOptions: {
+          opusStereo: false,     // Mono for voice chat
+          opusFec: true,         // Forward Error Correction for reliability
+          opusDtx: false,        // Keep voice continuous
+          opusPtime: 20,         // 20ms packet time for voice latency
+        },
+      });
+
+      console.log("[SFUTransport] Created mic audio producer:", {
+        id: this.micAudioProducer.id,
+        transportId: this.audioSendTransport.id,
+      });
+
+      return this.micAudioProducer;
+    } catch (error) {
+      console.error("[SFUTransport] Failed to create mic audio producer:", error);
       throw error;
     }
   }
@@ -1123,6 +1168,7 @@ class SFUTransport {
 
           consumer.on('message', (message) => {
             console.log(`[SFUTransport] 📨 Data consumer received message:`, message);
+            console.log(`[SFUTransport] Message type: ${typeof message}, value:`, message);
             // For SFU, we don't have the socketId mapping, so pass null
             this.dataChannelManager.handleIncomingMessage(message, null);
           });

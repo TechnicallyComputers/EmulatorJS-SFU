@@ -885,6 +885,7 @@ class NetplayMenu {
         unorderedRelay: "Unordered Relay",
         orderedRelay: "Ordered Relay",
         unorderedP2P: "Unordered P2P",
+        orderedP2P: "Ordered P2P",
       },
       getSetting("netplayInputMode", "unorderedRelay"),
       (value) => saveSetting("netplayInputMode", value)
@@ -2422,97 +2423,23 @@ class NetplayMenu {
 
     try {
       if (kind === 'audio') {
-        // Audio is master clock - create audio element first
-        let audioElement = this.netplay.mediaElements.audio;
-        if (!audioElement) {
-          audioElement = document.createElement('audio');
-          audioElement.autoplay = true;
-          audioElement.playsInline = true;
-          audioElement.muted = false; // Ensure audio is not muted
-          audioElement.style.display = 'none'; // Hidden element
-          audioElement.id = 'ejs-netplay-audio';
-          
-          // Append to DOM before storing reference
-          document.body.appendChild(audioElement);
-          this.netplay.mediaElements.audio = audioElement;
-          
-          // Hook into emulator's volume control to sync stream audio volume
-          this.netplaySetupStreamVolumeControl();
-          
-          // Set initial volume from emulator
-          if (this.emulator.volume !== undefined) {
-            audioElement.volume = this.emulator.volume;
-          }
-          
-          console.log('[NetplayMenu] Created audio element (master clock)');
-        }
+        // Initialize audio mixing system if not exists
+        this.netplayInitializeAudioMixer();
 
-        // Ensure audio element is in the DOM
-        if (!audioElement.isConnected) {
-          console.warn('[NetplayMenu] Audio element not in DOM, re-appending...');
-          document.body.appendChild(audioElement);
-        }
+        // Determine if this is game audio or mic audio based on track properties
+        // Game audio is typically stereo, mic audio is mono
+        const isMicAudio = track.getSettings().channelCount === 1 ||
+                          track.label?.toLowerCase().includes('mic') ||
+                          track.label?.toLowerCase().includes('voice');
 
-        // Ensure audio is not muted
-        audioElement.muted = false;
+        console.log(`[NetplayMenu] 🎵 Attaching ${isMicAudio ? 'mic' : 'game'} audio track`, {
+          trackId: track.id,
+          label: track.label,
+          channelCount: track.getSettings().channelCount
+        });
 
-        // Stop any existing tracks
-        if (audioElement.srcObject) {
-          const existingStream = audioElement.srcObject;
-          existingStream.getTracks().forEach(t => t.stop());
-        }
-
-        // Create new MediaStream with the track
-        const audioStream = new MediaStream([track]);
-        audioElement.srcObject = audioStream;
-
-        // Ensure playback starts - wait for element to be ready
-        const playAudio = async () => {
-          try {
-            // Wait a tiny bit to ensure element is fully in DOM
-            await new Promise(resolve => setTimeout(resolve, 50));
-            
-            if (audioElement.isConnected && audioElement.srcObject) {
-              // Ensure not muted and volume is set
-              audioElement.muted = false;
-              if (this.emulator.volume !== undefined) {
-                audioElement.volume = this.emulator.volume;
-              }
-              
-              await audioElement.play();
-              console.log('[NetplayMenu] Audio playback started successfully', {
-                muted: audioElement.muted,
-                volume: audioElement.volume,
-                paused: audioElement.paused,
-                readyState: audioElement.readyState
-              });
-            } else {
-              console.warn('[NetplayMenu] Audio element not ready for playback', {
-                isConnected: audioElement.isConnected,
-                hasSrcObject: !!audioElement.srcObject
-              });
-            }
-          } catch (err) {
-            console.warn('[NetplayMenu] Audio autoplay prevented, user interaction may be required:', err);
-          }
-        };
-        
-        playAudio();
-
-        console.log('[NetplayMenu] Audio track attached to audio element');
-        
-        // Debug: Log audio element state
-        const audioEl = this.netplay.mediaElements?.audio;
-        if (audioEl) {
-          console.log('[NetplayMenu] Audio element state:', {
-            isConnected: audioEl.isConnected,
-            muted: audioEl.muted,
-            volume: audioEl.volume,
-            srcObject: !!audioEl.srcObject,
-            paused: audioEl.paused,
-            readyState: audioEl.readyState
-          });
-        }
+        // Add track to the audio mixer
+        this.netplayAddAudioTrack(track, isMicAudio ? 'mic' : 'game');
 
       } else if (kind === 'video') {
         // Video follows audio clock - create video element
@@ -3013,11 +2940,47 @@ class NetplayMenu {
     }
 
     // Get input mode from settings (unorderedRelay, orderedRelay, or unorderedP2P)
-    const inputMode = this.emulator.getSettingValue("netplayInputMode") || 
-                      this.emulator.netplayInputMode || 
+    const inputMode = this.emulator.getSettingValue("netplayInputMode") ||
+                      this.emulator.netplayInputMode ||
                       "unorderedRelay";
 
     console.log("[NetplayMenu] Input mode:", inputMode);
+
+    // Handle dynamic transport switching
+    const previousMode = this.engine?.dataChannelManager?.mode;
+    const modeChanged = previousMode && previousMode !== inputMode;
+
+    if (modeChanged) {
+      console.log(`[NetplayMenu] 🚀 Transport mode changed from ${previousMode} to ${inputMode}, switching connections`);
+
+      // Tear down existing P2P connections if switching away from P2P
+      if ((previousMode === "unorderedP2P" || previousMode === "orderedP2P") &&
+          (inputMode === "unorderedRelay" || inputMode === "orderedRelay")) {
+        console.log("[NetplayMenu] 🔌 Tearing down P2P connections for relay mode");
+        this.netplayTearDownP2PConnections();
+      }
+
+      // Tear down existing P2P connections if switching between P2P modes
+      if ((previousMode === "unorderedP2P" || previousMode === "orderedP2P") &&
+          (inputMode === "unorderedP2P" || inputMode === "orderedP2P") &&
+          previousMode !== inputMode) {
+        console.log("[NetplayMenu] 🔄 Switching between P2P modes, tearing down existing connections");
+        this.netplayTearDownP2PConnections();
+      }
+
+      // Update DataChannelManager mode
+      if (this.engine?.dataChannelManager) {
+        this.engine.dataChannelManager.mode = inputMode;
+
+        // Update buffer limit based on new settings
+        const unorderedRetries = this.emulator.getSettingValue("netplayUnorderedRetries") || 0;
+        this.engine.dataChannelManager.maxPendingInputs = Math.max(unorderedRetries, 10); // Minimum 10
+        console.log(`[NetplayMenu] 📦 Updated buffer limit to ${this.engine.dataChannelManager.maxPendingInputs}`);
+      }
+    } else if (this.engine?.dataChannelManager) {
+      console.log(`[NetplayMenu] Updating DataChannelManager mode from ${this.engine.dataChannelManager.mode} to ${inputMode}`);
+      this.engine.dataChannelManager.mode = inputMode;
+    }
 
     // Ensure InputSync is initialized
     if (!engine.inputSync) {
@@ -3061,23 +3024,42 @@ class NetplayMenu {
       // Override InputSync's sendInputCallback to send via data channel
       const originalSendInputCallback = engine.inputSync.sendInputCallback;
       engine.inputSync.sendInputCallback = (frame, inputData) => {
+        console.log("[NetplayMenu] sendInputCallback called:", { frame, inputData });
+
         // Call original callback (for Socket.IO fallback)
         if (originalSendInputCallback) {
+          console.log("[NetplayMenu] Calling original sendInputCallback");
           originalSendInputCallback(frame, inputData);
         }
 
         // Send via data channel if ready
         if (engine.dataChannelManager && engine.dataChannelManager.isReady()) {
+          console.log("[NetplayMenu] DataChannelManager is ready, sending via data channel");
           if (Array.isArray(inputData)) {
             inputData.forEach((data) => {
               if (data.connected_input && data.connected_input.length === 3) {
                 const [playerIndex, inputIndex, value] = data.connected_input;
-                engine.dataChannelManager.sendInput(playerIndex, inputIndex, value);
+                const inputPayload = {
+                  frame: data.frame || frame || 0,
+                  slot: 0, // Default slot for fallback
+                  playerIndex: playerIndex,
+                  inputIndex: inputIndex,
+                  value: value
+                };
+                engine.dataChannelManager.sendInput(inputPayload);
               }
             });
           } else if (inputData.connected_input && inputData.connected_input.length === 3) {
             const [playerIndex, inputIndex, value] = inputData.connected_input;
-            engine.dataChannelManager.sendInput(playerIndex, inputIndex, value);
+            const inputPayload = {
+              frame: frame || inputData.frame || 0,
+              slot: 0, // Default slot for fallback
+              playerIndex: playerIndex,
+              inputIndex: inputIndex,
+              value: value
+            };
+            console.log("[NetplayMenu] Calling dataChannelManager.sendInput with:", inputPayload);
+            engine.dataChannelManager.sendInput(inputPayload);
           }
         } else {
           console.log("[NetplayMenu] DataChannelManager not ready, inputs will use Socket.IO fallback");
@@ -3148,6 +3130,156 @@ class NetplayMenu {
     // and their slot + settings when this is called.
     this.netplaySetupLiveStreamInputSync();
   }
+
+  /**
+   * Handle netplay setting changes (called from emulator.js).
+   * @param {string} changeType - Type of change ("unordered-retries-change", "setting-change", etc.)
+   */
+  netplayApplyInputMode(changeType) {
+    console.log(`[NetplayMenu] 📝 Applying input mode change: ${changeType}`);
+
+    if (changeType === "unordered-retries-change") {
+      // Update buffer limit when unordered retries setting changes
+      const unorderedRetries = this.emulator.getSettingValue("netplayUnorderedRetries") || 0;
+      if (this.engine?.dataChannelManager) {
+        this.engine.dataChannelManager.maxPendingInputs = Math.max(unorderedRetries, 10);
+        console.log(`[NetplayMenu] 📦 Updated buffer limit to ${this.engine.dataChannelManager.maxPendingInputs} based on unordered retries setting`);
+      }
+    } else if (changeType === "setting-change") {
+      // Handle other setting changes, including input mode changes
+      this.netplaySetupLiveStreamInputSync();
+    }
+  }
+
+  /**
+   * Tear down existing P2P connections when switching transport modes.
+   */
+  netplayTearDownP2PConnections() {
+    if (!this.engine?.dataChannelManager) {
+      return;
+    }
+
+    console.log("[NetplayMenu] 🔌 Tearing down P2P connections");
+
+    // Clear all P2P channels
+    this.engine.dataChannelManager.p2pChannels.clear();
+
+    // Clear any pending inputs since we're switching transports
+    this.engine.dataChannelManager.pendingInputs = [];
+
+    console.log("[NetplayMenu] ✅ P2P connections torn down");
+  }
+
+  /**
+   * Initialize client-side audio mixing system for game + voice audio.
+   */
+  netplayInitializeAudioMixer() {
+    if (this.netplay.audioMixer) {
+      return; // Already initialized
+    }
+
+    console.log('[NetplayMenu] 🎛️ Initializing audio mixer for game + voice audio');
+
+    this.netplay.audioMixer = {
+      audioContext: null,
+      gameSource: null,
+      micSource: null,
+      gameGain: null,
+      micGain: null,
+      gameTrack: null,
+      micTrack: null,
+      audioElement: null
+    };
+
+    try {
+      // Create AudioContext
+      this.netplay.audioMixer.audioContext = new (window.AudioContext || window.webkitAudioContext)();
+
+      // Create audio element for output (fallback)
+      const audioElement = document.createElement('audio');
+      audioElement.autoplay = true;
+      audioElement.playsInline = true;
+      audioElement.muted = false;
+      audioElement.style.display = 'none';
+      audioElement.id = 'ejs-netplay-mixed-audio';
+      document.body.appendChild(audioElement);
+      this.netplay.audioMixer.audioElement = audioElement;
+
+      // Hook into emulator's volume control
+      this.netplaySetupStreamVolumeControl();
+
+      console.log('[NetplayMenu] ✅ Audio mixer initialized');
+    } catch (error) {
+      console.error('[NetplayMenu] ❌ Failed to initialize audio mixer:', error);
+    }
+  }
+
+  /**
+   * Add an audio track to the mixer (game or mic audio).
+   * @param {MediaStreamTrack} track - Audio track to add
+   * @param {string} type - 'game' or 'mic'
+   */
+  netplayAddAudioTrack(track, type) {
+    if (!this.netplay.audioMixer) {
+      console.warn('[NetplayMenu] Audio mixer not initialized');
+      return;
+    }
+
+    const mixer = this.netplay.audioMixer;
+    console.log(`[NetplayMenu] 🎚️ Adding ${type} audio track to mixer`);
+
+    try {
+      // Create MediaStream from track
+      const stream = new MediaStream([track]);
+
+      if (type === 'game') {
+        // Disconnect existing game audio if any
+        if (mixer.gameSource) {
+          mixer.gameSource.disconnect();
+        }
+
+        // Create new game audio source
+        mixer.gameSource = mixer.audioContext.createMediaStreamSource(stream);
+        mixer.gameGain = mixer.audioContext.createGain();
+        mixer.gameGain.gain.value = 1.0; // Full volume for game audio
+        mixer.gameTrack = track;
+
+        // Connect: game source -> game gain -> context destination
+        mixer.gameSource.connect(mixer.gameGain);
+        mixer.gameGain.connect(mixer.audioContext.destination);
+
+        console.log('[NetplayMenu] 🎮 Game audio connected to mixer');
+      } else if (type === 'mic') {
+        // Disconnect existing mic audio if any
+        if (mixer.micSource) {
+          mixer.micSource.disconnect();
+        }
+
+        // Create new mic audio source
+        mixer.micSource = mixer.audioContext.createMediaStreamSource(stream);
+        mixer.micGain = mixer.audioContext.createGain();
+        mixer.micGain.gain.value = 0.8; // Slightly quieter voice chat
+        mixer.micTrack = track;
+
+        // Connect: mic source -> mic gain -> context destination
+        mixer.micSource.connect(mixer.micGain);
+        mixer.micGain.connect(mixer.audioContext.destination);
+
+        console.log('[NetplayMenu] 🎤 Mic audio connected to mixer');
+      }
+
+      // Resume audio context if suspended
+      if (mixer.audioContext.state === 'suspended') {
+        mixer.audioContext.resume().then(() => {
+          console.log('[NetplayMenu] 🔊 Audio context resumed');
+        });
+      }
+
+    } catch (error) {
+      console.error(`[NetplayMenu] ❌ Failed to add ${type} audio to mixer:`, error);
+    }
+  }
+
   // ... continue with all other netplay* functions
   // All other netplay functions moved here...
 }

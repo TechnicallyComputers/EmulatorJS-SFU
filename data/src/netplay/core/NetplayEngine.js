@@ -289,46 +289,13 @@ getPlayerName() {
       this.roomManager.config.callbacks = this.config.callbacks;
       this.roomManager.setupEventListeners();
 
-      // 14. Input Sync (needs callback for sending inputs)
-      const sendInputCallback = (frame, inputData) => {
-        // Send input via data channel or socket
-        console.log("[NetplayEngine] sendInputCallback called:", {
-          frame,
-          inputData,
-          hasDataChannelManager: !!this.dataChannelManager,
-          dataChannelManagerReady: this.dataChannelManager?.isReady(),
-          mode: this.dataChannelManager?.mode
-        });
-
-        if (this.dataChannelManager && this.dataChannelManager.isReady()) {
-          // Use data channel (for SFU relay modes)
-          const slot = this.emulator?.netplay?.localSlot || 0;
-          if (Array.isArray(inputData)) {
-            // Multiple inputs to send
-            inputData.forEach((data) => {
-              if (data.connected_input && data.connected_input.length === 3) {
-                const [playerIndex, inputIndex, value] = data.connected_input;
-                this.dataChannelManager.sendInput(playerIndex, inputIndex, value, frame, slot);
-              }
-            });
-          } else if (inputData.connected_input && inputData.connected_input.length === 3) {
-            // Single input
-            const [playerIndex, inputIndex, value] = inputData.connected_input;
-            this.dataChannelManager.sendInput(playerIndex, inputIndex, value, frame, slot);
-          }
-        } else if (this.socketTransport && this.socketTransport.isConnected()) {
-          // Fallback to Socket.IO "sync-control" message
-          if (Array.isArray(inputData)) {
-            this.socketTransport.sendDataMessage({
-              "sync-control": inputData,
-            });
-          } else {
-            this.socketTransport.sendDataMessage({
-              "sync-control": [inputData],
-            });
-          }
-        }
-      };
+      // 14. Input Sync (create callback for sending inputs)
+      const sendInputCallback = this.inputSync.createSendInputCallback(
+        this.dataChannelManager,
+        this.configManager,
+        this.emulator,
+        this.socketTransport
+      );
 
       // Create emulator adapter for InputSync
       const EmulatorJSAdapterClass =
@@ -350,35 +317,25 @@ getPlayerName() {
       // Setup data channel input receiver
       if (this.dataChannelManager) {
         console.log('[NetplayEngine] Setting up DataChannelManager input receiver');
-        this.dataChannelManager.onInput((playerIndex, inputIndex, value, fromSocketId) => {
-          console.log('[NetplayEngine] 🔄 Received input from DataChannelManager:', { playerIndex, inputIndex, value, fromSocketId });
-
-          const isHost = this.sessionState?.isHostRole() || false;
-          const frame = this.frameCounter?.getCurrentFrame() || 0;
-
-          console.log('[NetplayEngine] Input processing context:', {
-            isHost,
-            frame,
-            frameCounterExists: !!this.frameCounter,
-            inputSyncExists: !!this.inputSync
+        this.dataChannelManager.onInput(({ payload, fromSocketId }) => {
+          console.log('[NetplayEngine] 🔄 Received input from DataChannelManager:', {
+            frame: payload.getFrame(),
+            slot: payload.getSlot(),
+            player: payload.p,
+            input: payload.k,
+            value: payload.v,
+            fromSocketId
           });
 
-          if (isHost) {
-            // Host: Store input for frame processing (delay-sync mode)
-            console.log('[NetplayEngine] 📥 Host storing input for frame processing');
-            const receiveResult = this.inputSync.receiveInput(frame, [playerIndex, inputIndex, value], fromSocketId);
-            console.log('[NetplayEngine] 📥 InputSync.receiveInput result:', receiveResult);
-          } else {
-            // Client (delay-sync mode): DO NOT apply inputs locally
-            // Clients only receive video/audio streams from host
-            // All input simulation is handled by host only
-            console.log(`[NetplayEngine] 👤 Client received input (not applying locally): player ${playerIndex}, input ${inputIndex}, value ${value}`);
-            console.log(`[NetplayEngine] 👤 Client in delay-sync mode - inputs only simulated by host`);
+          // Delegate to input sync for processing
+          if (this.inputSync) {
+            this.inputSync.handleRemoteInput(payload, fromSocketId);
           }
         });
       } else {
         console.warn('[NetplayEngine] DataChannelManager not available for input receiver setup');
       }
+
 
       // Setup socket data message handler for inputs
       if (this.socketTransport) {
@@ -2128,46 +2085,47 @@ getPlayerName() {
         }
       }
 
-      // Capture audio (if available) with aggressive retry logic
+      // Capture game audio (emulator audio) with retry logic
       try {
-        let audioTrack = await this.netplayCaptureAudio();
+        console.log("[Netplay] 🔊 Setting up game audio producer...");
+        let gameAudioTrack = await this.netplayCaptureAudio();
         let retryCount = 0;
-        const maxRetries = 15; // Increased from 5 to 15
+        const maxRetries = 15;
 
-        // Retry audio capture more aggressively in case emulator audio isn't ready yet
-        while (!audioTrack && retryCount < maxRetries) {
+        // Retry game audio capture more aggressively in case emulator audio isn't ready yet
+        while (!gameAudioTrack && retryCount < maxRetries) {
           const delay = retryCount < 5 ? 2000 : 5000; // 2s for first 5, then 5s
-          console.log(`[Netplay] Audio capture attempt ${retryCount + 1}/${maxRetries} failed, retrying in ${delay/1000}s...`);
+          console.log(`[Netplay] Game audio capture attempt ${retryCount + 1}/${maxRetries} failed, retrying in ${delay/1000}s...`);
           await new Promise(resolve => setTimeout(resolve, delay));
-          audioTrack = await this.netplayCaptureAudio();
+          gameAudioTrack = await this.netplayCaptureAudio();
           retryCount++;
         }
 
-        if (audioTrack) {
-          await this.sfuTransport.createAudioProducer(audioTrack);
-          console.log("[Netplay] ✅ Audio producer created");
+        if (gameAudioTrack) {
+          await this.sfuTransport.createAudioProducer(gameAudioTrack);
+          console.log("[Netplay] ✅ Game audio producer created");
         } else {
-          console.warn("[Netplay] ⚠️ No audio track captured after all retries");
+          console.warn("[Netplay] ⚠️ No game audio track captured after all retries");
 
-          // Set up continuous audio capture retry for hosts
+          // Set up continuous game audio capture retry for hosts
           if (this.sessionState?.isHostRole() && this.emulator.netplay?.currentRoom?.netplay_mode === 0) {
-            console.log("[Netplay] Setting up continuous audio capture retry for host");
+            console.log("[Netplay] Setting up continuous game audio capture retry for host");
             this._audioRetryInterval = setInterval(async () => {
               if (!this.sfuTransport?.audioProducer) {
-                console.log("[Netplay] Host retrying audio capture...");
+                console.log("[Netplay] Host retrying game audio capture...");
                 try {
-                  const audioTrack = await this.netplayCaptureAudio();
-                  if (audioTrack) {
-                    await this.sfuTransport.createAudioProducer(audioTrack);
-                    console.log("[Netplay] ✅ Audio producer created on continuous retry");
+                  const gameAudioTrack = await this.netplayCaptureAudio();
+                  if (gameAudioTrack) {
+                    await this.sfuTransport.createAudioProducer(gameAudioTrack);
+                    console.log("[Netplay] ✅ Game audio producer created on continuous retry");
                     clearInterval(this._audioRetryInterval);
                     this._audioRetryInterval = null;
                   }
                 } catch (retryError) {
-                  console.debug("[Netplay] Audio retry failed:", retryError.message);
+                  console.debug("[Netplay] Game audio retry failed:", retryError.message);
                 }
               } else {
-                console.log("[Netplay] Host already has audio producer, stopping continuous retry");
+                console.log("[Netplay] Host already has game audio producer, stopping continuous retry");
                 clearInterval(this._audioRetryInterval);
                 this._audioRetryInterval = null;
               }
@@ -2176,7 +2134,7 @@ getPlayerName() {
             // Stop after 5 minutes
             setTimeout(() => {
               if (this._audioRetryInterval) {
-                console.log("[Netplay] Stopping continuous audio retry after timeout");
+                console.log("[Netplay] Stopping continuous game audio retry after timeout");
                 clearInterval(this._audioRetryInterval);
                 this._audioRetryInterval = null;
               }
@@ -2184,8 +2142,28 @@ getPlayerName() {
           }
         }
       } catch (error) {
-        console.error("[Netplay] ❌ Failed to create audio producer:", error);
-        // Continue - video might still work
+        console.error("[Netplay] ❌ Failed to create game audio producer:", error);
+        // Game audio is optional, don't throw here
+      }
+
+      // Capture mic audio for voice chat (only for non-spectators)
+      const isSpectator = this.sessionState?.isSpectatorRole() || false;
+      if (!isSpectator) {
+        try {
+          console.log("[Netplay] 🎤 Setting up mic audio producer for voice chat...");
+          const micAudioTrack = await this.netplayCaptureMicAudio();
+          if (micAudioTrack) {
+            await this.sfuTransport.createMicAudioProducer(micAudioTrack);
+            console.log("[Netplay] ✅ Mic audio producer created");
+          } else {
+            console.log("[Netplay] ℹ️ Mic audio not available (user denied permission or no mic found)");
+          }
+        } catch (error) {
+          console.error("[Netplay] ❌ Failed to create mic audio producer:", error);
+          // Mic audio is optional, don't throw here
+        }
+      } else {
+        console.log("[Netplay] 👁️ Spectator mode - skipping mic audio producer");
       }
 
       // Create data producer for input relay
@@ -2240,6 +2218,13 @@ getPlayerName() {
   async netplaySetupDataProducers() {
     if (!this.emulator.netplay.engine) {
       console.log("[Netplay] Engine not available, skipping data producer setup");
+      return;
+    }
+
+    // Spectators don't need to create input data producers
+    const isSpectator = this.sessionState?.isSpectatorRole() || false;
+    if (isSpectator) {
+      console.log("[Netplay] 👁️ Spectator mode - skipping input data producer setup");
       return;
     }
 
@@ -2443,17 +2428,80 @@ getPlayerName() {
     try {
       console.log("[Netplay] Initiating P2P connection to host...");
 
-      // Get ICE servers from config
-      const iceServers = this.configManager?.getSetting("netplayIceServers") ||
-                         [{ urls: 'stun:stun.l.google.com:19302' }];
+      // Get ICE servers from config, fallback to multiple STUN + public TURN
+      const iceServers = this.configManager?.getSetting("netplayIceServers") || [
+        { urls: 'stun:stun.l.google.com:19302' },
+        { urls: 'stun:stun1.l.google.com:19302' },
+        { urls: 'stun:stun2.l.google.com:19302' },
+        // Public TURN servers (may have rate limits)
+        {
+          urls: 'turn:turn.anyfirewall.com:443?transport=tcp',
+          username: 'webrtc',
+          credential: 'webrtc'
+        }
+      ];
 
       // Get unordered retries setting
       const unorderedRetries = this.configManager?.getSetting("netplayUnorderedRetries") || 0;
 
       // Create RTCPeerConnection for P2P data channels
       const pc = new RTCPeerConnection({
-        iceServers: iceServers
+        iceServers: iceServers,
+        iceTransportPolicy: 'all', // Try all candidates
+        bundlePolicy: 'balanced',
+        rtcpMuxPolicy: 'require'
       });
+
+      // Add comprehensive WebRTC monitoring
+      let connectionTimeout = null;
+      let iceGatheringTimeout = null;
+
+      pc.oniceconnectionstatechange = () => {
+        console.log(`[Netplay] P2P ICE connection state (${target}): ${pc.iceConnectionState}`);
+        if (pc.iceConnectionState === 'connected' || pc.iceConnectionState === 'completed') {
+          console.log(`[Netplay] ✅ P2P connection established with ${target}!`);
+          clearTimeout(connectionTimeout);
+          clearTimeout(iceGatheringTimeout);
+        } else if (pc.iceConnectionState === 'failed' || pc.iceConnectionState === 'disconnected' || pc.iceConnectionState === 'closed') {
+          console.warn(`[Netplay] ❌ P2P connection failed with ${target}: ${pc.iceConnectionState}`);
+          // Could fall back to relay mode here
+        }
+      };
+
+      pc.onicegatheringstatechange = () => {
+        console.log(`[Netplay] P2P ICE gathering state (${target}): ${pc.iceGatheringState}`);
+        if (pc.iceGatheringState === 'complete') {
+          clearTimeout(iceGatheringTimeout);
+        }
+      };
+
+      pc.onicecandidate = (event) => {
+        if (event.candidate) {
+          console.log(`[Netplay] P2P ICE candidate (${target}): ${event.candidate.type} ${event.candidate.protocol}:${event.candidate.port}`);
+        } else {
+          console.log(`[Netplay] P2P ICE candidate gathering complete (${target})`);
+        }
+      };
+
+      pc.onconnectionstatechange = () => {
+        console.log(`[Netplay] P2P connection state (${target}): ${pc.connectionState}`);
+      };
+
+      // Set timeout for connection establishment
+      connectionTimeout = setTimeout(() => {
+        if (pc.connectionState !== 'connected' && pc.connectionState !== 'completed') {
+          console.error(`[Netplay] ❌ P2P connection timeout with ${target} - falling back to relay mode`);
+          pc.close();
+          this.handleP2PFallback(target);
+        }
+      }, 15000); // 15 second timeout
+
+      // Set timeout for ICE gathering
+      iceGatheringTimeout = setTimeout(() => {
+        if (pc.iceGatheringState !== 'complete') {
+          console.warn(`[Netplay] ⚠️ P2P ICE gathering timeout with ${target}`);
+        }
+      }, 5000); // 5 second timeout
 
       // Create data channels as offerer (client creates channels, host receives them)
       console.log(`[Netplay] Creating data channels for P2P connection`);
@@ -2640,6 +2688,96 @@ getPlayerName() {
     }
   }
 
+  /**
+   * Handle P2P connection failure by falling back to relay mode
+   * @param {string} targetId - The peer ID that failed P2P connection
+   */
+  handleP2PFallback(targetId) {
+    console.log(`[Netplay] 🔄 Handling P2P fallback for ${targetId}`);
+
+    if (!this.dataChannelManager) {
+      console.warn("[Netplay] No DataChannelManager available for fallback");
+      return;
+    }
+
+    const currentMode = this.dataChannelManager.mode;
+    if (currentMode === 'unorderedP2P') {
+      console.log(`[Netplay] Falling back from unorderedP2P to unorderedRelay for ${targetId}`);
+      this.dataChannelManager.mode = 'unorderedRelay';
+      // Remove failed P2P channel
+      this.dataChannelManager.removeP2PChannel(targetId);
+      // TODO: Notify UI of mode change when method is implemented
+    } else if (currentMode === 'orderedP2P') {
+      console.log(`[Netplay] Falling back from orderedP2P to orderedRelay for ${targetId}`);
+      this.dataChannelManager.mode = 'orderedRelay';
+      // Remove failed P2P channel
+      this.dataChannelManager.removeP2PChannel(targetId);
+      // TODO: Notify UI of mode change when method is implemented
+    }
+
+    // Send notification to user
+    console.warn(`[Netplay] ⚠️ P2P connection failed with ${targetId}, switched to relay mode. Check network/firewall settings for better P2P performance.`);
+    console.warn(`[Netplay] 💡 P2P troubleshooting tips:`);
+    console.warn(`[Netplay]   - Ensure both devices are on different networks or same network with proper routing`);
+    console.warn(`[Netplay]   - Check firewall settings allow UDP connections on ports 3478-65535`);
+    console.warn(`[Netplay]   - Try disabling VPN if active`);
+    console.warn(`[Netplay]   - Public TURN servers have rate limits - consider private TURN server for production`);
+  }
+
+  /**
+   * Test P2P connectivity and log diagnostics
+   */
+  async testP2PConnectivity() {
+    console.log("[Netplay] 🔍 Testing P2P connectivity...");
+
+    try {
+      // Test ICE servers
+      const iceServers = this.configManager?.getSetting("netplayIceServers") || [
+        { urls: 'stun:stun.l.google.com:19302' },
+        { urls: 'stun:stun1.l.google.com:19302' },
+        { urls: 'stun:stun2.l.google.com:19302' }
+      ];
+
+      console.log(`[Netplay] Testing ICE servers:`, iceServers);
+
+      // Create test RTCPeerConnection
+      const testPC = new RTCPeerConnection({ iceServers });
+
+      testPC.onicecandidate = (event) => {
+        if (event.candidate) {
+          console.log(`[Netplay] ✅ ICE candidate found: ${event.candidate.type} ${event.candidate.protocol}:${event.candidate.port}`);
+        }
+      };
+
+      testPC.onicegatheringstatechange = () => {
+        console.log(`[Netplay] ICE gathering state: ${testPC.iceGatheringState}`);
+      };
+
+      testPC.oniceconnectionstatechange = () => {
+        console.log(`[Netplay] ICE connection state: ${testPC.iceConnectionState}`);
+      };
+
+      // Create data channel to trigger ICE
+      const testChannel = testPC.createDataChannel('test');
+      console.log(`[Netplay] Created test data channel: ${testChannel.readyState}`);
+
+      // Create offer to start ICE process
+      const offer = await testPC.createOffer();
+      await testPC.setLocalDescription(offer);
+
+      console.log("[Netplay] ✅ P2P connectivity test initiated - check ICE candidate logs above");
+
+      // Clean up after 10 seconds
+      setTimeout(() => {
+        testPC.close();
+        console.log("[Netplay] 🧹 P2P connectivity test completed");
+      }, 10000);
+
+    } catch (error) {
+      console.error("[Netplay] ❌ P2P connectivity test failed:", error);
+    }
+  }
+
   // Setup P2P data channels for unorderedP2P/orderedP2P input modes
   async netplaySetupP2PChannels() {
     if (!this.emulator.netplay.engine || !this.sessionState?.isHostRole()) {
@@ -2676,14 +2814,77 @@ getPlayerName() {
             if (offer) {
               console.log(`[Netplay] Received WebRTC offer from ${sender}, creating answer...`);
               
-              // Get ICE servers from config
-              const iceServers = this.configManager?.getSetting("netplayIceServers") ||
-                               [{ urls: 'stun:stun.l.google.com:19302' }];
+              // Get ICE servers from config, fallback to multiple STUN + public TURN
+              const iceServers = this.configManager?.getSetting("netplayIceServers") || [
+                { urls: 'stun:stun.l.google.com:19302' },
+                { urls: 'stun:stun1.l.google.com:19302' },
+                { urls: 'stun:stun2.l.google.com:19302' },
+                // Public TURN servers (may have rate limits)
+                {
+                  urls: 'turn:turn.anyfirewall.com:443?transport=tcp',
+                  username: 'webrtc',
+                  credential: 'webrtc'
+                }
+              ];
 
               // Create RTCPeerConnection for P2P data channels
               const pc = new RTCPeerConnection({
-                iceServers: iceServers
+                iceServers: iceServers,
+                iceTransportPolicy: 'all', // Try all candidates
+                bundlePolicy: 'balanced',
+                rtcpMuxPolicy: 'require'
               });
+
+              // Add comprehensive WebRTC monitoring for host
+              let connectionTimeout = null;
+              let iceGatheringTimeout = null;
+
+              pc.oniceconnectionstatechange = () => {
+                console.log(`[Netplay] Host P2P ICE connection state (${sender}): ${pc.iceConnectionState}`);
+                if (pc.iceConnectionState === 'connected' || pc.iceConnectionState === 'completed') {
+                  console.log(`[Netplay] ✅ Host P2P connection established with ${sender}!`);
+                  clearTimeout(connectionTimeout);
+                  clearTimeout(iceGatheringTimeout);
+                } else if (pc.iceConnectionState === 'failed' || pc.iceConnectionState === 'disconnected' || pc.iceConnectionState === 'closed') {
+                  console.warn(`[Netplay] ❌ Host P2P connection failed with ${sender}: ${pc.iceConnectionState}`);
+                  // Could fall back to relay mode here
+                }
+              };
+
+              pc.onicegatheringstatechange = () => {
+                console.log(`[Netplay] Host P2P ICE gathering state (${sender}): ${pc.iceGatheringState}`);
+                if (pc.iceGatheringState === 'complete') {
+                  clearTimeout(iceGatheringTimeout);
+                }
+              };
+
+              pc.onicecandidate = (event) => {
+                if (event.candidate) {
+                  console.log(`[Netplay] Host P2P ICE candidate (${sender}): ${event.candidate.type} ${event.candidate.protocol}:${event.candidate.port}`);
+                } else {
+                  console.log(`[Netplay] Host P2P ICE candidate gathering complete (${sender})`);
+                }
+              };
+
+              pc.onconnectionstatechange = () => {
+                console.log(`[Netplay] Host P2P connection state (${sender}): ${pc.connectionState}`);
+              };
+
+              // Set timeout for connection establishment
+              connectionTimeout = setTimeout(() => {
+                if (pc.connectionState !== 'connected' && pc.connectionState !== 'completed') {
+                  console.error(`[Netplay] ❌ Host P2P connection timeout with ${sender} - falling back to relay mode`);
+                  pc.close();
+                  this.handleP2PFallback(sender);
+                }
+              }, 15000); // 15 second timeout
+
+              // Set timeout for ICE gathering
+              iceGatheringTimeout = setTimeout(() => {
+                if (pc.iceGatheringState !== 'complete') {
+                  console.warn(`[Netplay] ⚠️ Host P2P ICE gathering timeout with ${sender}`);
+                }
+              }, 5000); // 5 second timeout
 
               // Host receives data channels created by client (offerer)
               // Set up event handler to receive channels from client
@@ -2831,10 +3032,65 @@ getPlayerName() {
   // Capture audio for netplay streaming
   async netplayCaptureAudio() {
     try {
-      // FIRST: Try to capture browser tab audio immediately
+      // FIRST: Try to capture audio directly from the EmulatorJS instance using the proper WebAudio approach
+      // This uses the clean hook to tap into the WebAudio graph and is preferred for emulator audio
+      try {
+        console.log("[Netplay] Attempting direct EmulatorJS WebAudio capture (preferred method)");
+        console.log("[Netplay] Checking for EmulatorJS instance with audio hook:", {
+          hasEJS: !!window.EJS_emulator,
+          hasGetAudioOutputNode: typeof window.EJS_emulator?.getAudioOutputNode === 'function'
+        });
+
+        if (window.EJS_emulator && typeof window.EJS_emulator.getAudioOutputNode === 'function') {
+          const audioOutputNode = window.EJS_emulator.getAudioOutputNode();
+          console.log("[Netplay] EmulatorJS getAudioOutputNode returned:", {
+            hasNode: !!audioOutputNode,
+            nodeType: audioOutputNode?.constructor?.name,
+            context: audioOutputNode?.context?.constructor?.name
+          });
+
+          if (audioOutputNode && audioOutputNode.context && typeof audioOutputNode.connect === 'function') {
+            try {
+              // Create MediaStreamDestinationNode in the same audio context
+              const audioContext = audioOutputNode.context;
+              const destination = audioContext.createMediaStreamDestination();
+
+              // Connect the emulator's audio output to our capture destination
+              // This taps the audio BEFORE it goes to speakers
+              audioOutputNode.connect(destination);
+
+              const audioTrack = destination.stream.getAudioTracks()[0];
+              if (audioTrack) {
+                console.log("[Netplay] ✅ Game audio captured from EmulatorJS WebAudio graph", {
+                  trackId: audioTrack.id,
+                  enabled: audioTrack.enabled,
+                  settings: audioTrack.getSettings(),
+                  audioContextState: audioContext.state,
+                  nodeType: audioOutputNode.constructor.name
+                });
+                return audioTrack;
+              } else {
+                console.log("[Netplay] MediaStreamDestinationNode created but no audio track available");
+              }
+            } catch (webAudioError) {
+              console.log("[Netplay] Failed to create MediaStreamDestinationNode:", webAudioError.message);
+            }
+          } else if (audioOutputNode === null) {
+            console.log("[Netplay] EmulatorJS reports no audio output node available (expected for some cores)");
+          } else {
+            console.log("[Netplay] EmulatorJS audio output node not suitable for capture");
+          }
+        } else {
+          console.log("[Netplay] EmulatorJS audio hook not available");
+        }
+      } catch (emulatorError) {
+        console.log("[Netplay] EmulatorJS audio capture failed:", emulatorError.message);
+      }
+
+      // SECOND: Try to capture browser tab audio as fallback
       // This prompts the user to select the browser tab for ROM audio capture
       try {
-        console.log("[Netplay] Requesting display audio capture (select browser tab for ROM audio)");
+        console.log("[Netplay] Fallback: Requesting display audio capture (select browser tab for ROM audio)");
         const stream = await navigator.mediaDevices.getDisplayMedia({
           video: false,
           audio: {
@@ -2866,8 +3122,7 @@ getPlayerName() {
         }
       }
 
-      // SECOND: Try to capture audio directly from the EmulatorJS instance using the proper WebAudio approach
-      // This uses the clean hook to tap into the WebAudio graph
+      // THIRD: Try to capture audio from existing audio/video elements on the page
       try {
         console.log("[Netplay] Checking for EmulatorJS instance with audio hook:", {
           hasEJS: !!window.EJS_emulator,
@@ -3249,6 +3504,49 @@ getPlayerName() {
       }
 
       return null;
+  }
+
+  /**
+   * Capture microphone audio for voice chat.
+   * @returns {Promise<MediaStreamTrack|null>} Microphone audio track or null if failed
+   */
+  async netplayCaptureMicAudio() {
+    try {
+      console.log("[Netplay] Requesting microphone access for voice chat");
+
+      const micStream = await navigator.mediaDevices.getUserMedia({
+        audio: {
+          echoCancellation: true,
+          noiseSuppression: true,
+          autoGainControl: true,
+          sampleRate: 48000,    // Match Opus native rate
+          channelCount: 1       // Mono for voice
+        }
+      });
+
+      const micTrack = micStream.getAudioTracks()[0];
+      if (micTrack) {
+        console.log("[Netplay] ✅ Microphone audio captured for voice chat", {
+          trackId: micTrack.id,
+          enabled: micTrack.enabled,
+          settings: micTrack.getSettings()
+        });
+        return micTrack;
+      } else {
+        console.warn("[Netplay] No microphone track available");
+        return null;
+      }
+    } catch (micError) {
+      console.log("[Netplay] Microphone capture failed:", micError.message);
+      if (micError.name === 'NotAllowedError') {
+        console.log("[Netplay] User denied microphone permission");
+      } else if (micError.name === 'NotFoundError') {
+        console.log("[Netplay] No microphone found");
+      } else {
+        console.log("[Netplay] Microphone capture error:", micError);
+      }
+      return null;
+    }
   }
 
   /**

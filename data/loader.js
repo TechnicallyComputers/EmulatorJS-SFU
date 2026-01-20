@@ -1,6 +1,7 @@
 (async function () {
   const scripts = [
     // Netplay modules first (in dependency order)
+    "netplay/InputPayload.js",
     "netplay/core/input/frameworks/SimpleController.js",
     "netplay/core/input/frameworks/ComplexController.js",
     "netplay/core/input/InputQueue.js",

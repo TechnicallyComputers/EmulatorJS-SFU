@@ -32,11 +32,6 @@ class InputSync {
     this.sessionState = sessionState;
     this.sendInputCallback = sendInputCallback;
 
-    // Input storage: frame -> array of input data
-    this.inputsData = {};
-    this.initFrame = 0;
-    this.currentFrame = null; // Null until frames are initialized
-
     // Input queue and slot management
     this.inputQueue = new InputQueue(config);
     this.slotManager = new SlotManager(config);
@@ -44,14 +39,25 @@ class InputSync {
     // Controller framework (simple for EmulatorJS)
     const framework = emulatorAdapter.getInputFramework();
     if (framework === "simple") {
-      this.controller = new SimpleController();
+      this.controller = new SimpleController(emulatorAdapter);
     } else {
       // Complex controller framework (for future native emulators)
       throw new Error("Complex controller framework not yet implemented");
     }
 
-    // Frame delay for input synchronization (host sends inputs with +20 frame offset)
-    this.frameDelay = this.config.frameDelay || 20;
+    // Set InputPayload class if available (will be set by loader)
+    if (typeof InputPayload !== 'undefined') {
+      this.setInputPayloadClass(InputPayload);
+    }
+
+    // Frame delay is now handled by the controller
+    this.frameDelay = this.controller.frameDelay;
+
+    // Edge-trigger optimization: track last known values to avoid sending unchanged inputs
+    this.lastInputValues = {}; // key: `${playerIndex}-${inputIndex}`, value: last sent value
+
+    // Input serialization/deserialization
+    this.InputPayload = null; // Will be set when available
   }
 
   /**
@@ -59,7 +65,7 @@ class InputSync {
    * @returns {number}
    */
   getCurrentFrame() {
-    return this.currentFrame;
+    return this.controller.getCurrentFrame();
   }
 
   /**
@@ -67,7 +73,7 @@ class InputSync {
    * @param {number} frame - Frame number
    */
   setCurrentFrame(frame) {
-    this.currentFrame = frame;
+    this.controller.setCurrentFrame(frame);
   }
 
   /**
@@ -75,9 +81,7 @@ class InputSync {
    * @param {number} initFrame - Initial frame number from emulator
    */
   initializeFrames(initFrame) {
-    this.initFrame = initFrame;
-    this.currentFrame = 0;
-    this.inputsData = {};
+    this.controller.initializeFrames(initFrame);
   }
 
   /**
@@ -96,18 +100,18 @@ class InputSync {
    * @returns {boolean} True if input was sent/queued successfully
    */
   sendInput(playerIndex, inputIndex, value) {
-    // Validate input
-    if (!this.controller.validateInput({ playerIndex, inputIndex, value })) {
-      console.warn("[InputSync] Invalid input:", { playerIndex, inputIndex, value });
-      return false;
+    // Edge-trigger optimization: only send if value changed
+    const inputKey = `${playerIndex}-${inputIndex}`;
+    const lastValue = this.lastInputValues[inputKey];
+    if (lastValue === value) {
+      console.log("[InputSync] Skipping unchanged input:", { playerIndex, inputIndex, value });
+      return true; // Not an error, just no change
     }
+    this.lastInputValues[inputKey] = value;
 
     // Apply slot enforcement for clients
     const actualPlayerIndex = this.getEffectivePlayerIndex(playerIndex);
 
-    // Handle frame timing: use current frame if available, otherwise use 0
-    // This allows inputs before game starts (menus, etc.)
-    const frame = (this.currentFrame !== null && this.currentFrame !== undefined) ? this.currentFrame : 0;
     const isHost = this.sessionState?.isHostRole() || false;
 
     console.log("[InputSync] sendInput called:", {
@@ -115,51 +119,153 @@ class InputSync {
       actualPlayerIndex: actualPlayerIndex,
       inputIndex,
       value,
-      frame,
-      isHost,
-      slot: actualPlayerIndex
+      isHost
     });
 
     if (isHost) {
-      // Host: Store input in queue and apply immediately
-      if (!this.inputsData[frame]) {
-        this.inputsData[frame] = [];
-      }
-      this.inputsData[frame].push({
-        frame: frame,
-        connected_input: [actualPlayerIndex, inputIndex, value],
-      });
-
-      // Queue input for processing in processFrameInputs() - host does NOT send immediately
-      // This prevents double-sending and ensures proper frame alignment
-      console.log("[InputSync] Host queued input for frame processing:", {
-        frame,
-        connected_input: [actualPlayerIndex, inputIndex, value]
-      });
+      // Host: Queue local input for processing
+      return this.controller.queueLocalInput(actualPlayerIndex, inputIndex, value);
     } else {
-      // Client (delay-sync mode): DO NOT apply input locally
-      // Clients only send inputs to host - all simulation is done by host
-      console.log("[InputSync] Client queuing input for network send (not applying locally):", {
-        frame: frame + this.frameDelay,
-        connected_input: [actualPlayerIndex, inputIndex, value]
-      });
+      // Client: Send input to network
+      return this.controller.sendInput(actualPlayerIndex, inputIndex, value, this.sendInputCallback);
+    }
+  }
 
-      // Send input with frame delay
-      if (this.sendInputCallback) {
-        const inputData = {
-          frame: frame + this.frameDelay,
-          connected_input: [actualPlayerIndex, inputIndex, value],
-        };
-        console.log("[InputSync] Client sending input via callback:", inputData);
-        this.sendInputCallback(frame + this.frameDelay, inputData);
-      } else {
-        console.warn("[InputSync] sendInputCallback not available, input not sent");
-      }
+  /**
+   * Set the InputPayload class for serialization
+   * @param {Function} InputPayloadClass - The InputPayload constructor
+   */
+  setInputPayloadClass(InputPayloadClass) {
+    this.InputPayload = InputPayloadClass;
+  }
+
+  /**
+   * Serialize input data for network transmission
+   * @param {number} playerIndex
+   * @param {number} inputIndex
+   * @param {number} value
+   * @returns {string} Serialized input data
+   */
+  serializeInput(playerIndex, inputIndex, value) {
+    if (!this.InputPayload) {
+      console.warn("[InputSync] InputPayload class not set, cannot serialize");
+      return null;
     }
 
-    return true;
+    const targetFrame = this.controller.getCurrentFrame() + this.frameDelay;
+    const payload = new this.InputPayload(targetFrame, 0, playerIndex, inputIndex, value);
+    return payload.serialize();
   }
-  
+
+  /**
+   * Deserialize input data from network
+   * @param {string|Object} data - Serialized input data
+   * @returns {Object|null} Deserialized input payload
+   */
+  deserializeInput(data) {
+    if (!this.InputPayload) {
+      console.warn("[InputSync] InputPayload class not set, cannot deserialize");
+      return null;
+    }
+
+    return this.InputPayload.deserialize(data);
+  }
+
+  /**
+   * Handle remote input data (deserialize and apply)
+   * @param {string|Object} inputData - Serialized input data from network
+   * @param {string} fromSocketId - Source socket ID
+   * @returns {boolean}
+   */
+  handleRemoteInput(inputData, fromSocketId = null) {
+    const payload = this.deserializeInput(inputData);
+    if (!payload) {
+      console.warn("[InputSync] Failed to deserialize remote input:", inputData);
+      return false;
+    }
+
+    console.log("[InputSync] Processing remote input:",
+      `frame:${payload.getFrame()}, player:${payload.p}, input:${payload.k}, value:${payload.v}`);
+
+    return this.controller.handleRemoteInput(payload, fromSocketId);
+  }
+
+  /**
+   * Create a callback function for sending inputs over the network
+   * This replaces the NetplayEngine's sendInputCallback logic
+   * @param {Object} dataChannelManager - Reference to DataChannelManager
+   * @param {Object} configManager - Reference to ConfigManager
+   * @param {Object} emulator - Reference to emulator for slot info
+   * @param {Object} socketTransport - Reference to SocketTransport for fallback
+   * @returns {Function} Callback function for sending inputs
+   */
+  createSendInputCallback(dataChannelManager, configManager, emulator, socketTransport) {
+    return (frame, inputData) => {
+      console.log("[InputSync] Send callback called:", { frame, inputData });
+
+      if (!dataChannelManager) {
+        console.warn("[InputSync] No DataChannelManager available");
+        return;
+      }
+
+      const slot = emulator?.netplay?.localSlot || 0;
+      let allSent = true;
+
+      if (Array.isArray(inputData)) {
+        // Multiple inputs to send
+        inputData.forEach((data) => {
+          if (data.connected_input && data.connected_input.length === 3) {
+            const [playerIndex, inputIndex, value] = data.connected_input;
+            const inputPayload = {
+              frame: data.frame || frame || 0,
+              slot: slot,
+              playerIndex: playerIndex,
+              inputIndex: inputIndex,
+              value: value
+            };
+            const sent = dataChannelManager.sendInput(inputPayload);
+            if (!sent) allSent = false;
+          }
+        });
+      } else if (inputData.connected_input && inputData.connected_input.length === 3) {
+        // Single input
+        const [playerIndex, inputIndex, value] = inputData.connected_input;
+        const inputPayload = {
+          frame: frame || inputData.frame || 0,
+          slot: slot,
+          playerIndex: playerIndex,
+          inputIndex: inputIndex,
+          value: value
+        };
+        console.log("[InputSync] Calling dataChannelManager.sendInput with:", inputPayload);
+        const sent = dataChannelManager.sendInput(inputPayload);
+        if (!sent) allSent = false;
+      }
+
+      // Handle P2P mode buffering
+      if (dataChannelManager.mode === "unorderedP2P" || dataChannelManager.mode === "orderedP2P") {
+        // In P2P modes, inputs are buffered if channels aren't ready
+        // No fallback to Socket.IO for P2P modes
+        return;
+      }
+
+      // For relay modes, fall back to Socket.IO if DataChannelManager failed
+      if (!allSent && socketTransport && socketTransport.isConnected()) {
+        console.log("[InputSync] Falling back to Socket.IO for input transmission");
+        // Fallback to Socket.IO "sync-control" message
+        if (Array.isArray(inputData)) {
+          socketTransport.sendDataMessage({
+            "sync-control": inputData,
+          });
+        } else {
+          socketTransport.sendDataMessage({
+            "sync-control": [inputData],
+          });
+        }
+      }
+    };
+  }
+
   /**
    * Receive input from network (called when input arrives over network).
    * @param {number} frame - Target frame number
@@ -168,34 +274,14 @@ class InputSync {
    * @returns {boolean} True if input was queued successfully
    */
   receiveInput(frame, connectedInput, fromPlayerId = null) {
-    if (!connectedInput || connectedInput.length !== 3 || connectedInput[0] < 0) {
-      return false;
-    }
+    // For backward compatibility, convert old format to new format
+    // Create a mock InputPayload for the controller
+    const mockPayload = {
+      getFrame: () => frame,
+      getConnectedInput: () => connectedInput
+    };
 
-    const [playerIndex, inputIndex, value] = connectedInput;
-
-    // Validate input
-    if (!this.controller.validateInput({ playerIndex, inputIndex, value })) {
-      console.warn("[InputSync] Invalid received input:", { playerIndex, inputIndex, value });
-      return false;
-    }
-
-    const inFrame = parseInt(frame, 10);
-
-    // Store input in queue
-    if (!this.inputsData[inFrame]) {
-      this.inputsData[inFrame] = [];
-    }
-    this.inputsData[inFrame].push({
-      frame: inFrame,
-      connected_input: connectedInput,
-      fromPlayerId: fromPlayerId,
-    });
-
-    // Send frame acknowledgment (for Socket.IO mode)
-    // Note: Data channel mode doesn't need explicit acks
-
-    return true;
+    return this.controller.handleRemoteInput(mockPayload, fromPlayerId);
   }
 
   /**
@@ -204,62 +290,23 @@ class InputSync {
    * @returns {Array} Array of input data to send to clients
    */
   processFrameInputs() {
-    const frame = this.currentFrame;
     const isHost = this.sessionState?.isHostRole() || false;
 
-    console.log(`[InputSync] processFrameInputs called for frame ${frame}, isHost: ${isHost}`);
-
-    if (!isHost || !this.inputsData[frame]) {
-      if (!this.inputsData[frame]) {
-        console.log(`[InputSync] No inputs queued for frame ${frame}`);
-      }
+    if (!isHost) {
       return [];
     }
 
-    const toSend = [];
-    const inputsForFrame = this.inputsData[frame];
+    // Delegate to controller
+    const processedInputs = this.controller.processFrameInputs();
 
-    console.log(`[InputSync] Processing ${inputsForFrame.length} inputs for frame ${frame}`);
-
-    // Process each input for this frame
-    inputsForFrame.forEach((inputData, index) => {
-      const [playerIndex, inputIndex, value] = inputData.connected_input;
-
-      console.log(`[InputSync] Applying input ${index + 1}/${inputsForFrame.length}: player ${playerIndex}, input ${inputIndex}, value ${value}`);
-
-      // Apply input (replay for host, including remote inputs)
-      // Note: Host applies both local and remote inputs here
-      this.emulator.simulateInput(playerIndex, inputIndex, value);
-
-      // Prepare input for sending to clients (with frame delay)
-      const sendData = {
-        frame: frame + this.frameDelay,
-        connected_input: [playerIndex, inputIndex, value],
-      };
-      toSend.push(sendData);
-    });
-
-    // Clear processed inputs
-    delete this.inputsData[frame];
-
-    // Memory cleanup: remove old frames to prevent unbounded memory growth
-    const maxAge = 120; // Keep 120 frames of history
-    const cutoffFrame = frame - maxAge;
-    for (const oldFrame of Object.keys(this.inputsData)) {
-      if (parseInt(oldFrame, 10) < cutoffFrame) {
-        delete this.inputsData[oldFrame];
-      }
+    // Send processed inputs to clients (for sync-control messages)
+    // Note: In data channel mode, individual inputs are sent in sendInput(), not batched here
+    if (processedInputs.length > 0 && this.sendInputCallback) {
+      console.log("[InputSync] Host sending processed inputs to clients:", processedInputs);
+      this.sendInputCallback(this.controller.getCurrentFrame(), processedInputs);
     }
 
-    // Send inputs to clients (if callback is set)
-    if (toSend.length > 0 && this.sendInputCallback) {
-      // For Socket.IO mode, send as "sync-control" array
-      // For data channel mode, inputs are sent individually in sendInput()
-      // This callback handles Socket.IO mode
-      this.sendInputCallback(frame, toSend);
-    }
-
-    return toSend;
+    return processedInputs;
   }
 
   /**
@@ -301,10 +348,9 @@ class InputSync {
    * Reset input sync state.
    */
   reset() {
-    this.inputsData = {};
-    this.currentFrame = 0;
-    this.initFrame = 0;
+    this.controller.initializeFrames(0);
     this.inputQueue.clear();
+    this.lastInputValues = {};
   }
 
   /**
