@@ -260,14 +260,7 @@ getPlayerName() {
         console.warn('[NetplayEngine] SFUTransport not available for DataChannelManager connection');
       }
 
-      // Set up input callback for DataChannelManager
-      if (this.dataChannelManager && this.inputSync) {
-        this.dataChannelManager.onInput((playerIndex, inputIndex, value, fromSocketId) => {
-          // Receive input via InputSync (use current frame from frame counter)
-          const currentFrame = this.frameCounter?.getCurrentFrame() || 0;
-          this.inputSync.receiveInput(currentFrame, [playerIndex, inputIndex, value], fromSocketId);
-        });
-      }
+      // Input callback will be set up later in netplayJoinRoom or setupLiveStreamInputSync
 
       // 12. Spectator Manager
       this.spectatorManager = new SpectatorManager(
@@ -358,20 +351,29 @@ getPlayerName() {
       if (this.dataChannelManager) {
         console.log('[NetplayEngine] Setting up DataChannelManager input receiver');
         this.dataChannelManager.onInput((playerIndex, inputIndex, value, fromSocketId) => {
-          console.log('[NetplayEngine] Received input from DataChannelManager:', { playerIndex, inputIndex, value, fromSocketId });
+          console.log('[NetplayEngine] 🔄 Received input from DataChannelManager:', { playerIndex, inputIndex, value, fromSocketId });
 
           const isHost = this.sessionState?.isHostRole() || false;
           const frame = this.frameCounter?.getCurrentFrame() || 0;
 
+          console.log('[NetplayEngine] Input processing context:', {
+            isHost,
+            frame,
+            frameCounterExists: !!this.frameCounter,
+            inputSyncExists: !!this.inputSync
+          });
+
           if (isHost) {
             // Host: Store input for frame processing (delay-sync mode)
-            this.inputSync.receiveInput(frame, [playerIndex, inputIndex, value], fromSocketId);
+            console.log('[NetplayEngine] 📥 Host storing input for frame processing');
+            const receiveResult = this.inputSync.receiveInput(frame, [playerIndex, inputIndex, value], fromSocketId);
+            console.log('[NetplayEngine] 📥 InputSync.receiveInput result:', receiveResult);
           } else {
             // Client (delay-sync mode): DO NOT apply inputs locally
             // Clients only receive video/audio streams from host
             // All input simulation is handled by host only
-            console.log(`[NetplayEngine] Client received input (not applying locally): player ${playerIndex}, input ${inputIndex}, value ${value}`);
-            console.log(`[NetplayEngine] Client in delay-sync mode - inputs only simulated by host`);
+            console.log(`[NetplayEngine] 👤 Client received input (not applying locally): player ${playerIndex}, input ${inputIndex}, value ${value}`);
+            console.log(`[NetplayEngine] 👤 Client in delay-sync mode - inputs only simulated by host`);
           }
         });
       } else {
@@ -531,28 +533,60 @@ getPlayerName() {
    * @returns {Array} Array of inputs to send to clients
    */
   processFrameInputs() {
+    console.log('[NetplayEngine] 🎯 processFrameInputs() called');
+
     if (!this.inputSync || !this.sessionState?.isHostRole()) {
+      console.log('[NetplayEngine] ❌ Skipping processFrameInputs:', {
+        hasInputSync: !!this.inputSync,
+        isHost: this.sessionState?.isHostRole()
+      });
       return [];
     }
 
     // Update frame counter
     if (this.emulator && this.frameCounter) {
       const emulatorFrame = this.emulator.getCurrentFrame();
+      console.log('[NetplayEngine] 📊 Frame counter update:', {
+        emulatorFrame,
+        frameCounter: this.frameCounter.getCurrentFrame()
+      });
+
       this.frameCounter.setCurrentFrame(emulatorFrame);
       this.inputSync.updateCurrentFrame(emulatorFrame);
 
       // Debug: Check if we have queued inputs for this frame
       const queuedInputs = this.inputSync.inputsData[emulatorFrame];
+      console.log('[NetplayEngine] 📋 Queued inputs check:', {
+        frame: emulatorFrame,
+        queuedCount: queuedInputs?.length || 0,
+        hasQueuedInputs: !!(queuedInputs && queuedInputs.length > 0)
+      });
+
       if (queuedInputs && queuedInputs.length > 0) {
-        console.log(`[NetplayEngine] Processing ${queuedInputs.length} queued inputs for frame ${emulatorFrame}`);
+        console.log(`[NetplayEngine] 📝 Processing ${queuedInputs.length} queued inputs for frame ${emulatorFrame}`);
+        queuedInputs.forEach((input, idx) => {
+          console.log(`[NetplayEngine] 📝 Input ${idx + 1}:`, input);
+        });
       }
+    } else {
+      console.log('[NetplayEngine] ⚠️  Missing emulator or frameCounter:', {
+        hasEmulator: !!this.emulator,
+        hasFrameCounter: !!this.frameCounter
+      });
     }
 
     // Process inputs for current frame
+    console.log('[NetplayEngine] 🔄 Calling inputSync.processFrameInputs()');
     const processedInputs = this.inputSync.processFrameInputs();
+    console.log('[NetplayEngine] ✅ inputSync.processFrameInputs() returned:', {
+      processedCount: processedInputs?.length || 0,
+      processedInputs
+    });
 
     if (processedInputs && processedInputs.length > 0) {
-      console.log(`[NetplayEngine] Processed ${processedInputs.length} inputs for frame processing`);
+      console.log(`[NetplayEngine] 🎉 Processed ${processedInputs.length} inputs for frame processing`);
+    } else {
+      console.log('[NetplayEngine] 😔 No inputs processed this frame');
     }
 
     return processedInputs;

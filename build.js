@@ -23,28 +23,26 @@ if (!build_type) {
     };
 
     const progressInterval = setInterval(() => {
-        process.stdout.clearLine();
-        process.stdout.cursorTo(0);
         if (progressData['7z'] < 100 && progressData['zip'] < 100) {
-            process.stdout.write(`7z Progress: ${progressData['7z']}% | Zip Progress: ${progressData['zip']}%`);
+            console.log(`7z Progress: ${progressData['7z']}% | Zip Progress: ${progressData['zip']}%`);
         } else if (progressData['7z'] === 100) {
             console.log(`${version}.7z created successfully!`);
-            process.stdout.write(`Zip Progress: ${progressData['zip']}%`);
+            console.log(`Zip Progress: ${progressData['zip']}%`);
             progressData['7z'] = 101;
         } else if (progressData['zip'] === 100) {
             console.log(`${version}.zip created successfully!`);
-            process.stdout.write(`7z Progress: ${progressData['7z']}%`);
+            console.log(`7z Progress: ${progressData['7z']}%`);
             progressData['zip'] = 101;
         } else if (progressData['zip'] >= 100 && progressData['7z'] >= 100) {
-            process.stdout.write(`All archives for EmulatorJS version: ${version} created successfully!`);
+            console.log(`All archives for EmulatorJS version: ${version} created successfully!`);
             clearInterval(progressInterval);
             console.log('\nArchives are in the dist/ folder.');
         } else if (progressData['7z'] >= 100) {
-            process.stdout.write(`Zip Progress: ${progressData['zip']}%`);
+            console.log(`Zip Progress: ${progressData['zip']}%`);
         } else if (progressData['zip'] >= 100) {
-            process.stdout.write(`7z Progress: ${progressData['7z']}%`);
+            console.log(`7z Progress: ${progressData['7z']}%`);
         }
-    }, 100);
+    }, 1000);
 
     console.log(`Creating archives for EmulatorJS version: ${version}`);
 

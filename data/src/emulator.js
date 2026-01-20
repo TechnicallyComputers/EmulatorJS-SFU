@@ -402,6 +402,18 @@ class EmulatorJS {
     this.netplayEngine = new NetplayEngine(this, this.netplayMenu);
     this.netplayMenu.engine = this.netplayEngine; // Set engine reference after creation
     this.netplayCanvas = null;
+
+    // Add getCurrentFrame method for FrameCounter compatibility
+    this.getCurrentFrame = () => {
+      return this.netplay?.currentFrame || 0;
+    };
+
+    // Add setCurrentFrame method for FrameCounter compatibility
+    this.setCurrentFrame = (frame) => {
+      if (this.netplay) {
+        this.netplay.currentFrame = frame;
+      }
+    };
     this.netplayShowTurnWarning = false;
     this.netplayWarningShown = false;
     // Ensure the netplay button is visible by default (workaround for styling issues)

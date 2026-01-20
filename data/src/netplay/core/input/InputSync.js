@@ -102,16 +102,12 @@ class InputSync {
       return false;
     }
 
-    // Guard: Don't accept inputs until frames are initialized
-    if (this.currentFrame === null || this.currentFrame === undefined) {
-      console.warn("[InputSync] Frames not initialized yet, rejecting input:", { playerIndex, inputIndex, value });
-      return false;
-    }
-
     // Apply slot enforcement for clients
     const actualPlayerIndex = this.getEffectivePlayerIndex(playerIndex);
 
-    const frame = this.currentFrame;
+    // Handle frame timing: use current frame if available, otherwise use 0
+    // This allows inputs before game starts (menus, etc.)
+    const frame = (this.currentFrame !== null && this.currentFrame !== undefined) ? this.currentFrame : 0;
     const isHost = this.sessionState?.isHostRole() || false;
 
     console.log("[InputSync] sendInput called:", {
@@ -246,6 +242,15 @@ class InputSync {
     // Clear processed inputs
     delete this.inputsData[frame];
 
+    // Memory cleanup: remove old frames to prevent unbounded memory growth
+    const maxAge = 120; // Keep 120 frames of history
+    const cutoffFrame = frame - maxAge;
+    for (const oldFrame of Object.keys(this.inputsData)) {
+      if (parseInt(oldFrame, 10) < cutoffFrame) {
+        delete this.inputsData[oldFrame];
+      }
+    }
+
     // Send inputs to clients (if callback is set)
     if (toSend.length > 0 && this.sendInputCallback) {
       // For Socket.IO mode, send as "sync-control" array
@@ -282,6 +287,9 @@ class InputSync {
                            0;
       const slot = parseInt(preferredSlot, 10);
       if (!isNaN(slot) && slot >= 0 && slot <= 3) {
+        if (playerIndex !== slot) {
+          console.log("[InputSync] Slot enforcement: requested playerIndex", playerIndex, "-> enforced slot", slot);
+        }
         playerIndex = slot;
       }
     }
