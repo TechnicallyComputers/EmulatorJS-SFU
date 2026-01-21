@@ -14,11 +14,13 @@ class SlotManager {
    * @param {Object} config - Configuration
    * @param {boolean} config.exclusiveSlots - True for exclusive slots (default: true)
    * @param {number} config.maxSlots - Maximum number of slots (default: 4)
+   * @param {Function} config.onSlotChanged - Callback when slot assignments change
    */
   constructor(config = {}) {
     this.config = config;
     this.exclusiveSlots = config.exclusiveSlots !== false; // Default: true
     this.maxSlots = config.maxSlots || 4;
+    this.onSlotChanged = config.onSlotChanged; // Callback for slot changes
 
     // Slot assignments: slotIndex -> playerId[]
     this.slots = new Map();
@@ -82,6 +84,11 @@ class SlotManager {
     this.slots.get(targetSlot).push(playerId);
     this.playerSlots.set(playerId, targetSlot);
 
+    // Notify of slot change
+    if (this.onSlotChanged) {
+      this.onSlotChanged(playerId, targetSlot);
+    }
+
     return targetSlot;
   }
 
@@ -108,6 +115,11 @@ class SlotManager {
     }
 
     this.playerSlots.delete(playerId);
+
+    // Notify of slot release (null means released)
+    if (this.onSlotChanged) {
+      this.onSlotChanged(playerId, null);
+    }
   }
 
   /**

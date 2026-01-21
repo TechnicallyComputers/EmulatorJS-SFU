@@ -213,6 +213,21 @@ class SocketTransport {
       frameAck: frame,
     });
   }
+
+  /**
+   * Set up chat message event forwarding.
+   * @param {Object} chatComponent - ChatComponent instance to forward messages to
+   */
+  setupChatForwarding(chatComponent) {
+    console.log("[SocketTransport] Setting up chat message forwarding");
+    this.on("chat-message", (message) => {
+      if (chatComponent && typeof chatComponent.handleMessage === 'function') {
+        chatComponent.handleMessage(message);
+      } else {
+        console.warn("[SocketTransport] Chat message received but no chat component available:", message);
+      }
+    });
+  }
 }
 
 window.SocketTransport = SocketTransport;

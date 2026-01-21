@@ -48,7 +48,10 @@ function getSourceFiles() {
     "netplay/core/transport/SocketTransport.js",
     "netplay/core/transport/DataChannelManager.js",
     "netplay/core/transport/SFUTransport.js",
-    
+
+    // UI Components (depend on transports)
+    "netplay/ui/ChatComponent.js",
+
     // Core engine (depends on all above)
     "netplay/core/NetplayEngine.js",
     

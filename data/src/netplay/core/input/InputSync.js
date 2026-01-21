@@ -18,13 +18,15 @@ class InputSync {
    * @param {Object} config - Configuration
    * @param {Object} sessionState - Session state manager
    * @param {Function} sendInputCallback - Callback to send input over network (frame, inputData)
+   * @param {Function} onSlotChanged - Callback when slot assignments change (playerId, slot)
    */
-  constructor(emulatorAdapter, config, sessionState, sendInputCallback) {
+  constructor(emulatorAdapter, config, sessionState, sendInputCallback, onSlotChanged) {
     console.log('[InputSync] Constructor called with:', {
       hasEmulatorAdapter: !!emulatorAdapter,
       config: config,
       hasSessionState: !!sessionState,
-      hasSendInputCallback: !!sendInputCallback
+      hasSendInputCallback: !!sendInputCallback,
+      hasOnSlotChanged: !!onSlotChanged
     });
 
     this.emulator = emulatorAdapter;
@@ -34,12 +36,28 @@ class InputSync {
 
     // Input queue and slot management
     this.inputQueue = new InputQueue(config);
-    this.slotManager = new SlotManager(config);
+
+    // Create combined slot change callback
+    const combinedOnSlotChanged = (playerId, slot) => {
+      // Notify controller of slot change
+      if (this.controller && typeof this.controller.handleSlotChange === 'function') {
+        this.controller.handleSlotChange(playerId, slot);
+      }
+      // Call main slot change callback
+      if (onSlotChanged) {
+        onSlotChanged(playerId, slot);
+      }
+    };
+
+    this.slotManager = new SlotManager({
+      ...config,
+      onSlotChanged: combinedOnSlotChanged
+    });
 
     // Controller framework (simple for EmulatorJS)
     const framework = emulatorAdapter.getInputFramework();
     if (framework === "simple") {
-      this.controller = new SimpleController(emulatorAdapter);
+      this.controller = new SimpleController(emulatorAdapter, config);
     } else {
       // Complex controller framework (for future native emulators)
       throw new Error("Complex controller framework not yet implemented");
@@ -192,9 +210,10 @@ class InputSync {
    * @param {Object} configManager - Reference to ConfigManager
    * @param {Object} emulator - Reference to emulator for slot info
    * @param {Object} socketTransport - Reference to SocketTransport for fallback
+   * @param {Function} getPlayerSlot - Function to get current player's slot from playerTable
    * @returns {Function} Callback function for sending inputs
    */
-  createSendInputCallback(dataChannelManager, configManager, emulator, socketTransport) {
+  createSendInputCallback(dataChannelManager, configManager, emulator, socketTransport, getPlayerSlot) {
     return (frame, inputData) => {
       console.log("[InputSync] Send callback called:", { frame, inputData });
 
@@ -203,7 +222,8 @@ class InputSync {
         return;
       }
 
-      const slot = emulator?.netplay?.localSlot || 0;
+      // Use centralized slot getter if provided, otherwise fallback to old method
+      const slot = getPlayerSlot ? getPlayerSlot() : (emulator?.netplay?.localSlot || 0);
       let allSent = true;
 
       if (Array.isArray(inputData)) {

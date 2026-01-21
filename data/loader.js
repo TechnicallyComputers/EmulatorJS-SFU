@@ -19,6 +19,7 @@
     "netplay/core/transport/SocketTransport.js",
     "netplay/core/transport/DataChannelManager.js",
     "netplay/core/transport/SFUTransport.js",
+    "netplay/ui/ChatComponent.js",
     "netplay/core/NetplayEngine.js",
     "netplay/ui/NetplayMenu.js",
     "netplay/adapters/emulatorjs/interface.js",

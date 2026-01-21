@@ -40,6 +40,299 @@ class NetplayMenu {
   set netplay(value) {
     this.emulator.netplay = value;
   }
+
+  // Mobile detection utility
+  isMobileDevice() {
+    return /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent) ||
+           (window.innerWidth <= 768 && window.innerHeight <= 1024);
+  }
+
+  // ============================================================================
+  // CENTRALIZED SLOT MANAGEMENT SYSTEM
+  // ============================================================================
+
+  /**
+   * Get the authoritative player table (single source of truth)
+   * @returns {Object} playerTable[playerId] = { playerId, slot, role, connected, ... }
+   */
+  getPlayerTable() {
+    return this.netplay?.joinedPlayers || {};
+  }
+
+  /**
+   * Get current player's ID
+   * @returns {string|null}
+   */
+  getMyPlayerId() {
+    return this.netplay?.engine?.sessionState?.localPlayerId ||
+           this.netplay?.name ||
+           null;
+  }
+
+  /**
+   * CENTRAL SLOT UPDATE FUNCTION - Only way slots should change
+   * @param {string} playerId - Player to update
+   * @param {number|null} newSlot - New slot (0-3) or null for spectator
+   * @returns {boolean} true if update succeeded
+   */
+  updatePlayerSlot(playerId, newSlot) {
+    const playerTable = this.getPlayerTable();
+    const player = playerTable[playerId];
+
+    if (!player) {
+      console.warn("[NetplayMenu] Cannot update slot for unknown player:", playerId);
+      return false;
+    }
+
+    // Prevent slot collision (each slot can be occupied by at most one player)
+    if (newSlot !== null) {
+      for (const [pid, p] of Object.entries(playerTable)) {
+        if (pid !== playerId && p.slot === newSlot) {
+          console.warn("[NetplayMenu] Slot", newSlot, "already occupied by player", pid);
+          return false; // slot already taken
+        }
+      }
+    }
+
+    const oldSlot = player.slot;
+    player.slot = newSlot;
+
+    // Update role based on slot
+    if (newSlot === null) {
+      player.role = 'spectator';
+    } else if (newSlot >= 0 && newSlot <= 3) {
+      player.role = 'player';
+    }
+
+    console.log("[NetplayMenu] Updated player slot:", playerId, oldSlot, "->", newSlot, "(role:", player.role, ")");
+
+    // Notify all systems of the change
+    this.notifyPlayerTableUpdated();
+
+    return true;
+  }
+
+  /**
+   * Compute available slots (derived from playerTable, never stored)
+   * @param {string} myPlayerId - Current player's ID (to exclude their slot)
+   * @param {Array<number>} allSlots - All possible slots [0,1,2,3]
+   * @returns {Array<number>} Available slots
+   */
+  computeAvailableSlots(myPlayerId, allSlots = [0, 1, 2, 3]) {
+    const playerTable = this.getPlayerTable();
+
+    // Slots taken by other players (exclude our own slot)
+    const taken = new Set(
+      Object.values(playerTable)
+        .filter(p => p.playerId !== myPlayerId && p.slot !== null && p.slot !== undefined)
+        .map(p => p.slot)
+    );
+
+    return allSlots.filter(slot => !taken.has(slot));
+  }
+
+  /**
+   * Get slot selector options (derived from playerTable)
+   * @param {string} myPlayerId - Current player's ID
+   * @param {Array<number>} allSlots - All possible slots [0,1,2,3]
+   * @returns {Array<{value: number, text: string, disabled: boolean, selected: boolean}>}
+   */
+  getSlotSelectorOptions(myPlayerId, allSlots = [0, 1, 2, 3]) {
+    const playerTable = this.getPlayerTable();
+    const me = playerTable[myPlayerId];
+
+    if (!me) {
+      console.warn("[NetplayMenu] Cannot get slot selector options: player not found", myPlayerId);
+      return [];
+    }
+
+    const available = this.computeAvailableSlots(myPlayerId, allSlots);
+    const options = [];
+
+    // Always include current slot first (even if "taken" by us)
+    if (me.slot !== null && me.slot !== undefined) {
+      options.push({
+        value: me.slot,
+        text: `P${me.slot + 1}`,
+        disabled: false,
+        selected: true
+      });
+    }
+
+    // Add available slots
+    for (const slot of available) {
+      if (slot !== me.slot) { // Don't duplicate current slot
+        options.push({
+          value: slot,
+          text: `P${slot + 1}`,
+          disabled: false,
+          selected: false
+        });
+      }
+    }
+
+    // Add spectator option
+    options.push({
+      value: 4, // Special value for spectator
+      text: "Spectator",
+      disabled: false,
+      selected: me.slot === null || me.slot === undefined
+    });
+
+    return options;
+  }
+
+  /**
+   * Request a slot change (UI intent -> authoritative update)
+   * @param {number} newSlot - Requested slot (0-3) or 4 for spectator
+   */
+  requestSlotChange(newSlot) {
+    const myPlayerId = this.getMyPlayerId();
+    if (!myPlayerId) {
+      console.warn("[NetplayMenu] Cannot request slot change: no player ID");
+      return;
+    }
+
+    const playerTable = this.getPlayerTable();
+    const me = playerTable[myPlayerId];
+    if (!me) {
+      console.warn("[NetplayMenu] Cannot request slot change: player not in table", myPlayerId);
+      return;
+    }
+
+    // Convert spectator (4) to null
+    const actualSlot = newSlot === 4 ? null : newSlot;
+
+    if (me.slot === actualSlot) {
+      console.log("[NetplayMenu] Slot change requested but already in slot:", actualSlot);
+      return;
+    }
+
+    console.log("[NetplayMenu] Requesting slot change:", myPlayerId, me.slot, "->", actualSlot);
+
+    // For now, apply locally (in a real authoritative system, this would go to host/server)
+    if (this.updatePlayerSlot(myPlayerId, actualSlot)) {
+      // Update UI state
+      this.netplay.localSlot = actualSlot;
+      this.netplayPreferredSlot = actualSlot;
+      if (typeof window !== "undefined") {
+        window.EJS_NETPLAY_PREFERRED_SLOT = actualSlot;
+      }
+      if (this.netplay.extra) {
+        this.netplay.extra.player_slot = actualSlot;
+      }
+
+      // Notify server if in a room
+      this.notifyServerOfSlotChange(actualSlot);
+    }
+  }
+
+  /**
+   * Notify server of slot change
+   * @param {number|null} slot
+   */
+  async notifyServerOfSlotChange(slot) {
+    if (this.netplay?.engine?.roomManager && (slot === null || slot < 4)) {
+      try {
+        await this.netplay.engine.roomManager.updatePlayerSlot(slot);
+        console.log("[NetplayMenu] Notified server of slot change:", slot);
+      } catch (error) {
+        console.error("[NetplayMenu] Failed to notify server of slot change:", error);
+      }
+    }
+  }
+
+  /**
+   * NOTIFICATION SYSTEM - Called whenever playerTable changes for any reason
+   */
+  notifyPlayerTableUpdated() {
+    console.log("[NetplayMenu] Player table updated, refreshing all dependent UI");
+
+    // Update slot selector UI
+    this.updateSlotSelectorUI();
+
+    // Update input sync with new slot
+    this.updateInputSyncWithCurrentSlot();
+
+    // Update player table display
+    if (this.netplay.liveStreamPlayerTable) {
+      this.netplayInitializeLiveStreamPlayers();
+    }
+
+    // Update taken slots tracking (for backward compatibility)
+    this.updateTakenSlotsFromPlayerTable();
+  }
+
+  /**
+   * Update slot selector UI from playerTable
+   */
+  updateSlotSelectorUI() {
+    if (!this.netplay?.slotSelect) return;
+
+    const myPlayerId = this.getMyPlayerId();
+    if (!myPlayerId) return;
+
+    const options = this.getSlotSelectorOptions(myPlayerId);
+
+    // Clear existing options
+    this.netplay.slotSelect.innerHTML = '';
+
+    // Add new options
+    for (const option of options) {
+      const opt = this.createElement("option");
+      opt.value = String(option.value);
+      opt.innerText = option.text;
+      if (option.disabled) opt.disabled = true;
+      if (option.selected) opt.selected = true;
+      this.netplay.slotSelect.appendChild(opt);
+    }
+
+    console.log("[NetplayMenu] Updated slot selector UI with", options.length, "options");
+  }
+
+  /**
+   * Update input sync to use current slot from playerTable
+   */
+  updateInputSyncWithCurrentSlot() {
+    const myPlayerId = this.getMyPlayerId();
+    if (!myPlayerId) return;
+
+    const playerTable = this.getPlayerTable();
+    const mySlot = playerTable[myPlayerId]?.slot;
+
+    // Update InputSync slot manager
+    if (this.netplay?.engine?.inputSync?.slotManager && mySlot !== null && mySlot !== undefined) {
+      const assignedSlot = this.netplay.engine.inputSync.slotManager.assignSlot(myPlayerId, mySlot);
+      console.log("[NetplayMenu] Updated InputSync slot manager:", myPlayerId, "-> slot", assignedSlot);
+    }
+
+    // Update global slot preference
+    if (typeof window !== "undefined") {
+      window.EJS_NETPLAY_PREFERRED_SLOT = mySlot;
+    }
+
+    // Clear SimpleController cache for slot changes
+    if (this.netplay?.engine?.inputSync?.controller?.lastInputValues) {
+      this.netplay.engine.inputSync.controller.lastInputValues = {};
+    }
+  }
+
+  /**
+   * Update taken slots tracking (for backward compatibility with existing code)
+   */
+  updateTakenSlotsFromPlayerTable() {
+    if (!this.netplay.takenSlots) {
+      this.netplay.takenSlots = new Set();
+    }
+    this.netplay.takenSlots.clear();
+
+    const playerTable = this.getPlayerTable();
+    for (const player of Object.values(playerTable)) {
+      if (player.slot !== null && player.slot !== undefined && player.slot < 4) {
+        this.netplay.takenSlots.add(player.slot);
+      }
+    }
+  }
   show() {
     if (this.netplayMenu) {
       this.netplayMenu.style.display = 'block';
@@ -356,6 +649,14 @@ class NetplayMenu {
     if (!this.netplay.liveStreamPlayerTable) {
       // Set up the player slot selector first
       this.netplaySetupSlotSelector();
+
+      // Reorder elements: move room name above slot selector
+      if (this.netplay.roomNameElem && this.netplay.slotSelect && this.netplay.slotSelect.parentElement) {
+        const joinedContainer = this.netplay.slotSelect.parentElement.parentElement;
+        const slotControls = this.netplay.slotSelect.parentElement;
+        // Move room name to be right above the slot selector
+        joinedContainer.insertBefore(this.netplay.roomNameElem, slotControls);
+      }
       
       // Create the player table
       const table = this.createNetplayTable('livestream');
@@ -534,17 +835,20 @@ class NetplayMenu {
         originalBar.parentElement.appendChild(this.netplayBottomBar);
       }
       
-      // Add the same background and styling
+      // Add the same background and styling, with mobile adjustments
+      const isMobile = this.isMobileDevice();
       this.netplayBottomBar.style.background = "rgba(0,0,0,0.8)";
       this.netplayBottomBar.style.position = "absolute";
       this.netplayBottomBar.style.display = "flex";
       this.netplayBottomBar.style.justifyContent = "center";
       this.netplayBottomBar.style.alignItems = "center";
-      this.netplayBottomBar.style.gap = "10px";
+      this.netplayBottomBar.style.gap = isMobile ? "6px" : "10px";
       this.netplayBottomBar.style.bottom = "0";
       this.netplayBottomBar.style.left = "0";
       this.netplayBottomBar.style.right = "0";
       this.netplayBottomBar.style.zIndex = "10000";
+      this.netplayBottomBar.style.padding = isMobile ? "6px 8px" : "10px 15px";
+      this.netplayBottomBar.style.minHeight = isMobile ? "40px" : "50px";
     }
     
     // Always show the netplay bottom bar
@@ -667,23 +971,36 @@ class NetplayMenu {
   // Helper method to ensure a button exists and is visible
   ensureButtonExists(key, config, bar, container) {
     const targetContainer = container || this.emulator.elements.menu;
-    
+    const isMobile = this.isMobileDevice();
+
     if (!bar[key]) {
       const btn = this.createElement("a");
       btn.classList.add("ejs_button");
       btn.innerText = config.text;
       btn.style.whiteSpace = "nowrap";
+
+      // Apply mobile-specific button styling
+      if (isMobile) {
+        btn.style.fontSize = "0.85em";
+        btn.style.padding = "6px 10px";
+        btn.style.minWidth = "auto";
+        btn.style.maxWidth = "120px";
+      } else {
+        btn.style.fontSize = "0.9em";
+        btn.style.padding = "8px 15px";
+      }
+
       if (config.disabled) btn.disabled = true;
       btn.onclick = config.action;
-      
+
       // Apply custom styling if specified
       if (config.style) {
         Object.assign(btn.style, config.style);
       }
-      
+
       targetContainer.appendChild(btn); // Add to our container
       bar[key] = [btn];
-      
+
       if (config.property) {
         this.netplay[config.property] = btn;
       }
@@ -697,56 +1014,98 @@ class NetplayMenu {
     const popups = this.createSubPopup();
     const container = popups[0];
     const content = popups[1];
+    const isMobile = this.isMobileDevice();
 
-    // Add border styling
+    // Add border styling - tighter for mobile
     content.style.border = "2px solid rgba(var(--ejs-primary-color), 0.3)";
-    content.style.borderRadius = "8px";
-    content.style.padding = "10px";
+    content.style.borderRadius = isMobile ? "6px" : "8px";
+    content.style.padding = isMobile ? "6px" : "8px";
+    content.style.maxWidth = isMobile ? "95%" : "100%";
+    content.style.maxHeight = isMobile ? "80vh" : "auto";
+    content.style.boxSizing = "border-box";
+    content.style.overflowY = isMobile ? "auto" : "visible";
     content.classList.add("ejs_cheat_parent");
 
-    // Title
+    // Title - more compact, especially for mobile
     const header = this.createElement("div");
     const title = this.createElement("h2");
     title.innerText = "Netplay Settings";
     title.classList.add("ejs_netplay_name_heading");
+    title.style.margin = isMobile ? "0 0 6px 0" : "0 0 8px 0";
+    title.style.fontSize = isMobile ? "1.1em" : "1.2em";
     header.appendChild(title);
     content.appendChild(header);
 
-    // Settings container (similar to original menu structure)
+    // Settings container with table - mobile optimized
     const settingsContainer = this.createElement("div");
-    settingsContainer.style.maxHeight = "400px";
+    settingsContainer.style.maxHeight = isMobile ? "calc(100vh - 150px)" : "calc(100vh - 200px)";
     settingsContainer.style.overflowY = "auto";
+    settingsContainer.style.overflowX = "auto";
+    settingsContainer.style.width = "100%";
 
-    // Helper function to create setting rows
-    const createSettingRow = (label, control) => {
-      const row = this.createElement("div");
-      row.style.display = "flex";
-      row.style.justifyContent = "space-between";
-      row.style.alignItems = "center";
-      row.style.marginBottom = "10px";
-      row.style.padding = "8px";
-      row.style.backgroundColor = "rgba(0,0,0,0.1)";
-      row.style.borderRadius = "4px";
+    // Create table for settings - two columns layout, mobile optimized
+    const settingsTable = this.createElement("table");
+    settingsTable.style.width = "100%";
+    settingsTable.style.borderCollapse = "collapse";
+    settingsTable.style.fontSize = isMobile ? "0.85em" : "0.9em";
+    settingsTable.style.marginBottom = isMobile ? "6px" : "8px";
 
-      const labelDiv = this.createElement("div");
-      labelDiv.innerText = label;
-      labelDiv.style.fontWeight = "bold";
-      labelDiv.style.color = "#fff";
+    // Helper function to create a table cell for label
+    const createLabelCell = (label) => {
+      const cell = this.createElement("td");
+      cell.innerText = label;
+      cell.style.padding = "6px 8px";
+      cell.style.fontWeight = "bold";
+      cell.style.color = "#fff";
+      cell.style.verticalAlign = "middle";
+      cell.style.whiteSpace = "nowrap";
+      cell.style.width = "25%";
+      return cell;
+    };
 
-      row.appendChild(labelDiv);
-      row.appendChild(control);
+    // Helper function to create a table cell for control
+    const createControlCell = (control) => {
+      const cell = this.createElement("td");
+      cell.style.padding = "4px 8px";
+      cell.style.verticalAlign = "middle";
+      cell.style.width = "25%";
+      cell.appendChild(control);
+      return cell;
+    };
+
+    // Helper function to create table row with two settings side by side
+    const createTwoColumnRow = (label1, control1, label2, control2) => {
+      const row = this.createElement("tr");
+      row.style.borderBottom = "1px solid rgba(255,255,255,0.1)";
+      
+      row.appendChild(createLabelCell(label1));
+      row.appendChild(createControlCell(control1));
+      
+      if (label2 && control2) {
+        row.appendChild(createLabelCell(label2));
+        row.appendChild(createControlCell(control2));
+      } else {
+        // If only one setting, span across two columns
+        const emptyCell = this.createElement("td");
+        emptyCell.colSpan = 2;
+        row.appendChild(emptyCell);
+      }
+      
       return row;
     };
 
-    // Helper function to create select dropdown
+    // Helper function to create select dropdown - more compact for two-column layout
     const createSelect = (options, currentValue, onChange) => {
       const select = this.createElement("select");
       select.style.backgroundColor = "#333";
       select.style.color = "#fff";
       select.style.border = "1px solid #555";
       select.style.borderRadius = "4px";
-      select.style.padding = "4px 8px";
-      select.style.minWidth = "120px";
+      select.style.padding = "3px 6px";
+      select.style.width = "100%";
+      select.style.maxWidth = "100%";
+      select.style.fontSize = "0.9em";
+      select.style.boxSizing = "border-box";
 
       Object.entries(options).forEach(([value, label]) => {
         const option = this.createElement("option");
@@ -794,8 +1153,6 @@ class NetplayMenu {
       (value) => saveSetting("netplayVP9SVC", value)
     );
 
-    settingsContainer.appendChild(createSettingRow("SVC with VP9", vp9SvcSelect));
-
     // Legacy Simulcast setting
     const simulcastSelect = createSelect(
       {
@@ -805,8 +1162,6 @@ class NetplayMenu {
       getSetting("netplaySimulcast", "disabled"),
       (value) => saveSetting("netplaySimulcast", value)
     );
-
-    settingsContainer.appendChild(createSettingRow("Legacy Simulcast", simulcastSelect));
 
     // Host Codec setting
     const normalizeHostCodec = (v) => {
@@ -825,8 +1180,6 @@ class NetplayMenu {
       normalizeHostCodec(getSetting("netplayHostCodec", "auto")),
       (value) => saveSetting("netplayHostCodec", value)
     );
-
-    settingsContainer.appendChild(createSettingRow("Host Codec", hostCodecSelect));
 
     // Client Simulcast Quality setting
     const normalizeSimulcastQuality = (v) => {
@@ -848,8 +1201,6 @@ class NetplayMenu {
       (value) => saveSetting("netplayClientSimulcastQuality", value)
     );
 
-    settingsContainer.appendChild(createSettingRow("Client Simulcast Quality", clientQualitySelect));
-
     // Retry Connection Timer setting
     const retryTimerSelect = createSelect(
       {
@@ -864,8 +1215,6 @@ class NetplayMenu {
       (value) => saveSetting("netplayRetryConnectionTimer", parseInt(value))
     );
 
-    settingsContainer.appendChild(createSettingRow("Retry Connection Timer", retryTimerSelect));
-
     // Unordered Retries setting
     const unorderedRetriesSelect = createSelect(
       {
@@ -876,8 +1225,6 @@ class NetplayMenu {
       String(getSetting("netplayUnorderedRetries", 0)),
       (value) => saveSetting("netplayUnorderedRetries", parseInt(value))
     );
-
-    settingsContainer.appendChild(createSettingRow("Unordered Retries", unorderedRetriesSelect));
 
     // Input Mode setting - shows current active mode
     const currentMode = this.engine?.dataChannelManager?.mode ||
@@ -921,12 +1268,14 @@ class NetplayMenu {
       }
     );
 
-    settingsContainer.appendChild(createSettingRow("Input Mode", inputModeSelect));
-
-    // P2P Connectivity Test button
+    // P2P Connectivity Test button - more compact for two-column layout
     const testButton = this.createElement("button");
-    testButton.innerText = "Test P2P Connectivity";
+    testButton.innerText = "Test P2P";
     testButton.className = "ejs_button";
+    testButton.style.padding = "4px 8px";
+    testButton.style.fontSize = "0.85em";
+    testButton.style.width = "100%";
+    testButton.style.maxWidth = "100%";
     testButton.onclick = () => {
       if (this.engine?.testP2PConnectivity) {
         console.log("[NetplayMenu] 🔬 Starting P2P connectivity test...");
@@ -938,10 +1287,14 @@ class NetplayMenu {
       }
     };
 
-    // ICE Server Configuration Test button
+    // ICE Server Configuration Test button - more compact for two-column layout
     const iceTestButton = this.createElement("button");
-    iceTestButton.innerText = "Test ICE Server Config";
+    iceTestButton.innerText = "Test ICE";
     iceTestButton.className = "ejs_button";
+    iceTestButton.style.padding = "4px 8px";
+    iceTestButton.style.fontSize = "0.85em";
+    iceTestButton.style.width = "100%";
+    iceTestButton.style.maxWidth = "100%";
     iceTestButton.onclick = () => {
       if (this.engine?.testIceServerConfiguration) {
         console.log("[NetplayMenu] 🧊 Starting ICE server configuration test...");
@@ -958,17 +1311,26 @@ class NetplayMenu {
         console.warn("[NetplayMenu] ICE server test not available - engine not ready");
       }
     };
-    settingsContainer.appendChild(createSettingRow("P2P Test", testButton));
-    settingsContainer.appendChild(createSettingRow("ICE Config Test", iceTestButton));
+    
+    // Add settings in two-column layout
+    settingsTable.appendChild(createTwoColumnRow("SVC with VP9", vp9SvcSelect, "Legacy Simulcast", simulcastSelect));
+    settingsTable.appendChild(createTwoColumnRow("Host Codec", hostCodecSelect, "Client Simulcast Quality", clientQualitySelect));
+    settingsTable.appendChild(createTwoColumnRow("Retry Connection Timer", retryTimerSelect, "Unordered Retries", unorderedRetriesSelect));
+    settingsTable.appendChild(createTwoColumnRow("Input Mode", inputModeSelect, null, null));
+    settingsTable.appendChild(createTwoColumnRow("P2P Test", testButton, "ICE Config Test", iceTestButton));
 
+    settingsContainer.appendChild(settingsTable);
     content.appendChild(settingsContainer);
 
-    // Close button
-    content.appendChild(this.createElement("br"));
+    // Close button - mobile optimized
     const closeBtn = this.createElement("button");
     closeBtn.classList.add("ejs_button_button");
     closeBtn.classList.add("ejs_popup_submit");
     closeBtn.style["background-color"] = "rgba(var(--ejs-primary-color),1)";
+    closeBtn.style.marginTop = isMobile ? "6px" : "8px";
+    closeBtn.style.padding = isMobile ? "5px 12px" : "6px 16px";
+    closeBtn.style.fontSize = isMobile ? "0.85em" : "0.9em";
+    closeBtn.style.width = isMobile ? "100%" : "auto";
     closeBtn.innerText = "Close";
     closeBtn.onclick = () => container.remove();
 
@@ -1295,52 +1657,18 @@ class NetplayMenu {
     slotSelect.style.cursor = "pointer";
     slotSelect.style.color = "#fff";
   
-    // Determine current player's slot
-    let currentPlayerSlot = this.netplay.localSlot;
-    if (currentPlayerSlot === undefined || currentPlayerSlot === null) {
-      // Try to find current player in current players data
-      const localPlayerId = this.netplay.engine?.sessionState?.localPlayerId;
-      const localPlayerName = this.netplay.name;
-      
-      if (hasPlayerData) {
-        const localPlayer = Object.entries(currentPlayers).find(([playerId, playerData]) =>
-          (localPlayerId && playerId === localPlayerId) ||
-          (localPlayerName && playerData.name === localPlayerName)
-        );
-        if (localPlayer) {
-          currentPlayerSlot = localPlayer[1].slot || localPlayer[1].player_slot || 0;
-          // Update our local slot tracking
-          this.netplay.localSlot = currentPlayerSlot;
-        }
-      }
-    }
-  
-    // Add player slots (only available ones, plus current player's slot if taken)
-    for (let i = 0; i < 4; i++) {
-      const slotAvailable = !hasPlayerData || !this.netplay.takenSlots || !this.netplay.takenSlots.has(i);
-      const isCurrentPlayerSlot = i === currentPlayerSlot;
-  
-      if (slotAvailable || isCurrentPlayerSlot) {
-        const opt = this.createElement("option");
-        opt.value = String(i);
-        opt.innerText = "P" + (i + 1);
-        // Disable slots taken by others (but allow current player's slot)
-        if (hasPlayerData && this.netplay.takenSlots && this.netplay.takenSlots.has(i) && !isCurrentPlayerSlot) {
-          opt.disabled = true;
-        }
-        slotSelect.appendChild(opt);
-      }
-    }
-  
-    // Add Spectator option
-    const spectatorOpt = this.createElement("option");
-    spectatorOpt.value = "4";
-    spectatorOpt.innerText = "Spectator";
-    slotSelect.appendChild(spectatorOpt);
-  
-    // Set the current selection to the player's assigned slot
-    if (currentPlayerSlot !== undefined && currentPlayerSlot !== null) {
-      slotSelect.value = String(currentPlayerSlot);
+    // Use centralized slot selector options
+    const myPlayerId = this.getMyPlayerId();
+    const options = this.getSlotSelectorOptions(myPlayerId);
+
+    // Add options to select element
+    for (const option of options) {
+      const opt = this.createElement("option");
+      opt.value = String(option.value);
+      opt.innerText = option.text;
+      if (option.disabled) opt.disabled = true;
+      if (option.selected) opt.selected = true;
+      slotSelect.appendChild(opt);
     }
   
     // Store reference
@@ -1349,59 +1677,12 @@ class NetplayMenu {
     // Set up event listener (only if not already wired)
     if (!this.netplay._slotSelectWired) {
       this.netplay._slotSelectWired = true;
-      this.addEventListener(slotSelect, "change", async () => {
+      this.addEventListener(slotSelect, "change", () => {
         const raw = parseInt(slotSelect.value, 10);
         const slot = isNaN(raw) ? 0 : Math.max(0, Math.min(4, raw)); // Allow 0-4 (Spectator)
 
-        // Store old slot for takenSlots update
-        const oldSlot = this.netplay.localSlot;
-
-        // Update local slot preferences
-        this.netplay.localSlot = slot;
-        this.netplayPreferredSlot = slot;
-        window.EJS_NETPLAY_PREFERRED_SLOT = slot;
-        if (this.netplay.extra) {
-          this.netplay.extra.player_slot = slot;
-        }
-
-        // Update taken slots: remove old slot, add new slot (if not spectator)
-        if (!this.netplay.takenSlots) {
-          this.netplay.takenSlots = new Set();
-        }
-        if (oldSlot !== null && oldSlot !== undefined && oldSlot < 4) {
-          this.netplay.takenSlots.delete(oldSlot);
-        }
-        if (slot < 4) {
-          this.netplay.takenSlots.add(slot);
-        }
-
-        // Update player slot in player data
-        this.netplayUpdatePlayerSlot(slot);
-
-        // Update live stream player table if it exists
-        if (this.netplay.liveStreamPlayerTable) {
-          console.log("[NetplayMenu] Updating live stream player table after slot change");
-          this.netplayInitializeLiveStreamPlayers();
-        }
-
-        // Reconfigure input sync with new slot
-        if (this.netplay.engine && slot < 4) { // Only for player slots, not spectator
-          console.log("[NetplayMenu] Reconfiguring input sync for slot:", slot);
-          this.netplaySetupLiveStreamInputSync();
-        }
-
-        // Send slot update to server if in a room
-        if (this.netplay.engine?.roomManager && slot < 4) { // Don't send spectator slot to server
-          try {
-            await this.netplay.engine.roomManager.updatePlayerSlot(slot);
-            console.log(`[NetplayMenu] Sent slot update to server: ${slot}`);
-          } catch (error) {
-            console.error("[NetplayMenu] Failed to update slot on server:", error);
-          }
-        }
-
-        // Refresh slot selector dropdown to reflect updated taken slots
-        this.netplayUpdateSlotSelector();
+        // Use centralized slot change system
+        this.requestSlotChange(slot);
 
         // Save settings
         if (this.settings) {
@@ -2312,20 +2593,13 @@ class NetplayMenu {
   
         if (!this.netplay._slotSelectWired) {
           this.netplay._slotSelectWired = true;
-          this.addEventListener(this.netplay.slotSelect, "change", () => {
-            const raw = parseInt(this.netplay.slotSelect.value, 10);
-            const slot = isNaN(raw) ? 0 : Math.max(0, Math.min(3, raw));
-            this.netplay.localSlot = slot;
-            this.netplayPreferredSlot = slot;
-            window.EJS_NETPLAY_PREFERRED_SLOT = slot;
-            if (this.netplay.extra) {
-              this.netplay.extra.player_slot = slot;
-            }
-            // Update player table with new slot
-            this.netplayUpdatePlayerSlot(slot);
-            if (this.settings) {
-              this.settings.netplayPreferredSlot = String(slot);
-            }
+          this.addEventListener(slotSelect, "change", () => {
+            const raw = parseInt(slotSelect.value, 10);
+            const slot = isNaN(raw) ? 0 : Math.max(0, Math.min(4, raw));
+          
+            // ✅ Uses our centralized slot change system
+            this.requestSlotChange(slot);
+          
             this.saveSettings();
           });
         }
@@ -2880,6 +3154,9 @@ class NetplayMenu {
 
     // Update launch button state
     this.netplayUpdateLaunchButton();
+
+    // Notify all systems that player table has been updated
+    this.notifyPlayerTableUpdated();
   }
   // Clean up room-specific UI elements
   cleanupRoomUI() {

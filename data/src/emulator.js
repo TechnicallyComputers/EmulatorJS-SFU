@@ -4602,11 +4602,20 @@ class EmulatorJS {
     for (let i = 0; i < 4; i++) {
       for (let j = 0; j < 30; j++) {
         if (this.controls[i][j] && this.controls[i][j].value === e.keyCode) {
-          this.gameManager.simulateInput(
-            i,
-            j,
-            e.type === "keyup" ? 0 : special.includes(j) ? 0x7fff : 1
-          );
+          // Route through netplay.simulateInput if netplay is active
+          if (this.netplay && typeof this.netplay.simulateInput === 'function') {
+            this.netplay.simulateInput(
+              i,
+              j,
+              e.type === "keyup" ? 0 : special.includes(j) ? 0x7fff : 1
+            );
+          } else {
+            this.gameManager.simulateInput(
+              i,
+              j,
+              e.type === "keyup" ? 0 : special.includes(j) ? 0x7fff : 1
+            );
+          }
         }
       }
     }
@@ -4621,6 +4630,15 @@ class EmulatorJS {
     if (gamepadIndex < 0) {
       return; // Gamepad not set anywhere
     }
+
+    // Helper function to route input through netplay or gameManager
+    const simulateInput = (playerIndex, inputIndex, value) => {
+      if (this.netplay && typeof this.netplay.simulateInput === 'function') {
+        this.netplay.simulateInput(playerIndex, inputIndex, value);
+      } else {
+        this.gameManager.simulateInput(playerIndex, inputIndex, value);
+      }
+    };
     const value = (function (value) {
       if (value > 0.5 || value < -0.5) {
         return value > 0 ? 1 : -1;
@@ -4661,7 +4679,7 @@ class EmulatorJS {
           ["buttonup", "buttondown"].includes(e.type) &&
           (controlValue === e.label || controlValue === e.index)
         ) {
-          this.gameManager.simulateInput(
+          simulateInput(
             i,
             j,
             e.type === "buttonup" ? 0 : special.includes(j) ? 0x7fff : 1
@@ -4674,35 +4692,35 @@ class EmulatorJS {
             if (special.includes(j)) {
               if (j === 16 || j === 17) {
                 if (e.value > 0) {
-                  this.gameManager.simulateInput(i, 16, 0x7fff * e.value);
-                  this.gameManager.simulateInput(i, 17, 0);
+                  simulateInput(i, 16, 0x7fff * e.value);
+                  simulateInput(i, 17, 0);
                 } else {
-                  this.gameManager.simulateInput(i, 17, -0x7fff * e.value);
-                  this.gameManager.simulateInput(i, 16, 0);
+                  simulateInput(i, 17, -0x7fff * e.value);
+                  simulateInput(i, 16, 0);
                 }
               } else if (j === 18 || j === 19) {
                 if (e.value > 0) {
-                  this.gameManager.simulateInput(i, 18, 0x7fff * e.value);
-                  this.gameManager.simulateInput(i, 19, 0);
+                  simulateInput(i, 18, 0x7fff * e.value);
+                  simulateInput(i, 19, 0);
                 } else {
-                  this.gameManager.simulateInput(i, 19, -0x7fff * e.value);
-                  this.gameManager.simulateInput(i, 18, 0);
+                  simulateInput(i, 19, -0x7fff * e.value);
+                  simulateInput(i, 18, 0);
                 }
               } else if (j === 20 || j === 21) {
                 if (e.value > 0) {
-                  this.gameManager.simulateInput(i, 20, 0x7fff * e.value);
-                  this.gameManager.simulateInput(i, 21, 0);
+                  simulateInput(i, 20, 0x7fff * e.value);
+                  simulateInput(i, 21, 0);
                 } else {
-                  this.gameManager.simulateInput(i, 21, -0x7fff * e.value);
-                  this.gameManager.simulateInput(i, 20, 0);
+                  simulateInput(i, 21, -0x7fff * e.value);
+                  simulateInput(i, 20, 0);
                 }
               } else if (j === 22 || j === 23) {
                 if (e.value > 0) {
-                  this.gameManager.simulateInput(i, 22, 0x7fff * e.value);
-                  this.gameManager.simulateInput(i, 23, 0);
+                  simulateInput(i, 22, 0x7fff * e.value);
+                  simulateInput(i, 23, 0);
                 } else {
-                  this.gameManager.simulateInput(i, 23, -0x7fff * e.value);
-                  this.gameManager.simulateInput(i, 22, 0);
+                  simulateInput(i, 23, -0x7fff * e.value);
+                  simulateInput(i, 22, 0);
                 }
               }
             } else if (
@@ -4710,7 +4728,7 @@ class EmulatorJS {
               controlValue === e.label ||
               controlValue === `${e.axis}:${value}`
             ) {
-              this.gameManager.simulateInput(i, j, value === 0 ? 0 : 1);
+              simulateInput(i, j, value === 0 ? 0 : 1);
             }
           }
         }
@@ -6462,11 +6480,15 @@ class EmulatorJS {
             if (e.type === "touchend" || e.type === "touchcancel") {
               e.target.classList.remove("ejs_virtualGamepad_button_down");
               window.setTimeout(() => {
-                this.gameManager.simulateInput(0, value, 0);
+                this.netplay && typeof this.netplay.simulateInput === 'function' ?
+                  this.netplay.simulateInput(0, value, 0) :
+                  this.gameManager.simulateInput(0, value, 0);
               });
             } else {
               e.target.classList.add("ejs_virtualGamepad_button_down");
-              this.gameManager.simulateInput(0, value, downValue);
+              this.netplay && typeof this.netplay.simulateInput === 'function' ?
+                this.netplay.simulateInput(0, value, downValue) :
+                this.gameManager.simulateInput(0, value, downValue);
             }
           }
         );
@@ -6593,10 +6615,12 @@ class EmulatorJS {
             if (left === 1) left = 0x7fff;
             if (right === 1) right = 0x7fff;
           }
-          this.gameManager.simulateInput(0, dpad.inputValues[0], up);
-          this.gameManager.simulateInput(0, dpad.inputValues[1], down);
-          this.gameManager.simulateInput(0, dpad.inputValues[2], left);
-          this.gameManager.simulateInput(0, dpad.inputValues[3], right);
+          const simulateInput = this.netplay && typeof this.netplay.simulateInput === 'function' ?
+            this.netplay.simulateInput : this.gameManager.simulateInput;
+          simulateInput(0, dpad.inputValues[0], up);
+          simulateInput(0, dpad.inputValues[1], down);
+          simulateInput(0, dpad.inputValues[2], left);
+          simulateInput(0, dpad.inputValues[3], right);
         },
       });
     });
@@ -6636,10 +6660,12 @@ class EmulatorJS {
         color: zone.color || "red",
       });
       zoneObj.on("end", () => {
-        this.gameManager.simulateInput(0, zone.inputValues[0], 0);
-        this.gameManager.simulateInput(0, zone.inputValues[1], 0);
-        this.gameManager.simulateInput(0, zone.inputValues[2], 0);
-        this.gameManager.simulateInput(0, zone.inputValues[3], 0);
+        const simulateInput = this.netplay && typeof this.netplay.simulateInput === 'function' ?
+          this.netplay.simulateInput : this.gameManager.simulateInput;
+        simulateInput(0, zone.inputValues[0], 0);
+        simulateInput(0, zone.inputValues[1], 0);
+        simulateInput(0, zone.inputValues[2], 0);
+        simulateInput(0, zone.inputValues[3], 0);
       });
       zoneObj.on("move", (e, info) => {
         const degree = info.angle.degree;
@@ -6679,47 +6705,49 @@ class EmulatorJS {
             x = distance / 50;
             y = (0.022222222222222223 * (360 - degree) * distance) / 50;
           }
+          const simulateInput = this.netplay && typeof this.netplay.simulateInput === 'function' ?
+            this.netplay.simulateInput : this.gameManager.simulateInput;
           if (x > 0) {
-            this.gameManager.simulateInput(0, zone.inputValues[0], 0x7fff * x);
-            this.gameManager.simulateInput(0, zone.inputValues[1], 0);
+            simulateInput(0, zone.inputValues[0], 0x7fff * x);
+            simulateInput(0, zone.inputValues[1], 0);
           } else {
-            this.gameManager.simulateInput(0, zone.inputValues[1], 0x7fff * -x);
-            this.gameManager.simulateInput(0, zone.inputValues[0], 0);
+            simulateInput(0, zone.inputValues[1], 0x7fff * -x);
+            simulateInput(0, zone.inputValues[0], 0);
           }
           if (y > 0) {
-            this.gameManager.simulateInput(0, zone.inputValues[2], 0x7fff * y);
-            this.gameManager.simulateInput(0, zone.inputValues[3], 0);
+            simulateInput(0, zone.inputValues[2], 0x7fff * y);
+            simulateInput(0, zone.inputValues[3], 0);
           } else {
-            this.gameManager.simulateInput(0, zone.inputValues[3], 0x7fff * -y);
-            this.gameManager.simulateInput(0, zone.inputValues[2], 0);
+            simulateInput(0, zone.inputValues[3], 0x7fff * -y);
+            simulateInput(0, zone.inputValues[2], 0);
           }
         } else {
           if (degree >= 30 && degree < 150) {
-            this.gameManager.simulateInput(0, zone.inputValues[0], 1);
+            simulateInput(0, zone.inputValues[0], 1);
           } else {
             window.setTimeout(() => {
-              this.gameManager.simulateInput(0, zone.inputValues[0], 0);
+              simulateInput(0, zone.inputValues[0], 0);
             }, 30);
           }
           if (degree >= 210 && degree < 330) {
-            this.gameManager.simulateInput(0, zone.inputValues[1], 1);
+            simulateInput(0, zone.inputValues[1], 1);
           } else {
             window.setTimeout(() => {
-              this.gameManager.simulateInput(0, zone.inputValues[1], 0);
+              simulateInput(0, zone.inputValues[1], 0);
             }, 30);
           }
           if (degree >= 120 && degree < 240) {
-            this.gameManager.simulateInput(0, zone.inputValues[2], 1);
+            simulateInput(0, zone.inputValues[2], 1);
           } else {
             window.setTimeout(() => {
-              this.gameManager.simulateInput(0, zone.inputValues[2], 0);
+              simulateInput(0, zone.inputValues[2], 0);
             }, 30);
           }
           if (degree >= 300 || (degree >= 0 && degree < 60)) {
-            this.gameManager.simulateInput(0, zone.inputValues[3], 1);
+            simulateInput(0, zone.inputValues[3], 1);
           } else {
             window.setTimeout(() => {
-              this.gameManager.simulateInput(0, zone.inputValues[3], 0);
+              simulateInput(0, zone.inputValues[3], 0);
             }, 30);
           }
         }

@@ -9,10 +9,11 @@
  */
 
 class SimpleController {
-  constructor(emulatorAdapter) {
+  constructor(emulatorAdapter, config = {}) {
     this.maxInputs = 30;
     this.maxPlayers = 4;
     this.emulator = emulatorAdapter;
+    this.config = config;
 
     // Input storage: frame -> array of input data
     this.inputsData = {};
@@ -21,6 +22,9 @@ class SimpleController {
 
     // Edge-trigger optimization: track last known values to avoid sending unchanged inputs
     this.lastInputValues = {}; // key: `${playerIndex}-${inputIndex}`, value: last sent value
+
+    // Slot change callback to clear cache when slots change
+    this.onSlotChanged = config?.onSlotChanged;
   }
 
   /**
@@ -305,6 +309,17 @@ class SimpleController {
    */
   getMaxPlayers() {
     return this.maxPlayers;
+  }
+
+  /**
+   * Handle slot change notification (clear edge-trigger cache)
+   * @param {string} playerId - Player whose slot changed
+   * @param {number|null} newSlot - New slot assignment
+   */
+  handleSlotChange(playerId, newSlot) {
+    console.log("[SimpleController] Slot changed, clearing edge-trigger cache for player:", playerId);
+    // Clear the entire cache when any slot changes to ensure clean state
+    this.lastInputValues = {};
   }
 }
 

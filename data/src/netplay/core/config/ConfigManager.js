@@ -27,6 +27,7 @@ class ConfigManager {
         { urls: 'stun:stun1.l.google.com:19302' }
       ],
       netplayPreferredSlot: 0,
+      netplayChatEnabled: false, // Chat disabled by default
       ...defaultConfig,
     };
   }

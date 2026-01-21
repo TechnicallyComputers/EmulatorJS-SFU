@@ -16,7 +16,7 @@
 // Dependencies are expected to be in global scope after concatenation:
 // SocketTransport, SFUTransport, DataChannelManager, InputSync,
 // SessionState, FrameCounter, ConfigManager, RoomManager, PlayerManager,
-// MetadataValidator, GameModeManager, UsernameManager, SpectatorManager, SlotManager
+// MetadataValidator, GameModeManager, UsernameManager, SpectatorManager, SlotManager, ChatComponent
 
 // #region agent log
 try {
@@ -56,6 +56,7 @@ class NetplayEngine {
     this.spectatorManager = null;
     this.roomManager = null;
     this.inputSync = null;
+    this.chatComponent = null;
 
     // Initialization state
     this._initialized = false;
@@ -300,19 +301,37 @@ getPlayerName() {
       const emulatorAdapter = new EmulatorJSAdapterClass(this.emulator);
 
       // 14. Input Sync (initialize first, then get callback)
+      // Create slot change callback to keep playerTable in sync
+      const onSlotChanged = (playerId, slot) => {
+        console.log("[NetplayEngine] Slot changed via InputSync:", playerId, "-> slot", slot);
+        // Update playerTable through NetplayMenu if available
+        if (this.emulator?.netplay?.menu) {
+          this.emulator.netplay.menu.updatePlayerSlot(playerId, slot);
+        }
+      };
+
       this.inputSync = new InputSync(
         emulatorAdapter,
         this.configManager?.loadConfig() || {},
         this.sessionState,
-        null // Will set callback after creation
+        null, // Will set callback after creation
+        onSlotChanged
       );
+
+      // Create slot getter function for centralized slot management
+      const getPlayerSlot = () => {
+        const myPlayerId = this.sessionState?.localPlayerId;
+        const playerTable = this.emulator?.netplay?.joinedPlayers || {};
+        return myPlayerId && playerTable[myPlayerId] ? (playerTable[myPlayerId].slot ?? 0) : 0;
+      };
 
       // Get the callback from InputSync
       const sendInputCallback = this.inputSync.createSendInputCallback(
         this.dataChannelManager,
         this.configManager,
         this.emulator,
-        this.socketTransport
+        this.socketTransport,
+        getPlayerSlot
       );
 
       // Set the callback on InputSync
@@ -433,6 +452,28 @@ getPlayerName() {
             console.log("[Netplay] Not retrying producers - not a livestream host");
           }
         });
+      }
+
+      // 15. Chat Component (only if enabled)
+      const chatEnabled = typeof window.EJS_NETPLAY_CHAT_ENABLED === 'boolean' 
+        ? window.EJS_NETPLAY_CHAT_ENABLED 
+        : (this.config.netplayChatEnabled ?? this.configManager?.getSetting('netplayChatEnabled') ?? false);
+      
+      if (chatEnabled) {
+        this.chatComponent = new ChatComponent(
+          this.emulator,
+          this,
+          this.socketTransport
+        );
+        console.log('[NetplayEngine] ChatComponent initialized');
+
+        // Set up chat message forwarding from socket transport
+        if (this.socketTransport && this.chatComponent) {
+          this.socketTransport.setupChatForwarding(this.chatComponent);
+          console.log('[NetplayEngine] Chat message forwarding configured');
+        }
+      } else {
+        console.log('[NetplayEngine] ChatComponent disabled (netplayChatEnabled = false)');
       }
 
       this._initialized = true;
@@ -1621,6 +1662,13 @@ getPlayerName() {
           }
         }
 
+        // Show chat component after successful room join (only if enabled)
+        if (this.chatComponent) {
+          console.log('[Netplay] Showing chat component after room join');
+          this.chatComponent.clearMessages(); // Clear any previous messages
+          this.chatComponent.show();
+        }
+
         return result;
       } catch (error) {
         console.error("[Netplay] Room join failed via engine:", error);
@@ -1728,10 +1776,15 @@ getPlayerName() {
     // Set up netplay simulateInput if not already done (always needed)
     if (!this.emulator.netplay.simulateInput) {
       this.emulator.netplay.simulateInput = (playerIndex, inputIndex, value) => {
-        console.log("[Netplay] Processing input via netplay.simulateInput:", { playerIndex, inputIndex, value });
+        // In netplay, use the local player's slot from centralized playerTable
+        const myPlayerId = this.emulator.netplay?.engine?.sessionState?.localPlayerId;
+        const playerTable = this.emulator.netplay?.joinedPlayers || {};
+        const mySlot = myPlayerId && playerTable[myPlayerId] ? (playerTable[myPlayerId].slot ?? 0) : 0;
+
+        console.log("[Netplay] Processing input via netplay.simulateInput:", { originalPlayerIndex: playerIndex, mySlot, inputIndex, value });
         if (this.emulator.netplay.engine && this.inputSync) {
-          console.log("[Netplay] Sending input through InputSync");
-          return this.inputSync.sendInput(playerIndex, inputIndex, value);
+          console.log("[Netplay] Sending input through InputSync using player table slot:", mySlot);
+          return this.inputSync.sendInput(mySlot, inputIndex, value);
         } else {
           console.warn("[Netplay] InputSync not available, input ignored");
           return false;
@@ -2035,6 +2088,12 @@ getPlayerName() {
         this.emulator.netplay.joinedPlayers = [];
         this.emulator.netplay.takenSlots = new Set();
       }
+    }
+
+    // Hide chat component when leaving room
+    if (this.chatComponent) {
+      console.log('[Netplay] Hiding chat component when leaving room');
+      this.chatComponent.hide();
     }
   }
 
@@ -2541,11 +2600,27 @@ getPlayerName() {
         }
       };
 
+      // Track candidate types for diagnostics
+      let candidateTypes = { host: 0, srflx: 0, relay: 0, prflx: 0 };
+
       pc.onicecandidate = (event) => {
         if (event.candidate) {
-          console.log(`[Netplay] P2P ICE candidate (${target}): ${event.candidate.type} ${event.candidate.protocol}:${event.candidate.port} priority:${event.candidate.priority}`);
+          const candidate = event.candidate;
+          candidateTypes[candidate.type] = (candidateTypes[candidate.type] || 0) + 1;
+          console.log(`[Netplay] P2P ICE candidate (${target}): ${candidate.type} ${candidate.protocol}:${candidate.port} priority:${candidate.priority}`);
+
+          // Log relay candidate detection (TURN working)
+          if (candidate.type === 'relay') {
+            console.log(`[Netplay] ✅ TURN server provided relay candidate for ${target} - P2P should work!`);
+          }
         } else {
-          console.log(`[Netplay] P2P ICE candidate gathering complete (${target}) - gathered ${pc.localDescription?.sdp?.split('\n').filter(line => line.startsWith('a=candidate')).length || 0} candidates`);
+          const totalCandidates = Object.values(candidateTypes).reduce((a, b) => a + b, 0);
+          console.log(`[Netplay] P2P ICE candidate gathering complete (${target}) - gathered ${totalCandidates} candidates:`, candidateTypes);
+
+          // Warn if no relay candidates (TURN servers not working)
+          if (candidateTypes.relay === 0) {
+            console.warn(`[Netplay] ⚠️ No relay candidates detected for ${target} - TURN servers may not be working properly`);
+          }
         }
       };
 
@@ -2570,7 +2645,23 @@ getPlayerName() {
       // Set timeout for ICE gathering (increased for coturn servers)
       iceGatheringTimeout = setTimeout(() => {
         if (pc.iceGatheringState !== 'complete') {
-          console.warn(`[Netplay] ⚠️ P2P ICE gathering timeout with ${target} - gathered ${pc.localDescription?.sdp?.split('\n').filter(line => line.startsWith('a=candidate')).length || 0} candidates`);
+          const candidateCount = pc.localDescription?.sdp?.split('\n').filter(line => line.startsWith('a=candidate')).length || 0;
+          console.warn(`[Netplay] ⚠️ P2P ICE gathering timeout with ${target} - gathered ${candidateCount} candidates`);
+
+          // Check if we have relay candidates (TURN servers working)
+          const hasRelayCandidates = pc.localDescription?.sdp?.includes('typ relay') || false;
+
+          if (!hasRelayCandidates && candidateCount < 10) {
+            console.warn(`[Netplay] 🚨 No relay candidates detected - TURN servers may be failing. Triggering early fallback to relay mode.`);
+            // Clear connection timeout since we're handling fallback now
+            clearTimeout(connectionTimeout);
+            pc.close();
+            this.handleP2PFallback(target);
+            return;
+          }
+
+          // Continue with connection attempt even if gathering didn't complete
+          // The connection timeout will handle fallback if needed
         }
       }, 10000); // 10 second timeout for ICE gathering
 
@@ -3216,11 +3307,27 @@ getPlayerName() {
                 }
               };
 
+              // Track candidate types for diagnostics
+              let candidateTypes = { host: 0, srflx: 0, relay: 0, prflx: 0 };
+
               pc.onicecandidate = (event) => {
                 if (event.candidate) {
-                  console.log(`[Netplay] Host P2P ICE candidate (${sender}): ${event.candidate.type} ${event.candidate.protocol}:${event.candidate.port} priority:${event.candidate.priority}`);
+                  const candidate = event.candidate;
+                  candidateTypes[candidate.type] = (candidateTypes[candidate.type] || 0) + 1;
+                  console.log(`[Netplay] Host P2P ICE candidate (${sender}): ${candidate.type} ${candidate.protocol}:${candidate.port} priority:${candidate.priority}`);
+
+                  // Log relay candidate detection (TURN working)
+                  if (candidate.type === 'relay') {
+                    console.log(`[Netplay] ✅ TURN server provided relay candidate for ${sender} - P2P should work!`);
+                  }
                 } else {
-                  console.log(`[Netplay] Host P2P ICE candidate gathering complete (${sender}) - gathered ${pc.localDescription?.sdp?.split('\n').filter(line => line.startsWith('a=candidate')).length || 0} candidates`);
+                  const totalCandidates = Object.values(candidateTypes).reduce((a, b) => a + b, 0);
+                  console.log(`[Netplay] Host P2P ICE candidate gathering complete (${sender}) - gathered ${totalCandidates} candidates:`, candidateTypes);
+
+                  // Warn if no relay candidates (TURN servers not working)
+                  if (candidateTypes.relay === 0) {
+                    console.warn(`[Netplay] ⚠️ No relay candidates detected for ${sender} - TURN servers may not be working properly`);
+                  }
                 }
               };
 
@@ -3245,7 +3352,23 @@ getPlayerName() {
               // Set timeout for ICE gathering (increased for coturn servers)
               iceGatheringTimeout = setTimeout(() => {
                 if (pc.iceGatheringState !== 'complete') {
-                  console.warn(`[Netplay] ⚠️ Host P2P ICE gathering timeout with ${sender} - gathered ${pc.localDescription?.sdp?.split('\n').filter(line => line.startsWith('a=candidate')).length || 0} candidates`);
+                  const candidateCount = pc.localDescription?.sdp?.split('\n').filter(line => line.startsWith('a=candidate')).length || 0;
+                  console.warn(`[Netplay] ⚠️ Host P2P ICE gathering timeout with ${sender} - gathered ${candidateCount} candidates`);
+
+                  // Check if we have relay candidates (TURN servers working)
+                  const hasRelayCandidates = pc.localDescription?.sdp?.includes('typ relay') || false;
+
+                  if (!hasRelayCandidates && candidateCount < 10) {
+                    console.warn(`[Netplay] 🚨 No relay candidates detected - TURN servers may be failing. Triggering early fallback to relay mode.`);
+                    // Clear connection timeout since we're handling fallback now
+                    clearTimeout(connectionTimeout);
+                    pc.close();
+                    this.handleP2PFallback(sender);
+                    return;
+                  }
+
+                  // Continue with connection attempt even if gathering didn't complete
+                  // The connection timeout will handle fallback if needed
                 }
               }, 10000); // 10 second timeout for ICE gathering
 
