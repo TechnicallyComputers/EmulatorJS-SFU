@@ -350,14 +350,6 @@ class NetplayEngine {
         }
       };
 
-      this.inputSync = new InputSync(
-        emulatorAdapter,
-        this.configManager?.loadConfig() || {},
-        this.sessionState,
-        null, // Will set callback after creation
-        onSlotChanged,
-      );
-
       // Create slot getter function for centralized slot management
       const getPlayerSlot = () => {
         const myPlayerId = this.sessionState?.localPlayerId;
@@ -371,6 +363,20 @@ class NetplayEngine {
           ? (myPlayer.slot ?? 0)
           : (this.emulator?.netplay?.localSlot ?? 0);
       };
+
+      // Create config with slot getter callback for SimpleController
+      const inputSyncConfig = {
+        ...(this.configManager?.loadConfig() || {}),
+        getCurrentSlot: getPlayerSlot,
+      };
+
+      this.inputSync = new InputSync(
+        emulatorAdapter,
+        inputSyncConfig,
+        this.sessionState,
+        null, // Will set callback after creation
+        onSlotChanged,
+      );
 
       // Get the callback from InputSync
       const sendInputCallback = this.inputSync.createSendInputCallback(

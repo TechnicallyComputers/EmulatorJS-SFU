@@ -69,25 +69,58 @@ class NetplayMenu {
       }
     }
 
-    // Ensure local player is always in the table
+    // Ensure local player is always in the table (but avoid duplicates)
     const myPlayerId = this.getMyPlayerId();
     if (myPlayerId && !playerTable[myPlayerId]) {
-      const localSlot = this.netplay?.localSlot ?? 0;
-      playerTable[myPlayerId] = {
-        playerId: myPlayerId,
-        id: myPlayerId,
-        name: this.netplay?.name || myPlayerId,
-        slot: localSlot,
-        role: localSlot === null ? "spectator" : "player",
-        connected: true,
-        ready: false,
-      };
-      console.log(
-        "[NetplayMenu] Added local player to player table:",
-        myPlayerId,
-        "slot:",
-        localSlot,
+      // Check if local player is already in joinedPlayers with a different ID
+      const myPlayerName = this.netplay?.name;
+      const existingLocalPlayer = joinedPlayers.find(
+        (p) =>
+          p.id === myPlayerId ||
+          (myPlayerName && p.name === myPlayerName) ||
+          p.id === this.netplay?.engine?.sessionState?.localPlayerId,
       );
+
+      if (!existingLocalPlayer) {
+        // Local player not found in joinedPlayers, add them
+        const sessionSlot =
+          this.netplay?.engine?.sessionState?.getLocalPlayerSlot();
+        const localSlot =
+          sessionSlot !== null && sessionSlot !== undefined
+            ? sessionSlot
+            : (this.netplay?.localSlot ?? 0);
+        playerTable[myPlayerId] = {
+          playerId: myPlayerId,
+          id: myPlayerId,
+          name: this.netplay?.name || myPlayerId,
+          slot: localSlot,
+          role: localSlot === 8 ? "spectator" : "player",
+          connected: true,
+          ready: false,
+        };
+        console.log(
+          "[NetplayMenu] Added local player to player table:",
+          myPlayerId,
+          "slot:",
+          localSlot,
+          "(from session state:",
+          sessionSlot !== null && sessionSlot !== undefined ? "yes" : "no",
+          "fallback:",
+          this.netplay?.localSlot ?? 0,
+          ")",
+        );
+      } else {
+        // Local player exists with different ID, use existing entry
+        playerTable[existingLocalPlayer.id] = {
+          ...existingLocalPlayer,
+          playerId: existingLocalPlayer.id,
+        };
+        console.log(
+          "[NetplayMenu] Local player already in joinedPlayers with different ID:",
+          existingLocalPlayer.id,
+          "using existing entry instead of adding duplicate",
+        );
+      }
     }
 
     return playerTable;
@@ -106,9 +139,57 @@ class NetplayMenu {
   }
 
   /**
+   * Convert slot number to display text
+   * @param {number} slot - Slot number (0-8)
+   * @returns {string} Display text (P1-P8 or Spectator)
+   */
+  getSlotDisplayText(slot) {
+    if (slot === 8) {
+      return "Spectator";
+    }
+    return `P${slot + 1}`;
+  }
+
+  /**
+   * Get status emoji for player in live stream mode
+   * @param {Object} player - Player object
+   * @returns {string} Status emoji (🖥️ Host, 🎮 Client, 👀 Spectator)
+   */
+  getPlayerStatusEmoji(player) {
+    if (!player) return "🎮";
+
+    if (this.isPlayerHost(player)) {
+      return "🖥️";
+    } else if (player.slot === 8) {
+      return "👀"; // Spectator
+    }
+  }
+
+  /**
+   * Check if a player is the host (centralized host determination)
+   * @param {Object} player - Player object with id property
+   * @returns {boolean} True if this player is the host
+   */
+  isPlayerHost(player) {
+    if (!player || !player.id) return false;
+
+    const myPlayerId = this.getMyPlayerId();
+    const myPlayerName = this.netplay?.name;
+    const isHost = this.netplay?.engine?.sessionState?.isHostRole() || false;
+
+    // Check if this player represents the current user (by ID or name)
+    const isCurrentUser =
+      player.id === myPlayerId ||
+      (myPlayerName && player.name === myPlayerName) ||
+      player.id === this.netplay?.engine?.sessionState?.localPlayerId;
+
+    return isCurrentUser && isHost;
+  }
+
+  /**
    * CENTRAL SLOT UPDATE FUNCTION - Only way slots should change
    * @param {string} playerId - Player to update
-   * @param {number|null} newSlot - New slot (0-3) or null for spectator
+   * @param {number} newSlot - New slot (0-7) or 8 for spectator
    * @returns {boolean} true if update succeeded
    */
   updatePlayerSlot(playerId, newSlot) {
@@ -142,9 +223,9 @@ class NetplayMenu {
     player.slot = newSlot;
 
     // Update role based on slot
-    if (newSlot === null) {
+    if (newSlot === 8) {
       player.role = "spectator";
-    } else if (newSlot >= 0 && newSlot <= 3) {
+    } else if (newSlot >= 0 && newSlot <= 7) {
       player.role = "player";
     }
 
@@ -155,9 +236,9 @@ class NetplayMenu {
       );
       if (joinedPlayer) {
         joinedPlayer.slot = newSlot;
-        if (newSlot === null) {
+        if (newSlot === 8) {
           joinedPlayer.role = "spectator";
-        } else if (newSlot >= 0 && newSlot <= 3) {
+        } else if (newSlot >= 0 && newSlot <= 7) {
           joinedPlayer.role = "player";
         }
         console.log(
@@ -173,7 +254,7 @@ class NetplayMenu {
           id: playerId,
           name: player.name || playerId,
           slot: newSlot,
-          role: newSlot === null ? "spectator" : "player",
+          role: newSlot === 8 ? "spectator" : "player",
           connected: true,
           ready: false,
         });
@@ -219,7 +300,8 @@ class NetplayMenu {
           (p) =>
             p.playerId !== myPlayerId &&
             p.slot !== null &&
-            p.slot !== undefined,
+            p.slot !== undefined &&
+            p.slot !== 8, // Spectators don't take player slots
         )
         .map((p) => p.slot),
     );
@@ -234,13 +316,27 @@ class NetplayMenu {
    * @returns {Array<{value: number, text: string, disabled: boolean, selected: boolean}>}
    */
   getSlotSelectorOptions(myPlayerId, allSlots = [0, 1, 2, 3]) {
-    const playerTable = this.getPlayerTable();
-    const me = playerTable[myPlayerId];
+    // Find local player directly from joinedPlayers
+    const localPlayerId = this.netplay?.engine?.sessionState?.localPlayerId;
+    const localPlayerName = this.netplay?.name;
+
+    let me = null;
+    if (localPlayerId) {
+      me = this.netplay?.joinedPlayers?.find((p) => p.id === localPlayerId);
+    }
+    if (!me && localPlayerName) {
+      me = this.netplay?.joinedPlayers?.find((p) => p.name === localPlayerName);
+    }
 
     if (!me) {
       console.warn(
-        "[NetplayMenu] Cannot get slot selector options: player not found",
-        myPlayerId,
+        "[NetplayMenu] Cannot get slot selector options: local player not found in joinedPlayers",
+        {
+          myPlayerId,
+          localPlayerId,
+          localPlayerName,
+          joinedPlayersCount: this.netplay?.joinedPlayers?.length,
+        },
       );
       return [];
     }
@@ -248,35 +344,50 @@ class NetplayMenu {
     const available = this.computeAvailableSlots(myPlayerId, allSlots);
     const options = [];
 
-    // Always include current slot first (even if "taken" by us)
-    if (me.slot !== null && me.slot !== undefined) {
-      options.push({
-        value: me.slot,
-        text: `P${me.slot + 1}`,
-        disabled: false,
-        selected: true,
-      });
+    // Get current player's slot from player table (synchronized with UI updates)
+    let currentPlayerSlot = me.slot;
+
+    // Debug: Log player table slot info
+    console.log("[NetplayMenu] Slot selector player table debug:");
+    console.log("  myPlayerId:", myPlayerId);
+    console.log("  currentPlayerSlot from table:", currentPlayerSlot);
+    console.log("  player table entry:", me);
+
+    // Ensure we have a valid player slot (player table should always provide this)
+    if (currentPlayerSlot === null || currentPlayerSlot === undefined) {
+      console.warn(
+        "[NetplayMenu] Player table returned invalid slot, defaulting to 0",
+      );
+      currentPlayerSlot = 0;
     }
+
+    // Always include current slot first (now guaranteed to be a valid player slot)
+    options.push({
+      value: currentPlayerSlot,
+      text: this.getSlotDisplayText(currentPlayerSlot),
+      disabled: false,
+      selected: true,
+    });
 
     // Add available slots
     for (const slot of available) {
-      if (slot !== me.slot) {
+      if (slot !== currentPlayerSlot) {
         // Don't duplicate current slot
         options.push({
           value: slot,
-          text: `P${slot + 1}`,
+          text: this.getSlotDisplayText(slot),
           disabled: false,
           selected: false,
         });
       }
     }
 
-    // Add spectator option
+    // Add spectator option (never auto-selected - user must choose it explicitly)
     options.push({
-      value: 4, // Special value for spectator
+      value: 8, // Special value for spectator
       text: "Spectator",
       disabled: false,
-      selected: me.slot === null || me.slot === undefined,
+      selected: currentPlayerSlot === 8,
     });
 
     return options;
@@ -287,25 +398,39 @@ class NetplayMenu {
    * @param {number} newSlot - Requested slot (0-3) or 4 for spectator
    */
   requestSlotChange(newSlot) {
-    console.log("[NetplayMenu] requestSlotChange called with newSlot:", newSlot);
-    const myPlayerId = this.getMyPlayerId();
-    if (!myPlayerId) {
-      console.warn("[NetplayMenu] Cannot request slot change: no player ID");
-      return;
+    console.log(
+      "[NetplayMenu] requestSlotChange called with newSlot:",
+      newSlot,
+    );
+
+    // Find local player using session state (more reliable than player table)
+    const localPlayerId = this.netplay?.engine?.sessionState?.localPlayerId;
+    const localPlayerName = this.netplay?.name;
+
+    let me = null;
+    if (localPlayerId) {
+      // Try to find by session state ID first
+      me = this.netplay?.joinedPlayers?.find((p) => p.id === localPlayerId);
+    }
+    if (!me && localPlayerName) {
+      // Fallback to finding by name
+      me = this.netplay?.joinedPlayers?.find((p) => p.name === localPlayerName);
     }
 
-    const playerTable = this.getPlayerTable();
-    const me = playerTable[myPlayerId];
     if (!me) {
       console.warn(
-        "[NetplayMenu] Cannot request slot change: player not in table",
-        myPlayerId,
+        "[NetplayMenu] Cannot request slot change: local player not found in joinedPlayers",
+        {
+          localPlayerId,
+          localPlayerName,
+          joinedPlayersCount: this.netplay?.joinedPlayers?.length,
+        },
       );
       return;
     }
 
-    // Convert spectator (4) to null
-    const actualSlot = newSlot === 4 ? null : newSlot;
+    // Convert spectator (4) to slot 8
+    const actualSlot = newSlot === 4 ? 8 : newSlot;
 
     if (me.slot === actualSlot) {
       console.log(
@@ -317,27 +442,16 @@ class NetplayMenu {
 
     console.log(
       "[NetplayMenu] Requesting slot change:",
-      myPlayerId,
+      me.id,
       me.slot,
       "->",
       actualSlot,
     );
 
-    // For now, apply locally (in a real authoritative system, this would go to host/server)
-    if (this.updatePlayerSlot(myPlayerId, actualSlot)) {
-      // Update UI state
-      this.netplay.localSlot = actualSlot;
-      this.netplayPreferredSlot = actualSlot;
-      if (typeof window !== "undefined") {
-        window.EJS_NETPLAY_PREFERRED_SLOT = actualSlot;
-      }
-      if (this.netplay.extra) {
-        this.netplay.extra.player_slot = actualSlot;
-      }
+    // Update local state optimistically before server request
+    this.updatePlayerSlot(me.id, actualSlot);
 
-      // Notify server if in a room
-      this.notifyServerOfSlotChange(actualSlot);
-    }
+    this.notifyServerOfSlotChange(actualSlot);
   }
 
   /**
@@ -355,18 +469,30 @@ class NetplayMenu {
     );
     console.log(
       "[NetplayMenu] slot condition check:",
-      slot === null || slot < 4,
+      slot === 8 || (slot >= 0 && slot < 4),
     );
 
-    if (this.netplay?.engine?.roomManager && (slot === null || slot < 4)) {
+    if (
+      this.netplay?.engine?.roomManager &&
+      (slot === 8 || (slot >= 0 && slot < 4))
+    ) {
       try {
         console.log(
           "[NetplayMenu] Calling roomManager.updatePlayerSlot with slot:",
           slot,
         );
         await this.netplay.engine.roomManager.updatePlayerSlot(slot);
+
+        // Update global slot variable for SimpleController
+        window.EJS_NETPLAY_PREFERRED_SLOT = slot;
+        this.netplay.localSlot = slot;
+
         console.log(
           "[NetplayMenu] Successfully notified server of slot change:",
+          slot,
+        );
+        console.log(
+          "[NetplayMenu] Updated window.EJS_NETPLAY_PREFERRED_SLOT to:",
           slot,
         );
       } catch (error) {
@@ -399,11 +525,31 @@ class NetplayMenu {
 
     // Update player table display
     if (this.netplay.liveStreamPlayerTable) {
-      this.netplayInitializeLiveStreamPlayers();
+      this.netplayUpdatePlayerTable(this.netplay.joinedPlayers); // Uses real data
     }
 
     // Update taken slots tracking (for backward compatibility)
     this.updateTakenSlotsFromPlayerTable();
+  }
+
+  /**
+   * NOTIFICATION SYSTEM - Called for targeted updates (avoids full table rebuild)
+   */
+  notifyPlayerTableUpdatedTargeted() {
+    console.log(
+      "[NetplayMenu] Player table updated (targeted), refreshing dependent UI only",
+    );
+
+    // Update slot selector UI
+    this.updateSlotSelectorUI();
+
+    // Update input sync with new slot
+    this.updateInputSyncWithCurrentSlot();
+
+    // Update taken slots tracking (for backward compatibility)
+    this.updateTakenSlotsFromPlayerTable();
+
+    // SKIP: Full table rebuild - we only updated specific cells
   }
 
   /**
@@ -417,11 +563,18 @@ class NetplayMenu {
 
     const options = this.getSlotSelectorOptions(myPlayerId);
 
+    // Check if spectator option already exists
+    const existingSpectator = this.netplay.slotSelect.querySelector('option[value="8"]');
+
     // Clear existing options
     this.netplay.slotSelect.innerHTML = "";
 
     // Add new options
     for (const option of options) {
+      if (option.value === 8 && existingSpectator) {
+        this.netplay.slotSelect.appendChild(existingSpectator);
+        continue;
+      }
       const opt = this.createElement("option");
       opt.value = String(option.value);
       opt.innerText = option.text;
@@ -441,11 +594,19 @@ class NetplayMenu {
    * Update input sync to use current slot from playerTable
    */
   updateInputSyncWithCurrentSlot() {
-    const myPlayerId = this.getMyPlayerId();
-    if (!myPlayerId) return;
+    // Find local player directly from joinedPlayers
+    const localPlayerId = this.netplay?.engine?.sessionState?.localPlayerId;
+    const localPlayerName = this.netplay?.name;
 
-    const playerTable = this.getPlayerTable();
-    const mySlot = playerTable[myPlayerId]?.slot;
+    let me = null;
+    if (localPlayerId) {
+      me = this.netplay?.joinedPlayers?.find((p) => p.id === localPlayerId);
+    }
+    if (!me && localPlayerName) {
+      me = this.netplay?.joinedPlayers?.find((p) => p.name === localPlayerName);
+    }
+
+    const mySlot = me?.slot;
 
     // Update InputSync slot manager
     if (
@@ -453,13 +614,14 @@ class NetplayMenu {
       mySlot !== null &&
       mySlot !== undefined
     ) {
+      const playerId = me.id;
       const assignedSlot = this.netplay.engine.inputSync.slotManager.assignSlot(
-        myPlayerId,
+        playerId,
         mySlot,
       );
       console.log(
         "[NetplayMenu] Updated InputSync slot manager:",
-        myPlayerId,
+        playerId,
         "-> slot",
         assignedSlot,
       );
@@ -490,6 +652,7 @@ class NetplayMenu {
       if (
         player.slot !== null &&
         player.slot !== undefined &&
+        player.slot !== 8 && // Spectators don't take player slots
         player.slot < 4
       ) {
         this.netplay.takenSlots.add(player.slot);
@@ -814,7 +977,6 @@ class NetplayMenu {
 
     // Create the Live Stream UI if it doesn't exist.
     if (!this.netplay.liveStreamPlayerTable) {
-
       // Reorder elements: move room name above slot selector
       if (
         this.netplay.roomNameElem &&
@@ -841,7 +1003,7 @@ class NetplayMenu {
     }
 
     // This populates and updates the table.
-    this.netplayInitializeLiveStreamPlayers();
+    this.netplayUpdatePlayerTable(this.netplay.joinedPlayers); // Uses real data
     // Setup the bottom bar buttons.
     this.setupNetplayBottomBar("livestream");
 
@@ -919,7 +1081,7 @@ class NetplayMenu {
     }
 
     // Initialize player list (host is always player 1)
-    this.netplayInitializeDelaySyncPlayers(maxPlayers);
+    this.netplayUpdatePlayerTable(this.netplay.joinedPlayers);
 
     // Bottom bar buttons for Delay Sync mode
     this.setupNetplayBottomBar("delaysync");
@@ -1332,7 +1494,7 @@ class NetplayMenu {
     };
 
     // SVC with VP9 setting
-    const normalizeVP9SVCMode = (v) => {
+    const normalizeVSVCMode = (v) => {
       const s = typeof v === "string" ? v.trim() : "";
       const sl = s.toLowerCase();
       if (sl === "l1t1") return "L1T1";
@@ -1597,23 +1759,31 @@ class NetplayMenu {
 
   // Initialize delay sync player table
   netplayInitializeDelaySyncPlayers(maxPlayers) {
-    // Create row for host only (fallback)
-    this.netplayUpdatePlayerTable(0);
-
     // Initialize ready states array for maxPlayers
     this.netplay.playerReadyStates = new Array(maxPlayers).fill(false);
     this.netplay.playerReadyStates[0] = true; // Host starts ready
 
+    // Create fallback player data for host (will be replaced when server data arrives)
+    const fallbackPlayers = [
+      {
+        id: this.getMyPlayerId() || "host",
+        slot: 0,
+        name: this.netplay.name || "Host",
+        ready: true,
+        role: "player",
+      },
+    ];
+
+    // Use centralized table update mechanics
+    this.netplayUpdatePlayerTable(fallbackPlayers);
+
     // If we have full player data (from netplayUpdatePlayerList), update the table with it
-    // Otherwise, keep the default host-only display
+    // Otherwise, keep the fallback host-only display
     if (this.netplay.joinedPlayers && this.netplay.joinedPlayers.length > 0) {
       console.log(
         "[NetplayMenu] Updating delay sync table with full player data",
       );
       this.netplayUpdatePlayerTable(this.netplay.joinedPlayers);
-    } else {
-      // Update slot selector to remove taken slots (default behavior)
-      this.netplayUpdateSlotSelector();
     }
   }
 
@@ -1655,10 +1825,12 @@ class NetplayMenu {
         console.log(`[NetplayMenu] Adding player ${index}:`, player);
 
         const row = this.createElement("tr");
+        // Add data attribute with player ID for reliable identification
+        row.setAttribute("data-player-id", player.id);
 
-        // Player column (use P1, P2, etc. based on array index)
+        // Player column (use actual player slot, not array index)
         const playerCell = this.createElement("td");
-        playerCell.innerText = `P${index + 1}`;
+        playerCell.innerText = this.getSlotDisplayText(player.slot);
         playerCell.style.textAlign = "center";
         row.appendChild(playerCell);
 
@@ -1677,8 +1849,8 @@ class NetplayMenu {
           thirdCell.style.textAlign = "right";
           thirdCell.classList.add("ready-status");
         } else {
-          // Live stream: Host/Client status (first player is host)
-          thirdCell.innerText = index === 0 ? "Host" : "Client";
+          // Live stream: Status emoji
+          thirdCell.innerText = this.getPlayerStatusEmoji(player);
           thirdCell.style.textAlign = "center";
         }
 
@@ -1711,11 +1883,34 @@ class NetplayMenu {
     const player = this.netplay.joinedPlayers.find((p) => p.slot === slot);
     if (!player) return;
 
-    const row = this.createElement("tr");
+    // Check if a row for this player already exists
+    const existingRow = tbody.querySelector(
+      `tr[data-player-id="${player.id}"]`,
+    );
+
+    let row;
+    if (existingRow) {
+      // Update existing row instead of creating duplicate
+      console.log(
+        `[NetplayMenu] Updating existing row for player ${player.id} in slot ${slot}`,
+      );
+      row = existingRow;
+      // Clear existing cells to rebuild them
+      row.innerHTML = "";
+    } else {
+      // Create new row only if none exists
+      console.log(
+        `[NetplayMenu] Creating new row for player ${player.id} in slot ${slot}`,
+      );
+      row = this.createElement("tr");
+    }
+
+    // Add data attribute with player ID for reliable identification
+    row.setAttribute("data-player-id", player.id);
 
     // Player column (same for both table types)
     const playerCell = this.createElement("td");
-    playerCell.innerText = `P${slot + 1}`;
+    playerCell.innerText = this.getSlotDisplayText(slot);
     playerCell.style.textAlign = "center";
     row.appendChild(playerCell);
 
@@ -1734,71 +1929,17 @@ class NetplayMenu {
       thirdCell.style.textAlign = "right";
       thirdCell.classList.add("ready-status");
     } else {
-      // Live stream: Host/Client status
-      thirdCell.innerText = slot === 0 ? "Host" : "Client";
+      // Live stream: Status emoji
+      thirdCell.innerText = this.getPlayerStatusEmoji(player);
       thirdCell.style.textAlign = "center";
     }
 
     row.appendChild(thirdCell);
-    tbody.appendChild(row);
-  }
 
-  // Initialize live stream player table
-  netplayInitializeLiveStreamPlayers() {
-    if (!this.netplay.liveStreamPlayerTable) return;
-
-    const tbody = this.netplay.liveStreamPlayerTable;
-    tbody.innerHTML = "";
-
-    // Initialize taken slots tracking
-    if (!this.netplay.takenSlots) {
-      this.netplay.takenSlots = new Set();
+    // Only append if this is a new row (not updating existing)
+    if (!existingRow) {
+      tbody.appendChild(row);
     }
-    this.netplay.takenSlots.clear();
-
-    // Host is always P1
-    this.netplay.takenSlots.add(0);
-    this.netplay.localSlot = 0;
-    this.netplayPreferredSlot = 0;
-    if (this.netplay.slotSelect) {
-      this.netplay.slotSelect.value = "0";
-    }
-
-    // Just show host for now
-    const row = this.createElement("tr");
-
-    // Player column
-    const playerCell = this.createElement("td");
-    playerCell.innerText = "P1";
-    playerCell.style.textAlign = "center";
-    row.appendChild(playerCell);
-
-    // Name column
-    const nameCell = this.createElement("td");
-    nameCell.innerText = this.netplay.name || "Host";
-    nameCell.style.textAlign = "center";
-    row.appendChild(nameCell);
-
-    // Status column
-    const statusCell = this.createElement("td");
-    statusCell.innerText = "Host";
-    statusCell.style.textAlign = "center";
-    row.appendChild(statusCell);
-
-    tbody.appendChild(row);
-
-    // If we have full player data (from netplayUpdatePlayerList), update the table.
-    // Otherwise, keep the default host-only display.
-    if (this.netplay.joinedPlayers && this.netplay.joinedPlayers.length > 0) {
-      console.log(
-        "[NetplayMenu] Updating live stream player table with",
-        this.netplay.joinedPlayers.length,
-        "players",
-      );
-      this.netplayUpdatePlayerTable(this.netplay.joinedPlayers);
-    }
-    // Update slot selector to remove taken slots
-    this.netplayUpdateSlotSelector();
   }
 
   // Update player slot in table
@@ -1840,7 +1981,9 @@ class NetplayMenu {
 
     // Update Delay Sync table if it exists (legacy compatibility)
     if (this.netplay.delaySyncPlayerTable && this.netplay.joinedPlayers) {
-      const hostPlayer = this.netplay.joinedPlayers.find((p) => p.slot === 0);
+      const hostPlayer = this.netplay.joinedPlayers.find((p) =>
+        this.isPlayerHost(p),
+      );
       if (hostPlayer) {
         // Move from old slot to new slot
         const oldSlot = hostPlayer.slot;
@@ -1852,7 +1995,7 @@ class NetplayMenu {
         this.netplay.takenSlots.add(slot);
 
         // Re-render the table
-        this.netplayInitializeDelaySyncPlayers(this.netplay.maxPlayers || 4);
+        this.netplayUpdatePlayerTable(this.netplay.joinedPlayers); // Uses real data
       }
     }
 
@@ -1862,7 +2005,7 @@ class NetplayMenu {
       if (tbody.children[0]) {
         const playerCell = tbody.children[0].querySelector("td:first-child");
         if (playerCell) {
-          playerCell.innerText = `P${slot + 1}`;
+          playerCell.innerText = this.getSlotDisplayText(slot);
         }
       }
     }
@@ -1956,7 +2099,7 @@ class NetplayMenu {
       this.netplay._slotSelectWired = true;
       this.addEventListener(slotSelect, "change", () => {
         const raw = parseInt(slotSelect.value, 10);
-        const slot = isNaN(raw) ? 0 : Math.max(0, Math.min(4, raw)); // Allow 0-4 (Spectator)
+        const slot = isNaN(raw) ? 0 : Math.max(0, Math.min(8, raw)); // Allow 0-8 (Spectator)
 
         // Use centralized slot change system
         this.requestSlotChange(slot);
@@ -2012,89 +2155,35 @@ class NetplayMenu {
     }
 
     const slotSelect = this.netplay.slotSelect;
-    const currentValue = slotSelect.value;
-
     // Clear all options except Spectator
-    const spectatorOption = slotSelect.querySelector('option[value="4"]');
+    const spectatorOption = slotSelect.querySelector('option[value="8"]');
     slotSelect.innerHTML = "";
 
-    // Determine current player's slot (prioritize localSlot, then find by name/ID)
-    let currentPlayerSlot = this.netplay.localSlot;
-    if (currentPlayerSlot === undefined || currentPlayerSlot === null) {
-      // Try to find current player in joined players
-      const localPlayerId = this.netplay.engine?.sessionState?.localPlayerId;
-      const localPlayerName = this.netplay.name;
-      const localPlayer = this.netplay.joinedPlayers?.find(
-        (p) =>
-          (localPlayerId && p.id === localPlayerId) ||
-          (localPlayerName && p.name === localPlayerName),
-      );
-      if (localPlayer) {
-        currentPlayerSlot = localPlayer.slot;
-        // Update localSlot to match
-        this.netplay.localSlot = currentPlayerSlot;
-      }
-    }
+    // Use centralized slot selector options logic
+    const myPlayerId = this.getMyPlayerId();
 
-    console.log(
-      `[NetplayMenu] Updating slot selector. Current player slot: ${currentPlayerSlot}, Taken slots:`,
-      Array.from(this.netplay.takenSlots || []),
-    );
+    if (myPlayerId) {
+      const options = this.getSlotSelectorOptions(myPlayerId);
 
-    // Add available player slots (not taken by other players)
-    for (let i = 0; i < 4; i++) {
-      // Allow selecting slots that are not taken by other players, or the current player's own slot
-      const slotAvailable =
-        !this.netplay.takenSlots || !this.netplay.takenSlots.has(i);
-      const isCurrentPlayerSlot = i === currentPlayerSlot;
-
-      if (slotAvailable || isCurrentPlayerSlot) {
+      // Apply options to the select element
+      for (const option of options) {
         const opt = this.createElement("option");
-        opt.value = String(i);
-        opt.innerText = "P" + (i + 1);
-        // Disable slots taken by others (but allow current player's slot)
-        if (
-          this.netplay.takenSlots &&
-          this.netplay.takenSlots.has(i) &&
-          !isCurrentPlayerSlot
-        ) {
+        opt.value = String(option.value);
+        opt.innerText = option.text;
+        if (option.disabled) {
           opt.disabled = true;
+        }
+        if (option.selected) {
+          opt.selected = true;
         }
         slotSelect.appendChild(opt);
       }
-    }
-
-    // Add Spectator option at the end
-    if (spectatorOption) {
-      slotSelect.appendChild(spectatorOption);
     } else {
-      const spectatorOpt = this.createElement("option");
-      spectatorOpt.value = "4";
-      spectatorOpt.innerText = "Spectator";
-      slotSelect.appendChild(spectatorOpt);
+      console.warn("[NetplayMenu] Cannot update slot selector: no player ID");
     }
 
-    // Set the current selection to the player's assigned slot, or first available
-    if (
-      currentPlayerSlot !== undefined &&
-      currentPlayerSlot !== null &&
-      slotSelect.querySelector(`option[value="${currentPlayerSlot}"]`)
-    ) {
-      // Player has an assigned slot and it's available in the dropdown, select it
-      slotSelect.value = String(currentPlayerSlot);
-      console.log(
-        `[NetplayMenu] Set slot selector to current player slot: ${currentPlayerSlot}`,
-      );
-    } else if (slotSelect.querySelector(`option[value="${currentValue}"]`)) {
-      // Restore previous selection if valid
-      slotSelect.value = currentValue;
-    } else if (slotSelect.options.length > 0) {
-      // Select first available option
-      slotSelect.value = slotSelect.options[0].value;
-      console.log(
-        `[NetplayMenu] Set slot selector to first available: ${slotSelect.value}`,
-      );
-    }
+    // The slot selector options are already configured with the correct selected option
+    // by getSlotSelectorOptions. No need to manually set the value here.
   }
 
   // Get the lowest available player slot
@@ -2162,7 +2251,7 @@ class NetplayMenu {
     // Remove from Delay Sync table
     if (this.netplay.delaySyncPlayerTable) {
       // Re-render the entire table
-      this.netplayInitializeDelaySyncPlayers(this.netplay.maxPlayers || 4);
+      this.netplayUpdatePlayerTable(this.netplay.joinedPlayers); // Uses real data
     }
 
     // Update slot selector to remove the taken slot
@@ -2173,8 +2262,10 @@ class NetplayMenu {
   netplayToggleReady() {
     if (!this.netplay.readyButton) return;
 
-    // Toggle the host's ready status (slot 0)
-    const hostPlayer = this.netplay.joinedPlayers.find((p) => p.slot === 0);
+    // Toggle the host's ready status
+    const hostPlayer = this.netplay.joinedPlayers.find((p) =>
+      this.isPlayerHost(p),
+    );
     if (hostPlayer) {
       hostPlayer.ready = !hostPlayer.ready;
       this.netplay.playerReadyStates[0] = hostPlayer.ready;
@@ -2935,7 +3026,7 @@ class NetplayMenu {
         }
 
         // This populates and updates the table.
-        this.netplayInitializeLiveStreamPlayers();
+        this.netplayUpdatePlayerTable(this.netplay.joinedPlayers); // Uses real data
       } else if (
         roomType === "delaysync" &&
         !this.netplay.delaySyncPlayerTable
@@ -2961,9 +3052,7 @@ class NetplayMenu {
         }
 
         // Initialize player list (host is always player 1)
-        this.netplayInitializeDelaySyncPlayers(
-          this.emulator.netplay.currentRoom?.max_players || 4,
-        );
+        this.netplayUpdatePlayerTable(this.netplay.joinedPlayers);
       }
 
       // Switch to joined tab for room view
@@ -3150,7 +3239,7 @@ class NetplayMenu {
     // Attach event listener immediately
     this.addEventListener(slotSelect, "change", async () => {
       const raw = parseInt(slotSelect.value, 10);
-      const slot = isNaN(raw) ? 0 : Math.max(0, Math.min(4, raw));
+      const slot = isNaN(raw) ? 0 : Math.max(0, Math.min(8, raw));
       console.log("[NetplayMenu] Slot selector changed to:", slot);
 
       try {
@@ -3162,10 +3251,14 @@ class NetplayMenu {
         }
         this.saveSettings();
       } catch (error) {
-        console.error("[NetplayMenu] Slot change rejected by server:", error.message);
+        console.error(
+          "[NetplayMenu] Slot change rejected by server:",
+          error.message,
+        );
 
         // Revert the slot selector to its previous value
-        const previousValue = this.netplay.localSlot !== undefined ? this.netplay.localSlot : 0;
+        const previousValue =
+          this.netplay.localSlot !== undefined ? this.netplay.localSlot : 0;
         slotSelect.value = String(previousValue);
 
         // Show user feedback about why the change was rejected
@@ -3239,8 +3332,12 @@ class NetplayMenu {
     );
   }
 
-  // Update player list in UI
-  netplayUpdatePlayerList(data) {
+  /**
+   * Validate player data and log debug information
+   * @param {Object} data - Player data from server
+   * @returns {boolean} True if validation passed
+   */
+  validateAndDebugPlayerData(data) {
     console.log("[NetplayMenu] Updating player list:", data);
     console.log(
       "[NetplayMenu] Players object keys:",
@@ -3251,28 +3348,66 @@ class NetplayMenu {
       Object.values(data.players || {}),
     );
 
-    if (!data || !data.players) {
-      console.warn("[NetplayMenu] No players data provided");
-      return;
+    // Debug player data structure
+    if (data.players) {
+      Object.entries(data.players).forEach(([playerId, playerData]) => {
+        console.log(`[NetplayMenu] Player ${playerId} data:`, {
+          name: playerData.name,
+          player_name: playerData.player_name,
+          netplay_username: playerData.netplay_username,
+          allKeys: Object.keys(playerData),
+        });
+      });
     }
 
-    // Convert players object to joinedPlayers array format
-    // data.players format: { playerId: { name, slot, ready, ... }, ... }
-    // joinedPlayers format: [{ id, slot, name, ready, ... }, ...]
+    if (!data || !data.players) {
+      console.warn("[NetplayMenu] No players data provided");
+      return false;
+    }
+    return true;
+  }
+
+  /**
+   * Convert server player format to local joinedPlayers format
+   * @param {Object} data - Player data from server
+   * @returns {Array} Array of player objects in local format
+   */
+  convertServerPlayersToLocalFormat(data) {
     const playersArray = Object.entries(data.players).map(
-      ([playerId, playerData]) => ({
-        id: playerId,
-        slot: playerData.slot || playerData.player_slot || 0,
-        name: playerData.name || playerData.player_name || "Unknown",
-        ready: playerData.ready || false,
-        // Include any other properties that might be needed
-        ...playerData,
-      }),
+      ([playerId, playerData]) => {
+        // Prefer netplay_username for display (censored), fallback to player_name (uncensored), then name
+        const resolvedName =
+          playerData.netplay_username ||
+          playerData.player_name ||
+          playerData.name ||
+          "Unknown";
+        console.log(`[NetplayMenu] Player ${playerId} name resolution:`, {
+          name: playerData.name,
+          player_name: playerData.player_name,
+          netplay_username: playerData.netplay_username,
+          resolvedName,
+        });
+        return {
+          id: playerId,
+          slot: playerData.slot || playerData.player_slot || 0,
+          name: resolvedName,
+          ready: playerData.ready || false,
+          // Include any other properties that might be needed
+          ...playerData,
+        };
+      },
     );
     console.log("[NetplayMenu] Converted playersArray:", playersArray);
     console.log("[NetplayMenu] playersArray length:", playersArray.length);
 
-    // Identify the local player to auto-assign slot if needed
+    return playersArray;
+  }
+
+  /**
+   * Identify the local player from session state
+   * @returns {Object} Object with localPlayerId and localPlayerName
+   */
+  identifyLocalPlayer() {
     const localPlayerId = this.netplay.engine?.sessionState?.localPlayerId;
     const localPlayerName = this.netplay.name;
     console.log(
@@ -3282,10 +3417,25 @@ class NetplayMenu {
       localPlayerName,
     );
 
-    // Track current taken slots
+    return { localPlayerId, localPlayerName };
+  }
+
+  /**
+   * Process player slots, preserving local player's slot and auto-assigning for others
+   * @param {Array} playersArray - Array of player objects
+   * @param {string} localPlayerId - Local player ID
+   * @param {string} localPlayerName - Local player name
+   * @returns {Set} Set of taken slots
+   */
+  processPlayerSlots(playersArray, localPlayerId, localPlayerName) {
+    // Track current taken slots (spectators don't take player slots)
     const takenSlots = new Set();
     playersArray.forEach((player) => {
-      if (player.slot !== undefined && player.slot !== null) {
+      if (
+        player.slot !== undefined &&
+        player.slot !== null &&
+        player.slot !== 8
+      ) {
         takenSlots.add(player.slot);
       }
     });
@@ -3297,11 +3447,28 @@ class NetplayMenu {
         (localPlayerId && player.id === localPlayerId) ||
         (localPlayerName && player.name === localPlayerName);
 
+      // For local player, preserve their assigned slot from session state
+      if (isLocalPlayer) {
+        const currentLocalSlot =
+          this.netplay?.engine?.sessionState?.getLocalPlayerSlot() ??
+          this.netplay?.localSlot;
+        if (currentLocalSlot !== null && currentLocalSlot !== undefined) {
+          // Override server data with local player's actual slot
+          player.slot = currentLocalSlot;
+          console.log(
+            `[NetplayMenu] Preserving local player slot ${currentLocalSlot} for ${player.name}`,
+          );
+        }
+      }
+
       // If player has no slot assigned or slot conflicts, assign a free slot
+      // (Skip local player since we preserved their slot above, and skip spectators)
       if (
-        player.slot === undefined ||
-        player.slot === null ||
-        (takenSlots.has(player.slot) && !isLocalPlayer)
+        !isLocalPlayer &&
+        player.slot !== 8 &&
+        (player.slot === undefined ||
+          player.slot === null ||
+          takenSlots.has(player.slot))
       ) {
         // Find lowest available slot
         let newSlot = 0;
@@ -3346,16 +3513,27 @@ class NetplayMenu {
       }
     });
 
+    return takenSlots;
+  }
+
+  /**
+   * Synchronize local state arrays with processed player data
+   * @param {Array} playersArray - Array of processed player objects
+   */
+  synchronizeLocalState(playersArray) {
     // Update joinedPlayers array
     this.netplay.joinedPlayers = playersArray;
 
-    // Update taken slots
+    // Update taken slots (spectators don't take player slots)
     if (!this.netplay.takenSlots) {
       this.netplay.takenSlots = new Set();
     }
     this.netplay.takenSlots.clear();
     playersArray.forEach((player) => {
-      this.netplay.takenSlots.add(player.slot);
+      if (player.slot !== 8) {
+        // Spectators don't take player slots
+        this.netplay.takenSlots.add(player.slot);
+      }
     });
 
     // Update ready states array
@@ -3366,7 +3544,13 @@ class NetplayMenu {
         this.netplay.playerReadyStates[player.slot] = player.ready || false;
       }
     });
+  }
 
+  /**
+   * Update player UI components (table, selector, buttons)
+   * @param {Array} playersArray - Array of player objects
+   */
+  updatePlayerUI(playersArray) {
     // Update the appropriate player table
     if (
       this.netplay.delaySyncPlayerTable ||
@@ -3422,14 +3606,54 @@ class NetplayMenu {
 
     // Update launch button state
     this.netplayUpdateLaunchButton();
+  }
 
-    // Notify all systems that player table has been updated
+  // Update player list in UI
+  netplayUpdatePlayerList(data) {
+    // 1. Validate and debug
+    if (!this.validateAndDebugPlayerData(data)) {
+      return;
+    }
+
+    // 2. Convert data format
+    const playersArray = this.convertServerPlayersToLocalFormat(data);
+
+    // 3. Identify local player
+    const { localPlayerId, localPlayerName } = this.identifyLocalPlayer();
+
+    // 4. Process slots (including local player preservation)
+    this.processPlayerSlots(playersArray, localPlayerId, localPlayerName);
+
+    // 5. Synchronize local state
+    this.synchronizeLocalState(playersArray);
+
+    // 6. Update UI
+    this.updatePlayerUI(playersArray);
+
+    // 7. Notify other systems
     this.notifyPlayerTableUpdated();
   }
 
   // Update just one player's slot in the table (targeted update)
   netplayUpdatePlayerSlot(playerId, newSlot) {
-    console.log(`[NetplayMenu] Updating slot for player ${playerId} to ${newSlot}`);
+    console.log(
+      `[NetplayMenu] Updating slot for player ${playerId} to ${newSlot}`,
+    );
+    console.log(`[NetplayMenu] joinedPlayers:`, this.netplay.joinedPlayers);
+
+    // Check if this is the local player
+    const localPlayerId = this.netplay.engine?.sessionState?.localPlayerId;
+    const isLocalPlayer = localPlayerId === playerId;
+
+    // Always update local slot state for slot changes (since only local player can change slots)
+    this.netplay.localSlot = newSlot;
+    console.log(
+      `[NetplayMenu] Updated local player slot to ${newSlot} (player: ${playerId}, local: ${isLocalPlayer})`,
+    );
+
+    if (isLocalPlayer) {
+      console.log(`[NetplayMenu] Confirmed local player slot update`);
+    }
 
     if (!this.netplay.joinedPlayers) {
       console.warn("[NetplayMenu] No joinedPlayers array to update");
@@ -3437,9 +3661,13 @@ class NetplayMenu {
     }
 
     // Find the player in the joinedPlayers array
-    const playerIndex = this.netplay.joinedPlayers.findIndex(p => p.id === playerId);
+    const playerIndex = this.netplay.joinedPlayers.findIndex(
+      (p) => p.id === playerId,
+    );
     if (playerIndex === -1) {
-      console.warn(`[NetplayMenu] Player ${playerId} not found in joinedPlayers`);
+      console.warn(
+        `[NetplayMenu] Player ${playerId} not found in joinedPlayers`,
+      );
       return;
     }
 
@@ -3447,12 +3675,18 @@ class NetplayMenu {
     const oldSlot = this.netplay.joinedPlayers[playerIndex].slot;
     this.netplay.joinedPlayers[playerIndex].slot = newSlot;
 
-    console.log(`[NetplayMenu] Updated player ${playerId} slot from ${oldSlot} to ${newSlot}`);
+    console.log(
+      `[NetplayMenu] Updated player ${playerId} slot from ${oldSlot} to ${newSlot}`,
+    );
 
-    // Update taken slots
+    // Update taken slots (spectators don't take player slots)
     if (this.netplay.takenSlots) {
-      this.netplay.takenSlots.delete(oldSlot);
-      this.netplay.takenSlots.add(newSlot);
+      if (oldSlot !== 8) {
+        this.netplay.takenSlots.delete(oldSlot);
+      }
+      if (newSlot !== 8) {
+        this.netplay.takenSlots.add(newSlot);
+      }
     }
 
     // Update ready states if slot changed
@@ -3462,18 +3696,76 @@ class NetplayMenu {
         this.netplay.playerReadyStates[oldSlot] = false; // Clear old slot
       }
       if (newSlot < maxPlayers) {
-        this.netplay.playerReadyStates[newSlot] = this.netplay.joinedPlayers[playerIndex].ready || false;
+        this.netplay.playerReadyStates[newSlot] =
+          this.netplay.joinedPlayers[playerIndex].ready || false;
       }
     }
 
     // Update the table row for this specific player
-    const tbody = this.netplay.delaySyncPlayerTable || this.netplay.liveStreamPlayerTable;
-    if (tbody && tbody.children[playerIndex]) {
-      const row = tbody.children[playerIndex];
-      const slotCell = row.querySelector("td:first-child"); // Slot column is first
-      if (slotCell) {
-        slotCell.textContent = `P${newSlot + 1}`;
-        console.log(`[NetplayMenu] Updated table row ${playerIndex} slot cell to P${newSlot + 1}`);
+    const tbody =
+      this.netplay.delaySyncPlayerTable || this.netplay.liveStreamPlayerTable;
+    console.log(`[NetplayMenu] Table body:`, tbody);
+    console.log(
+      `[NetplayMenu] Table children:`,
+      tbody ? tbody.children.length : "no tbody",
+    );
+
+    if (tbody) {
+      // Find the table row that corresponds to this player using data attribute
+      const playerId = this.netplay.joinedPlayers[playerIndex].id;
+      const playerName = this.netplay.joinedPlayers[playerIndex].name;
+      console.log(
+        `[NetplayMenu] Looking for table row for player ID: ${playerId}`,
+      );
+
+      // Use data attribute for reliable identification
+      const targetRow = tbody.querySelector(`tr[data-player-id="${playerId}"]`);
+
+      if (targetRow) {
+        console.log(`[NetplayMenu] Found table row for player ${playerId}`);
+      } else {
+        console.warn(
+          `[NetplayMenu] Could not find table row for player ID ${playerId}`,
+        );
+        console.log(`[NetplayMenu] Available table rows:`);
+        for (let i = 0; i < tbody.children.length; i++) {
+          const row = tbody.children[i];
+          const playerIdAttr = row.getAttribute("data-player-id");
+          console.log(`  Row ${i}: data-player-id="${playerIdAttr}"`);
+        }
+      }
+
+      if (targetRow) {
+        const slotCell = targetRow.querySelector("td:first-child"); // Slot column is first
+        console.log(`[NetplayMenu] Slot cell:`, slotCell);
+        if (slotCell) {
+          const newSlotText = this.getSlotDisplayText(newSlot);
+          console.log(
+            `[NetplayMenu] Changing slot cell from "${slotCell.textContent}" to "${newSlotText}"`,
+          );
+          slotCell.textContent = newSlotText;
+          console.log(
+            `[NetplayMenu] Updated table row for player ${playerName} slot cell to ${newSlotText}`,
+          );
+        } else {
+          console.warn(
+            `[NetplayMenu] Could not find slot cell for player ${playerName}`,
+          );
+        }
+      } else {
+        console.warn(
+          `[NetplayMenu] Could not find table row for player ${playerName}`,
+        );
+        console.log(`[NetplayMenu] Available table rows:`);
+        for (let i = 0; i < tbody.children.length; i++) {
+          const row = tbody.children[i];
+          const cells = row.querySelectorAll("td");
+          if (cells.length >= 2) {
+            console.log(
+              `  Row ${i}: slot="${cells[0].textContent}", name="${cells[1].textContent}"`,
+            );
+          }
+        }
       }
     }
 
@@ -3483,8 +3775,8 @@ class NetplayMenu {
     // Update launch button state
     this.netplayUpdateLaunchButton();
 
-    // Notify systems of the targeted update
-    this.notifyPlayerTableUpdated();
+    // Notify systems of the targeted update (avoid full table rebuild)
+    this.notifyPlayerTableUpdatedTargeted();
   }
 
   // Clean up room-specific UI elements
@@ -3672,7 +3964,7 @@ class NetplayMenu {
     console.log("[NetplayMenu] Setting up input sync:", {
       isHost,
       playerSlot,
-      slotName: `P${playerSlot + 1}`,
+      slotName: this.getSlotDisplayText(playerSlot),
     });
 
     // Set global preferred slot for InputSync (so it maps inputs to correct slot)

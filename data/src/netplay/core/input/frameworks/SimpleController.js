@@ -25,6 +25,9 @@ class SimpleController {
 
     // Slot change callback to clear cache when slots change
     this.onSlotChanged = config?.onSlotChanged;
+
+    // Callback to get current player slot (consistent with UI)
+    this.getCurrentSlot = config?.getCurrentSlot;
   }
 
   /**
@@ -148,33 +151,29 @@ class SimpleController {
     if (playerIndex < 0) playerIndex = 0;
     if (playerIndex > 3) playerIndex = 3;
 
-    // Client slot enforcement: use the lobby-selected slot
-    // This is specific to simple controller's player assignment model
-    const isHost = typeof window !== "undefined" && window.EJS_netplay?.isHost;
-    if (!isHost) {
-      // Check global slot preference first (updated when user changes slot in UI)
-      const globalPreferredSlot =
-        typeof window.EJS_NETPLAY_PREFERRED_SLOT === "number"
-          ? window.EJS_NETPLAY_PREFERRED_SLOT
-          : null;
+    // Slot enforcement: use the lobby-selected slot for all players (host and client)
+    // This ensures inputs are sent with the correct player index based on assigned slot
+    const globalPreferredSlot =
+      typeof window.EJS_NETPLAY_PREFERRED_SLOT === "number"
+        ? window.EJS_NETPLAY_PREFERRED_SLOT
+        : null;
 
-      const preferredSlot =
-        globalPreferredSlot !== null
-          ? globalPreferredSlot
-          : (typeof window !== "undefined" && window.EJS_netplay?.localSlot) ||
-            0;
-      const slot = parseInt(preferredSlot, 10);
-      if (!isNaN(slot) && slot >= 0 && slot <= 3) {
-        if (playerIndex !== slot) {
-          console.log(
-            "[SimpleController] Slot enforcement: requested playerIndex",
-            playerIndex,
-            "-> enforced slot",
-            slot,
-          );
-        }
-        playerIndex = slot;
+    const preferredSlot =
+      globalPreferredSlot !== null
+        ? globalPreferredSlot
+        : (typeof window !== "undefined" && window.EJS_netplay?.localSlot) ||
+          0;
+    const slot = parseInt(preferredSlot, 10);
+    if (!isNaN(slot) && slot >= 0 && slot <= 3) {
+      if (playerIndex !== slot) {
+        console.log(
+          "[SimpleController] Slot enforcement: requested playerIndex",
+          playerIndex,
+          "-> enforced slot",
+          slot,
+        );
       }
+      playerIndex = slot;
     }
 
     return playerIndex;

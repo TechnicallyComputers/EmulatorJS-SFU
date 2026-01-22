@@ -1,6 +1,6 @@
 /**
  * SessionState - Session state management
- * 
+ *
  * Tracks:
  * - Current session state (connected, disconnected, joining, etc.)
  * - Player list with netplay usernames
@@ -13,20 +13,20 @@ class SessionState {
   constructor() {
     // Session state
     this.state = "disconnected"; // disconnected, connecting, connected, joining, joined
-    
+
     // Role
     this.isHost = false;
     this.isSpectator = false;
-    
+
     // Players and spectators
     this.players = new Map(); // playerId -> { netplayUsername, playerIndex, ... }
     this.spectators = new Map(); // playerId -> { netplayUsername, ... }
-    
+
     // Current room info
     this.roomName = null;
     this.roomPassword = null;
     this.gameMode = null;
-    
+
     // Local player info
     this.localPlayerId = null;
     this.localNetplayUsername = null;
@@ -144,6 +144,19 @@ class SessionState {
   }
 
   /**
+   * Get the local player's current slot.
+   * @returns {number|null} Local player's slot, or null if not found
+   */
+  getLocalPlayerSlot() {
+    if (!this.localPlayerId) {
+      return null;
+    }
+
+    const localPlayer = this.players.get(this.localPlayerId);
+    return localPlayer && localPlayer.player_slot !== undefined ? localPlayer.player_slot : null;
+  }
+
+  /**
    * Set current room information.
    * @param {string} roomName - Room name
    * @param {string|null} roomPassword - Room password (if any)
@@ -173,9 +186,9 @@ class SessionState {
    * @param {string} userId - RoMM user ID
    */
   setLocalPlayer(playerId, netplayUsername, userId) {
-    this.localPlayerId = playerId;
-    this.localNetplayUsername = netplayUsername;
-    this.localUserId = userId;
+    this.localPlayerId = playerId; // playerID (NetplayID)
+    this.localNetplayUsername = netplayUsername; // netplayUsername (Display purposes)
+    this.localUserId = userId; // userId (RoMM user ID)
   }
 
   /**

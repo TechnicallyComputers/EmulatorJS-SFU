@@ -369,16 +369,35 @@ class RoomManager {
     // Listen for player slot updates
     this.socket.on("player-slot-updated", (data) => {
       console.log("[RoomManager] Received player-slot-updated:", data);
+      console.log("[RoomManager] Current session state players:", Array.from(this.sessionState?.getPlayers()?.keys() || []));
       if (data && data.playerId && data.playerSlot !== undefined) {
         // Update session state
         if (this.sessionState) {
           const players = this.sessionState.getPlayers();
-          const player = players.get(data.playerId);
+
+          // Find player by name since server sends player name but session state uses UUIDs as keys
+          let playerId = data.playerId;
+          let player = players.get(playerId);
+
+          // If direct lookup fails, search by player name
+          if (!player) {
+            for (const [id, playerData] of players) {
+              if (playerData.name === data.playerId || playerData.player_name === data.playerId) {
+                playerId = id;
+                player = playerData;
+                break;
+              }
+            }
+          }
+
           if (player) {
             player.player_slot = data.playerSlot;
             player.slot = data.playerSlot;
             // Update the player in the session state
-            this.sessionState.addPlayer(data.playerId, player);
+            this.sessionState.addPlayer(playerId, player);
+            console.log("[RoomManager] Updated session state for player:", playerId, "slot:", data.playerSlot);
+          } else {
+            console.warn("[RoomManager] Could not find player in session state:", data.playerId);
           }
         }
 
