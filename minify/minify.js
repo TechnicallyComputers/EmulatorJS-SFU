@@ -125,6 +125,27 @@ async function doMinify() {
   console.log(`[Minify] About to minify ${sourceFiles.length} files to:`, path.join(rootPath, "data/emulator.min.js"));
   console.log(`[Minify] First few input files:`, sourceFiles.slice(0, 3).map(f => path.basename(f)));
 
+  // Debug: Concatenate files manually to check for syntax errors
+  console.log(`[Minify] Creating debug concatenated file...`);
+  let concatenated = '';
+  for (const file of sourceFiles) {
+    const content = fs.readFileSync(file, 'utf8');
+    concatenated += content + '\n';
+  }
+  const debugPath = path.join(rootPath, "data/emulator.debug.js");
+  fs.writeFileSync(debugPath, concatenated);
+  console.log(`[Minify] Debug file written to: ${debugPath}`);
+
+  // Check around line 12700
+  const lines = concatenated.split('\n');
+  console.log(`[Minify] Total concatenated lines: ${lines.length}`);
+  if (lines.length > 12700) {
+    console.log(`[Minify] Lines around 12700:`);
+    for (let i = 12695; i <= 12705 && i < lines.length; i++) {
+      console.log(`${i + 1}: ${lines[i]}`);
+    }
+  }
+
   try {
     await minify({
       compressor: terser,

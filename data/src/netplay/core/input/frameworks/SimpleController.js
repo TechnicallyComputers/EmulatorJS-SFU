@@ -1,6 +1,6 @@
 /**
  * SimpleController - Simple controller framework
- * 
+ *
  * For EmulatorJS-style controllers (SNES, Genesis, etc.):
  * - Fixed 30 inputs per frame per player
  * - Player indices 0-3
@@ -33,12 +33,18 @@ class SimpleController {
    * @returns {boolean} True if valid
    */
   validateInput(input) {
-    if (typeof input.playerIndex !== "number" ||
-        input.playerIndex < 0 || input.playerIndex >= this.maxPlayers) {
+    if (
+      typeof input.playerIndex !== "number" ||
+      input.playerIndex < 0 ||
+      input.playerIndex >= this.maxPlayers
+    ) {
       return false;
     }
-    if (typeof input.inputIndex !== "number" ||
-        input.inputIndex < 0 || input.inputIndex >= this.maxInputs) {
+    if (
+      typeof input.inputIndex !== "number" ||
+      input.inputIndex < 0 ||
+      input.inputIndex >= this.maxInputs
+    ) {
       return false;
     }
     if (typeof input.value !== "number") {
@@ -80,25 +86,36 @@ class SimpleController {
    * @returns {boolean}
    */
   queueLocalInput(playerIndex, inputIndex, value) {
-    // Apply slot enforcement (simple controller specific)
-    const effectivePlayerIndex = this.getEffectivePlayerIndex(playerIndex);
+    // Store original playerIndex for local simulation
+    // Slot enforcement will happen in the send callback
 
     // Edge-trigger optimization (simple controller specific)
-    const inputKey = `${effectivePlayerIndex}-${inputIndex}`;
+    const inputKey = `${playerIndex}-${inputIndex}`;
     const lastValue = this.lastInputValues[inputKey];
     if (lastValue === value) {
-      console.log("[SimpleController] Skipping unchanged input:", { playerIndex: effectivePlayerIndex, inputIndex, value });
+      console.log("[SimpleController] Skipping unchanged input:", {
+        playerIndex: playerIndex,
+        inputIndex,
+        value,
+      });
       return true; // Not an error, just no change
     }
     this.lastInputValues[inputKey] = value;
 
-    if (!this.validateInput({ playerIndex: effectivePlayerIndex, inputIndex, value })) {
-      console.warn("[SimpleController] Invalid local input:", { playerIndex: effectivePlayerIndex, inputIndex, value });
+    if (!this.validateInput({ playerIndex: playerIndex, inputIndex, value })) {
+      console.warn("[SimpleController] Invalid local input:", {
+        playerIndex: playerIndex,
+        inputIndex,
+        value,
+      });
       return false;
     }
 
     // Store input for current frame
-    const currentFrame = this.currentFrame !== null && this.currentFrame !== undefined ? this.currentFrame : 0;
+    const currentFrame =
+      this.currentFrame !== null && this.currentFrame !== undefined
+        ? this.currentFrame
+        : 0;
 
     if (!this.inputsData[currentFrame]) {
       this.inputsData[currentFrame] = [];
@@ -106,15 +123,15 @@ class SimpleController {
 
     this.inputsData[currentFrame].push({
       frame: currentFrame,
-      connected_input: [effectivePlayerIndex, inputIndex, value],
-      fromRemote: false
+      connected_input: [playerIndex, inputIndex, value],
+      fromRemote: false,
     });
 
     console.log("[SimpleController] Queued local input:", {
       frame: currentFrame,
-      playerIndex: effectivePlayerIndex,
+      playerIndex: playerIndex,
       inputIndex,
-      value
+      value,
     });
 
     return true;
@@ -133,20 +150,28 @@ class SimpleController {
 
     // Client slot enforcement: use the lobby-selected slot
     // This is specific to simple controller's player assignment model
-    const isHost = typeof window !== 'undefined' && window.EJS_netplay?.isHost;
+    const isHost = typeof window !== "undefined" && window.EJS_netplay?.isHost;
     if (!isHost) {
       // Check global slot preference first (updated when user changes slot in UI)
-      const globalPreferredSlot = typeof window.EJS_NETPLAY_PREFERRED_SLOT === "number"
-        ? window.EJS_NETPLAY_PREFERRED_SLOT
-        : null;
+      const globalPreferredSlot =
+        typeof window.EJS_NETPLAY_PREFERRED_SLOT === "number"
+          ? window.EJS_NETPLAY_PREFERRED_SLOT
+          : null;
 
-      const preferredSlot = globalPreferredSlot !== null ? globalPreferredSlot :
-                           (typeof window !== 'undefined' && window.EJS_netplay?.localSlot) ||
-                           0;
+      const preferredSlot =
+        globalPreferredSlot !== null
+          ? globalPreferredSlot
+          : (typeof window !== "undefined" && window.EJS_netplay?.localSlot) ||
+            0;
       const slot = parseInt(preferredSlot, 10);
       if (!isNaN(slot) && slot >= 0 && slot <= 3) {
         if (playerIndex !== slot) {
-          console.log("[SimpleController] Slot enforcement: requested playerIndex", playerIndex, "-> enforced slot", slot);
+          console.log(
+            "[SimpleController] Slot enforcement: requested playerIndex",
+            playerIndex,
+            "-> enforced slot",
+            slot,
+          );
         }
         playerIndex = slot;
       }
@@ -164,11 +189,13 @@ class SimpleController {
   handleRemoteInput(payload, fromSocketId = null) {
     const connectedInput = payload.getConnectedInput();
 
-    if (!this.validateInput({
-      playerIndex: connectedInput[0],
-      inputIndex: connectedInput[1],
-      value: connectedInput[2]
-    })) {
+    if (
+      !this.validateInput({
+        playerIndex: connectedInput[0],
+        inputIndex: connectedInput[1],
+        value: connectedInput[2],
+      })
+    ) {
       console.warn("[SimpleController] Invalid remote input:", connectedInput);
       return false;
     }
@@ -180,13 +207,15 @@ class SimpleController {
       playerIndex,
       inputIndex,
       value,
-      fromSocketId
+      fromSocketId,
     });
 
-    if (this.emulator && typeof this.emulator.simulateInput === 'function') {
+    if (this.emulator && typeof this.emulator.simulateInput === "function") {
       this.emulator.simulateInput(playerIndex, inputIndex, value);
     } else {
-      console.warn("[SimpleController] No emulator available to apply remote input");
+      console.warn(
+        "[SimpleController] No emulator available to apply remote input",
+      );
     }
 
     return true;
@@ -209,24 +238,28 @@ class SimpleController {
     const inputsForFrame = this.inputsData[frame];
     const processedInputs = [];
 
-    console.log(`[SimpleController] Applying ${inputsForFrame.length} inputs for frame ${frame}`);
+    console.log(
+      `[SimpleController] Applying ${inputsForFrame.length} inputs for frame ${frame}`,
+    );
 
     // Apply each input to the emulator
     inputsForFrame.forEach((inputData, index) => {
       const [playerIndex, inputIndex, value] = inputData.connected_input;
 
-      console.log(`[SimpleController] Frame ${frame} - Applying input ${index + 1}/${inputsForFrame.length}:`,
-        `player ${playerIndex}, input ${inputIndex}, value ${value}, remote: ${inputData.fromRemote}`);
+      console.log(
+        `[SimpleController] Frame ${frame} - Applying input ${index + 1}/${inputsForFrame.length}:`,
+        `player ${playerIndex}, input ${inputIndex}, value ${value}, remote: ${inputData.fromRemote}`,
+      );
 
       // Apply input to emulator (remote inputs are already applied immediately)
-      if (this.emulator && typeof this.emulator.simulateInput === 'function') {
+      if (this.emulator && typeof this.emulator.simulateInput === "function") {
         this.emulator.simulateInput(playerIndex, inputIndex, value);
       }
 
       processedInputs.push({
         frame: frame,
         connected_input: [playerIndex, inputIndex, value],
-        fromRemote: inputData.fromRemote
+        fromRemote: inputData.fromRemote,
       });
     });
 
@@ -261,12 +294,22 @@ class SimpleController {
     const inputKey = `${effectivePlayerIndex}-${inputIndex}`;
     const lastValue = this.lastInputValues[inputKey];
     if (lastValue === value) {
-      console.log("[SimpleController] Skipping unchanged input:", { playerIndex: effectivePlayerIndex, inputIndex, value });
+      console.log("[SimpleController] Skipping unchanged input:", {
+        playerIndex: effectivePlayerIndex,
+        inputIndex,
+        value,
+      });
       return true; // Not an error, just no change
     }
     this.lastInputValues[inputKey] = value;
 
-    if (!this.validateInput({ playerIndex: effectivePlayerIndex, inputIndex, value })) {
+    if (
+      !this.validateInput({
+        playerIndex: effectivePlayerIndex,
+        inputIndex,
+        value,
+      })
+    ) {
       return false;
     }
 
@@ -274,12 +317,16 @@ class SimpleController {
       currentFrame: this.currentFrame,
       playerIndex: effectivePlayerIndex,
       inputIndex,
-      value
+      value,
     });
 
     if (sendCallback && inputSync) {
       // Use InputSync's serialization (maintains frame delay logic)
-      const inputData = inputSync.serializeInput(effectivePlayerIndex, inputIndex, value);
+      const inputData = inputSync.serializeInput(
+        effectivePlayerIndex,
+        inputIndex,
+        value,
+      );
       console.log("[SimpleController] Sending input via callback:", inputData);
       sendCallback(inputData.frame, inputData);
     }
@@ -317,7 +364,10 @@ class SimpleController {
    * @param {number|null} newSlot - New slot assignment
    */
   handleSlotChange(playerId, newSlot) {
-    console.log("[SimpleController] Slot changed, clearing edge-trigger cache for player:", playerId);
+    console.log(
+      "[SimpleController] Slot changed, clearing edge-trigger cache for player:",
+      playerId,
+    );
     // Clear the entire cache when any slot changes to ensure clean state
     this.lastInputValues = {};
   }

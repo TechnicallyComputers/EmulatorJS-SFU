@@ -107,6 +107,18 @@ class SessionState {
   }
 
   /**
+   * Get players as an object (for backward compatibility).
+   * @returns {Object} Object mapping playerId -> playerInfo
+   */
+  getPlayersObject() {
+    const obj = {};
+    this.players.forEach((info, playerId) => {
+      obj[playerId] = info;
+    });
+    return obj;
+  }
+
+  /**
    * Add a spectator to the session.
    * @param {string} spectatorId - Spectator ID
    * @param {Object} spectatorInfo - Spectator information

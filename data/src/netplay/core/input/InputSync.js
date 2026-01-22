@@ -230,7 +230,9 @@ class InputSync {
         // Multiple inputs to send
         inputData.forEach((data) => {
           if (data.connected_input && data.connected_input.length === 3) {
-            const [playerIndex, inputIndex, value] = data.connected_input;
+            let [playerIndex, inputIndex, value] = data.connected_input;
+            // Apply slot enforcement for network transmission
+            playerIndex = this.controller.getEffectivePlayerIndex(playerIndex);
             const inputPayload = {
               frame: data.frame || frame || 0,
               slot: slot,
@@ -244,7 +246,9 @@ class InputSync {
         });
       } else if (inputData.connected_input && inputData.connected_input.length === 3) {
         // Single input
-        const [playerIndex, inputIndex, value] = inputData.connected_input;
+        let [playerIndex, inputIndex, value] = inputData.connected_input;
+        // Apply slot enforcement for network transmission
+        playerIndex = this.controller.getEffectivePlayerIndex(playerIndex);
         const inputPayload = {
           frame: frame || inputData.frame || 0,
           slot: slot,

@@ -146,6 +146,7 @@ class RoomManager {
     // Update session state
     this.sessionState.setHost(false);
     this.sessionState.setLocalPlayer(playerId, extra.player_name, playerId);
+    this.sessionState.setRoom(roomName, password, this.config.gameMode || null);
 
     console.log(`[RoomManager] joinRoom called: roomName=${roomName}, playerId=${playerId}`);
     console.log(`[RoomManager] Socket connected: ${this.socket.isConnected()}`);
@@ -283,14 +284,20 @@ class RoomManager {
    * @returns {Promise<void>}
    */
   async updatePlayerSlot(slot) {
+    console.log("[RoomManager] updatePlayerSlot called with slot:", slot);
+
     if (!this.socket.isConnected()) {
+      console.error("[RoomManager] Socket not connected for slot update");
       throw new Error("Socket not connected");
     }
 
     const roomName = this.sessionState?.roomName;
     if (!roomName) {
+      console.error("[RoomManager] Not in a room for slot update");
       throw new Error("Not in a room");
     }
+
+    console.log("[RoomManager] Sending update-player-slot message:", { roomName, playerSlot: slot });
 
     return new Promise((resolve, reject) => {
       this.socket.emit("update-player-slot", {
@@ -365,17 +372,21 @@ class RoomManager {
       if (data && data.playerId && data.playerSlot !== undefined) {
         // Update session state
         if (this.sessionState) {
-          const player = this.sessionState.getPlayer(data.playerId);
+          const players = this.sessionState.getPlayers();
+          const player = players.get(data.playerId);
           if (player) {
             player.player_slot = data.playerSlot;
             player.slot = data.playerSlot;
-            this.sessionState.updatePlayer(data.playerId, { player_slot: data.playerSlot, slot: data.playerSlot });
+            // Update the player in the session state
+            this.sessionState.addPlayer(data.playerId, player);
           }
         }
 
-        // Trigger UI update
-        if (this.config.callbacks?.onUsersUpdated) {
-          // Get current users and trigger update
+        // Trigger targeted slot update
+        if (this.config.callbacks?.onPlayerSlotUpdated) {
+          this.config.callbacks.onPlayerSlotUpdated(data.playerId, data.playerSlot);
+        } else if (this.config.callbacks?.onUsersUpdated) {
+          // Fallback to full update if targeted update not available
           const currentUsers = this.sessionState?.getPlayersObject() || {};
           this.config.callbacks.onUsersUpdated(currentUsers);
         }
