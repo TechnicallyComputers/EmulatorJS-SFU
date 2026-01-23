@@ -261,6 +261,142 @@ class RoomManager {
   }
 
   /**
+   * DELAY_SYNC: Toggle ready state
+   * @param {string} roomName - Room name
+   * @returns {Promise}
+   */
+  async toggleReady(roomName) {
+    console.log("[RoomManager] toggleReady called for room:", roomName);
+
+    if (!this.socket.isConnected()) {
+      console.error("[RoomManager] Socket not connected for ready toggle");
+      throw new Error("Socket not connected");
+    }
+
+    return new Promise((resolve, reject) => {
+      this.socket.emit("toggle-ready", {
+        roomName: roomName
+      }, (error) => {
+        if (error) {
+          reject(new Error(error));
+          return;
+        }
+        resolve();
+      });
+    });
+  }
+
+  /**
+   * DELAY_SYNC: Start game (host only)
+   * @param {string} roomName - Room name
+   * @returns {Promise}
+   */
+  async startGame(roomName) {
+    console.log("[RoomManager] startGame called for room:", roomName);
+
+    if (!this.socket.isConnected()) {
+      console.error("[RoomManager] Socket not connected for game start");
+      throw new Error("Socket not connected");
+    }
+
+    return new Promise((resolve, reject) => {
+      this.socket.emit("start-game", {
+        roomName: roomName
+      }, (error) => {
+        if (error) {
+          reject(new Error(error));
+          return;
+        }
+        resolve();
+      });
+    });
+  }
+
+  /**
+   * DELAY_SYNC: Send ready at frame 1
+   * @param {string} roomName - Room name
+   * @param {number} frame - Frame number
+   * @returns {Promise}
+   */
+  async sendReadyAtFrame1(roomName, frame) {
+    console.log("[RoomManager] sendReadyAtFrame1 called:", { roomName, frame });
+
+    if (!this.socket.isConnected()) {
+      console.error("[RoomManager] Socket not connected for ready-at-frame-1");
+      throw new Error("Socket not connected");
+    }
+
+    return new Promise((resolve, reject) => {
+      this.socket.emit("ready-at-frame-1", {
+        roomName: roomName,
+        frame: frame
+      }, (error) => {
+        if (error) {
+          reject(new Error(error));
+          return;
+        }
+        resolve();
+      });
+    });
+  }
+
+  /**
+   * Update room metadata
+   * @param {string} roomName - Room name
+   * @param {Object} metadata - Metadata to update
+   * @returns {Promise}
+   */
+  async updateRoomMetadata(roomName, metadata) {
+    console.log("[RoomManager] updateRoomMetadata called:", { roomName, metadata });
+
+    if (!this.socket.isConnected()) {
+      console.error("[RoomManager] Socket not connected for metadata update");
+      throw new Error("Socket not connected");
+    }
+
+    return new Promise((resolve, reject) => {
+      this.socket.emit("update-room-metadata", {
+        roomName: roomName,
+        metadata: metadata
+      }, (error) => {
+        if (error) {
+          reject(new Error(error));
+          return;
+        }
+        resolve();
+      });
+    });
+  }
+
+  /**
+   * Send JOIN_INFO with validation data (DELAY_SYNC only)
+   * @param {string} roomName - Room name
+   * @param {Object} joinInfo - Join validation info
+   * @returns {Promise}
+   */
+  async sendJoinInfo(roomName, joinInfo) {
+    console.log("[RoomManager] sendJoinInfo called:", { roomName, joinInfo });
+
+    if (!this.socket.isConnected()) {
+      console.error("[RoomManager] Socket not connected for join info");
+      throw new Error("Socket not connected");
+    }
+
+    return new Promise((resolve, reject) => {
+      this.socket.emit("join-info", {
+        roomName: roomName,
+        ...joinInfo
+      }, (error) => {
+        if (error) {
+          reject(new Error(error));
+          return;
+        }
+        resolve();
+      });
+    });
+  }
+
+  /**
    * Generate a session ID (GUID).
    * @private
    * @returns {string}
@@ -416,6 +552,65 @@ class RoomManager {
     this.socket.on("room-closed", (data) => {
       if (this.config.callbacks?.onRoomClosed) {
         this.config.callbacks.onRoomClosed(data);
+      }
+    });
+
+    // DELAY_SYNC: Listen for ready state updates
+    this.socket.on("player-ready-updated", (data) => {
+      console.log("[RoomManager] Received player-ready-updated:", data);
+      if (data && data.playerId && data.ready !== undefined) {
+        // Update session state
+        if (this.sessionState) {
+          const players = this.sessionState.getPlayers();
+          const player = players.get(data.playerId);
+          if (player) {
+            player.ready = data.ready;
+            console.log(`[RoomManager] Updated ready state for ${data.playerId}: ${data.ready}`);
+          }
+        }
+
+        // Trigger callback
+        if (this.config.callbacks?.onPlayerReadyUpdated) {
+          this.config.callbacks.onPlayerReadyUpdated(data.playerId, data.ready);
+        }
+      }
+    });
+
+    // DELAY_SYNC: Listen for prepare start
+    this.socket.on("prepare-start", (data) => {
+      console.log("[RoomManager] Received prepare-start:", data);
+      if (this.config.callbacks?.onPrepareStart) {
+        this.config.callbacks.onPrepareStart(data);
+      }
+    });
+
+    // DELAY_SYNC: Listen for validation status updates
+    this.socket.on("player-validation-updated", (data) => {
+      console.log("[RoomManager] Received player-validation-updated:", data);
+      if (data && data.playerId && data.validationStatus !== undefined) {
+        // Update session state
+        if (this.sessionState) {
+          const players = this.sessionState.getPlayers();
+          const player = players.get(data.playerId);
+          if (player) {
+            player.validationStatus = data.validationStatus;
+            player.validationReason = data.validationReason;
+            console.log(`[RoomManager] Updated validation for ${data.playerId}: ${data.validationStatus}`);
+          }
+        }
+
+        // Trigger callback
+        if (this.config.callbacks?.onPlayerValidationUpdated) {
+          this.config.callbacks.onPlayerValidationUpdated(data.playerId, data.validationStatus, data.validationReason);
+        }
+      }
+    });
+
+    // DELAY_SYNC: Listen for synchronized game start
+    this.socket.on("start-game", (data) => {
+      console.log("[RoomManager] Received start-game:", data);
+      if (this.config.callbacks?.onGameStart) {
+        this.config.callbacks.onGameStart(data);
       }
     });
   }

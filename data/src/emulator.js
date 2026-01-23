@@ -925,6 +925,13 @@ class EmulatorJS {
     }, 20);
   }
   startButtonClicked(e) {
+    // DELAY_SYNC: Prevent emulator start while in lobby phase
+    if (window.EJS_emulator?.netplay?.currentRoom?.netplay_mode === 'delay_sync' &&
+        window.EJS_emulator?.netplay?.currentRoom?.room_phase === 'lobby') {
+      console.log("[EmulatorJS] Delaying emulator start - DELAY_SYNC room in lobby phase");
+      return;
+    }
+
     this.callEvent("start-clicked");
     if (e.pointerType === "touch") {
       this.touch = true;

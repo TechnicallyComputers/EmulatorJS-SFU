@@ -26,6 +26,38 @@ try {
 // #endregion
 
 class NetplayEngine {
+  // Room mode and phase enums for DELAY_SYNC implementation
+  static RoomMode = {
+    LIVE_STREAM: 'live_stream',
+    DELAY_SYNC: 'delay_sync'
+  };
+
+  static RoomPhase = {
+    LOBBY: 'lobby',
+    PREPARE: 'prepare',
+    RUNNING: 'running',
+    ENDED: 'ended'
+  };
+
+  /**
+   * Get display name for ROM (for UI only, never for validation)
+   * @returns {string}
+   */
+  getRomDisplayName() {
+    // Priority: embedded title > filename without extension > fallback
+    if (this.config.romTitle) {
+      return this.config.romTitle;
+    }
+
+    const filename = this.config.romName || this.config.romFilename;
+    if (filename) {
+      // Strip extension
+      return filename.replace(/\.[^/.]+$/, '');
+    }
+
+    return 'Unknown ROM';
+  }
+
   /**
    * @param {IEmulator} emulatorAdapter - Emulator adapter implementing IEmulator interface
    * @param {Object} config - Netplay configuration
@@ -311,6 +343,32 @@ class NetplayEngine {
           );
           if (this.netplayMenu && this.netplayMenu.netplayUpdatePlayerList) {
             this.netplayMenu.netplayUpdatePlayerList({ players: users });
+          }
+        },
+        onPlayerReadyUpdated: (playerId, ready) => {
+          console.log(
+            `[NetplayEngine] onPlayerReadyUpdated callback called for player ${playerId}: ${ready}`,
+          );
+          if (this.netplayMenu && this.netplayMenu.netplayUpdatePlayerReady) {
+            this.netplayMenu.netplayUpdatePlayerReady(playerId, ready);
+          }
+        },
+        onPrepareStart: (data) => {
+          console.log("[NetplayEngine] onPrepareStart callback called:", data);
+          if (this.netplayMenu && this.netplayMenu.netplayHandlePrepareStart) {
+            this.netplayMenu.netplayHandlePrepareStart(data);
+          }
+        },
+        onGameStart: (data) => {
+          console.log("[NetplayEngine] onGameStart callback called:", data);
+          if (this.netplayMenu && this.netplayMenu.netplayHandleGameStart) {
+            this.netplayMenu.netplayHandleGameStart(data);
+          }
+        },
+        onPlayerValidationUpdated: (playerId, validationStatus, validationReason) => {
+          console.log(`[NetplayEngine] onPlayerValidationUpdated callback called for ${playerId}: ${validationStatus}`);
+          if (this.netplayMenu && this.netplayMenu.netplayUpdatePlayerValidation) {
+            this.netplayMenu.netplayUpdatePlayerValidation(playerId, validationStatus, validationReason);
           }
         },
         onRoomClosed: (data) => {
@@ -1124,12 +1182,43 @@ class NetplayEngine {
         player_slot: this.emulator.netplay.localSlot || 0,
         domain: window.location.host,
         game_id: this.config.gameId || "",
-        rom_hash: this.config.romHash || this.config.romName || null,
-        core_type: this.config.system || this.config.core || null,
-        netplay_mode: roomType === "delay_sync" ? 1 : 0,
+        netplay_mode: roomType === "delay_sync" ? NetplayEngine.RoomMode.DELAY_SYNC : NetplayEngine.RoomMode.LIVE_STREAM,
+        room_phase: roomType === "delay_sync" ? NetplayEngine.RoomPhase.LOBBY : NetplayEngine.RoomPhase.RUNNING,
         allow_spectators: allowSpectators,
         spectator_mode: allowSpectators ? 1 : 0,
       };
+
+      // Add structured metadata for DELAY_SYNC rooms
+      if (roomType === "delay_sync") {
+        const emulatorId = this.config.system || this.config.core || "unknown";
+        const EMULATOR_NAMES = {
+          snes9x: 'SNES9x',
+          bsnes: 'bsnes',
+          mupen64plus: 'Mupen64Plus',
+          pcsx_rearmed: 'PCSX-ReARMed',
+          mednafen_psx: 'Mednafen PSX',
+          mednafen_snes: 'Mednafen SNES',
+          melonDS: 'melonDS',
+          citra: 'Citra',
+          dolphin: 'Dolphin',
+          ppsspp: 'PPSSPP'
+        };
+
+        playerInfo.metadata = {
+          rom: {
+            displayName: this.getRomDisplayName(),
+            hash: this.config.romHash ? {
+              algo: 'sha256', // Assume SHA-256, could be configurable
+              value: this.config.romHash
+            } : null
+          },
+          emulator: {
+            id: emulatorId,
+            displayName: EMULATOR_NAMES[emulatorId] || emulatorId,
+            coreVersion: this.config.coreVersion || null
+          }
+        };
+      }
 
       // Add sync config for delay sync rooms
       if (roomType === "delay_sync") {
@@ -1157,7 +1246,8 @@ class NetplayEngine {
           current: 1, // Creator is already joined
           max: maxPlayers,
           hasPassword: !!password,
-          netplay_mode: roomType === "delay_sync" ? 1 : 0,
+          netplay_mode: roomType === "delay_sync" ? NetplayEngine.RoomMode.DELAY_SYNC : NetplayEngine.RoomMode.LIVE_STREAM,
+          room_phase: roomType === "delay_sync" ? NetplayEngine.RoomPhase.LOBBY : NetplayEngine.RoomPhase.RUNNING,
           sync_config:
             roomType === "delay_sync"
               ? {
@@ -1166,9 +1256,24 @@ class NetplayEngine {
                 }
               : null,
           spectator_mode: allowSpectators ? 1 : 0,
-          rom_hash: this.config.romHash || this.config.romName || null,
-          core_type: this.config.system || this.config.core || null,
+          // Include new structured metadata for DELAY_SYNC
+          ...(roomType === "delay_sync" ? {
+            metadata: playerInfo.metadata
+          } : {
+            rom_hash: this.config.romHash || this.config.romName || null,
+            core_type: this.config.system || this.config.core || null,
+          }),
         };
+
+        // For DELAY_SYNC, update room metadata after creation
+        if (roomType === "delay_sync") {
+          this.emulator.netplay.engine.roomManager.updateRoomMetadata(roomName, {
+            rom_hash: this.config.romHash || this.config.romName || null,
+            core_type: this.config.system || this.config.core || null,
+          }).catch(err => {
+            console.warn("[NetplayEngine] Failed to update room metadata:", err);
+          });
+        }
 
         // Switch to appropriate room UI and setup based on room type
         if (roomType === "live_stream") {

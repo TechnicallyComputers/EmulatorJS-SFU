@@ -39,7 +39,7 @@ class SimpleController {
     if (
       typeof input.playerIndex !== "number" ||
       input.playerIndex < 0 ||
-      input.playerIndex >= this.maxPlayers
+      (input.playerIndex >= this.maxPlayers && input.playerIndex !== 8)
     ) {
       return false;
     }

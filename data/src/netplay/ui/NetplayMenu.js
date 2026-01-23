@@ -156,12 +156,13 @@ class NetplayMenu {
    * @returns {string} Status emoji (🖥️ Host, 🎮 Client, 👀 Spectator)
    */
   getPlayerStatusEmoji(player) {
-    if (!player) return "🎮";
-
-    if (this.isPlayerHost(player)) {
+    // Check if host first, then if spectator.
+    if (player.is_host) {
       return "🖥️";
     } else if (player.slot === 8) {
       return "👀"; // Spectator
+    } else {
+      return "🎮";
     }
   }
 
@@ -316,26 +317,17 @@ class NetplayMenu {
    * @returns {Array<{value: number, text: string, disabled: boolean, selected: boolean}>}
    */
   getSlotSelectorOptions(myPlayerId, allSlots = [0, 1, 2, 3]) {
-    // Find local player directly from joinedPlayers
-    const localPlayerId = this.netplay?.engine?.sessionState?.localPlayerId;
-    const localPlayerName = this.netplay?.name;
-
-    let me = null;
-    if (localPlayerId) {
-      me = this.netplay?.joinedPlayers?.find((p) => p.id === localPlayerId);
-    }
-    if (!me && localPlayerName) {
-      me = this.netplay?.joinedPlayers?.find((p) => p.name === localPlayerName);
-    }
+    // Find local player from player table (which ensures local player is included)
+    const playerTable = this.getPlayerTable();
+    const me = playerTable[myPlayerId];
 
     if (!me) {
       console.warn(
-        "[NetplayMenu] Cannot get slot selector options: local player not found in joinedPlayers",
+        "[NetplayMenu] Cannot get slot selector options: local player not found in playerTable",
         {
           myPlayerId,
-          localPlayerId,
-          localPlayerName,
-          joinedPlayersCount: this.netplay?.joinedPlayers?.length,
+          localPlayerId: this.netplay?.engine?.sessionState?.localPlayerId,
+          localPlayerName: this.netplay?.name,
         },
       );
       return [];
@@ -564,7 +556,8 @@ class NetplayMenu {
     const options = this.getSlotSelectorOptions(myPlayerId);
 
     // Check if spectator option already exists
-    const existingSpectator = this.netplay.slotSelect.querySelector('option[value="8"]');
+    const existingSpectator =
+      this.netplay.slotSelect.querySelector('option[value="8"]');
 
     // Clear existing options
     this.netplay.slotSelect.innerHTML = "";
@@ -935,6 +928,9 @@ class NetplayMenu {
     const slotSelect = this.createSlotSelector(joinedDiv, "prepend");
     this.netplay.slotSelect = slotSelect;
 
+    // Update the slot selector with current available slots.
+    this.netplayUpdateSlotSelector();
+
     // For livestream clients, hide the canvas immediately so video can be displayed
     if (!isHost) {
       if (
@@ -1060,6 +1056,9 @@ class NetplayMenu {
       const slotSelect = this.createSlotSelector(joinedControls);
       this.netplay.slotSelect = slotSelect;
 
+      // Update the slot selector with current available slots.
+      this.netplayUpdateSlotSelector();
+
       // Create the player table
       const table = this.createNetplayTable("delaysync");
 
@@ -1085,6 +1084,9 @@ class NetplayMenu {
 
     // Bottom bar buttons for Delay Sync mode
     this.setupNetplayBottomBar("delaysync");
+
+    // Update ready button state for validation
+    this.netplayUpdateReadyButton();
 
     this.isNetplay = true;
     // Set global EJS netplay state for GameManager.simulateInput()
@@ -1117,7 +1119,7 @@ class NetplayMenu {
         headers: [
           { text: "Player", width: "60px", align: "center" },
           { text: "Name", align: "center" },
-          { text: "Ready", width: "60px", align: "right" },
+          { text: "Status", width: "80px", align: "center" },
         ],
         reference: "delaySyncPlayerTable",
       },
@@ -1840,14 +1842,30 @@ class NetplayMenu {
         nameCell.style.textAlign = "center";
         row.appendChild(nameCell);
 
-        // Third column - Ready for delay sync, Status for live stream
+        // Third column - Status (validation + ready for delay sync, host status for live stream)
         const thirdCell = this.createElement("td");
 
         if (isDelaySync) {
-          // Delay sync: Ready status with checkmarks
-          thirdCell.innerText = player.ready ? "✅" : "⛔";
-          thirdCell.style.textAlign = "right";
-          thirdCell.classList.add("ready-status");
+          // Delay sync: Show validation status and ready status
+          let statusText = "";
+          let statusColor = "";
+
+          if (player.validationStatus === "ok") {
+            statusText = player.ready ? "✅ Ready" : "⏳ Not Ready";
+            statusColor = player.ready ? "green" : "orange";
+          } else if (player.validationStatus) {
+            statusText = "❌ Invalid";
+            statusColor = "red";
+            thirdCell.title = player.validationReason || "Validation failed";
+          } else {
+            statusText = "⏳ Validating...";
+            statusColor = "gray";
+          }
+
+          thirdCell.innerText = statusText;
+          thirdCell.style.color = statusColor;
+          thirdCell.style.textAlign = "center";
+          thirdCell.classList.add("validation-status");
         } else {
           // Live stream: Status emoji
           thirdCell.innerText = this.getPlayerStatusEmoji(player);
@@ -1880,8 +1898,8 @@ class NetplayMenu {
 
     // Handle individual slot (legacy behavior)
     const slot = playersOrSlot;
+    if (!this.netplay?.joinedPlayers) return; // joinedPlayers not initialized yet
     const player = this.netplay.joinedPlayers.find((p) => p.slot === slot);
-    if (!player) return;
 
     // Check if a row for this player already exists
     const existingRow = tbody.querySelector(
@@ -2065,7 +2083,7 @@ class NetplayMenu {
 
     // Create new slot selector with consistent styling
     const slotLabel = this.createElement("strong");
-    slotLabel.innerText = "Player Select:";
+    slotLabel.innerText = "Player Select: ";
 
     const slotSelect = this.createElement("select");
     // Add basic styling to make it look like a proper dropdown
@@ -2259,34 +2277,214 @@ class NetplayMenu {
   }
 
   // Toggle ready status
-  netplayToggleReady() {
+  async netplayToggleReady() {
     if (!this.netplay.readyButton) return;
 
-    // Toggle the host's ready status
-    const hostPlayer = this.netplay.joinedPlayers.find((p) =>
-      this.isPlayerHost(p),
-    );
-    if (hostPlayer) {
-      hostPlayer.ready = !hostPlayer.ready;
-      this.netplay.playerReadyStates[0] = hostPlayer.ready;
-    }
+    const roomName = this.emulator.netplay.currentRoom?.room_name;
+    if (!roomName) return;
 
-    // Update UI
-    const tbody = this.netplay.delaySyncPlayerTable;
-    if (tbody && tbody.children[0]) {
-      const readyCell = tbody.children[0].querySelector(".ready-status");
-      if (readyCell) {
-        readyCell.innerText = hostPlayer.ready ? "✅" : "⛔";
+    // DELAY_SYNC: Check validation status before allowing ready toggle
+    const room = this.emulator.netplay.currentRoom;
+    if (room && room.netplay_mode === "delay_sync") {
+      // Find local player
+      const localPlayerId = this.emulator.netplay.engine.sessionState?.localPlayerId;
+      const localPlayer = this.netplay.joinedPlayers?.find(p => p.id === localPlayerId);
+
+      if (localPlayer && localPlayer.validationStatus !== "ok") {
+        alert(localPlayer.validationReason || "Validation failed - cannot ready up");
+        return;
+      }
+
+      // Send join-info if not already sent (first time ready toggle)
+      if (!localPlayer.joinInfoSent) {
+        try {
+          const emulatorId = this.emulator.netplay.engine.config.system || this.emulator.netplay.engine.config.core || "unknown";
+          const romHash = this.emulator.netplay.engine.config.romHash;
+
+          await this.emulator.netplay.engine.roomManager.sendJoinInfo(roomName, {
+            romHash: romHash,
+            emulatorId: emulatorId,
+            emulatorVersion: this.emulator.netplay.engine.config.coreVersion || null
+          });
+
+          localPlayer.joinInfoSent = true;
+          console.log("[NetplayMenu] Join info sent successfully");
+        } catch (error) {
+          console.error("[NetplayMenu] Failed to send join info:", error);
+          alert(`Failed to validate: ${error.message}`);
+          return;
+        }
       }
     }
 
-    // Update button text
-    this.netplay.readyButton.innerText = hostPlayer.ready
-      ? "Not Ready"
-      : "Ready";
+    try {
+      await this.emulator.netplay.engine.roomManager.toggleReady(roomName);
+      console.log("[NetplayMenu] Ready state toggled successfully");
+    } catch (error) {
+      console.error("[NetplayMenu] Failed to toggle ready state:", error);
+      alert(`Failed to toggle ready: ${error.message}`);
+    }
+  }
 
-    // Check if all players are ready to enable launch button
+  // DELAY_SYNC: Update player validation status
+  netplayUpdatePlayerValidation(playerId, validationStatus, validationReason) {
+    console.log(`[NetplayMenu] Updating validation for player ${playerId}: ${validationStatus}`);
+
+    // Update the player in joinedPlayers
+    if (this.netplay.joinedPlayers) {
+      const player = this.netplay.joinedPlayers.find(p => p.id === playerId);
+      if (player) {
+        player.validationStatus = validationStatus;
+        player.validationReason = validationReason;
+      }
+    }
+
+    // Update UI
+    this.netplayUpdatePlayerTable();
+
+    // Update ready button state (may be disabled due to validation)
+    this.netplayUpdateReadyButton();
+  }
+
+  // DELAY_SYNC: Update player ready state
+  netplayUpdatePlayerReady(playerId, ready) {
+    console.log(`[NetplayMenu] Updating ready state for player ${playerId}: ${ready}`);
+
+    // Update the player in joinedPlayers
+    if (this.netplay.joinedPlayers) {
+      const player = this.netplay.joinedPlayers.find(p => p.id === playerId);
+      if (player) {
+        player.ready = ready;
+      }
+    }
+
+    // Update UI
+    this.netplayUpdatePlayerTable();
+
+    // Update ready and launch button states
+    this.netplayUpdateReadyButton();
     this.netplayUpdateLaunchButton();
+  }
+
+  // DELAY_SYNC: Handle prepare start
+  async netplayHandlePrepareStart(data) {
+    console.log("[NetplayMenu] Handling prepare start:", data);
+
+    // Update room phase
+    if (this.emulator.netplay.currentRoom) {
+      this.emulator.netplay.currentRoom.room_phase = "prepare";
+    }
+
+    // Prepare phase: Reset emulator, load ROM, run to frame 1, then pause
+    try {
+      console.log("[NetplayMenu] Starting prepare phase...");
+
+      // Reset emulator if possible
+      if (this.emulator.reset) {
+        this.emulator.reset();
+        console.log("[NetplayMenu] Emulator reset");
+      }
+
+      // Wait a bit for reset to complete
+      await new Promise(resolve => setTimeout(resolve, 100));
+
+      // Start emulator (it should load the ROM automatically)
+      if (this.emulator.start) {
+        this.emulator.start();
+        console.log("[NetplayMenu] Emulator started for prepare phase");
+      }
+
+      // Wait for emulator to be ready and reach frame 1
+      // This is a simplified implementation - in a real system you'd need
+      // to wait for the emulator to actually reach frame 1
+      await new Promise(resolve => setTimeout(resolve, 500));
+
+      // Pause emulator at frame 1
+      if (this.emulator.pause) {
+        this.emulator.pause();
+        console.log("[NetplayMenu] Emulator paused at frame 1");
+      }
+
+      // Send ready-at-frame-1 to server
+      const roomName = this.emulator.netplay.currentRoom?.room_name;
+      if (roomName) {
+        await this.emulator.netplay.engine.roomManager.sendReadyAtFrame1(roomName, 1);
+        console.log("[NetplayMenu] Sent ready-at-frame-1 to server");
+      }
+
+    } catch (error) {
+      console.error("[NetplayMenu] Error in prepare phase:", error);
+    }
+  }
+
+  // DELAY_SYNC: Handle synchronized game start
+  netplayHandleGameStart(data) {
+    console.log("[NetplayMenu] Handling synchronized game start:", data);
+
+    // Update room phase
+    if (this.emulator.netplay.currentRoom) {
+      this.emulator.netplay.currentRoom.room_phase = "running";
+    }
+
+    const { start_time, frame } = data;
+    const now = Date.now();
+    const delay = start_time - now;
+
+    if (delay > 0) {
+      console.log(`[NetplayMenu] Waiting ${delay}ms until start time`);
+      setTimeout(() => {
+        this.startSynchronizedGame(frame);
+      }, delay);
+    } else {
+      console.log("[NetplayMenu] Start time already passed, starting immediately");
+      this.startSynchronizedGame(frame);
+    }
+  }
+
+  // Start the synchronized game
+  startSynchronizedGame(frame) {
+    console.log(`[NetplayMenu] Starting synchronized game at frame ${frame}`);
+
+    // Unpause emulator
+    if (this.emulator.unpause || this.emulator.resume) {
+      const unpauseMethod = this.emulator.unpause || this.emulator.resume;
+      unpauseMethod.call(this.emulator);
+      console.log("[NetplayMenu] Emulator unpaused");
+    }
+
+    // Set up input buffering for frame + delay
+    // This would need to be implemented in the InputSync system
+    console.log("[NetplayMenu] Input buffering setup would go here");
+
+    // Hide the menu
+    this.hide();
+  }
+
+  // Update ready button state based on validation
+  netplayUpdateReadyButton() {
+    if (!this.netplay.readyButton) return;
+
+    const room = this.emulator.netplay.currentRoom;
+    if (!room || room.netplay_mode !== "delay_sync") return;
+
+    // Find local player
+    const localPlayerId = this.emulator.netplay.engine.sessionState?.localPlayerId;
+    const localPlayer = this.netplay.joinedPlayers?.find(p => p.id === localPlayerId);
+
+    if (localPlayer) {
+      // Disable ready button if validation failed
+      const isValid = localPlayer.validationStatus === "ok" || localPlayer.validationStatus === undefined;
+      this.netplay.readyButton.disabled = !isValid;
+
+      // Update button text to show validation status
+      if (!isValid && localPlayer.validationReason) {
+        this.netplay.readyButton.innerText = "Validation Failed";
+        this.netplay.readyButton.title = localPlayer.validationReason;
+      } else {
+        this.netplay.readyButton.innerText = localPlayer.ready ? "Not Ready" : "Ready";
+        this.netplay.readyButton.title = "";
+      }
+    }
   }
 
   // Update launch game button state
@@ -2299,10 +2497,17 @@ class NetplayMenu {
   }
 
   // Launch game (host only)
-  netplayLaunchGame() {
-    console.log("[Delay Sync] Launching game...");
-    // TODO: Implement game launch logic
-    alert("Game launch not implemented yet");
+  async netplayLaunchGame() {
+    const roomName = this.emulator.netplay.currentRoom?.room_name;
+    if (!roomName) return;
+
+    try {
+      await this.emulator.netplay.engine.roomManager.startGame(roomName);
+      console.log("[NetplayMenu] Game start initiated successfully");
+    } catch (error) {
+      console.error("[NetplayMenu] Failed to start game:", error);
+      alert(`Failed to start game: ${error.message}`);
+    }
   }
 
   // Helper method to update the room table UI
@@ -3269,7 +3474,7 @@ class NetplayMenu {
     if (container) {
       const slotLabel = this.createElement("strong");
       slotLabel.innerText =
-        this.localization("Player Select") || "Player Select";
+        this.localization("Player Select: ") || "Player Select: ";
       slotLabel.marginRight = "10px"; // some spacing
 
       if (position === "append") {
@@ -3449,6 +3654,16 @@ class NetplayMenu {
 
       // For local player, preserve their assigned slot from session state
       if (isLocalPlayer) {
+        // If we found the local player by name but not by ID, update the session state with the correct ID
+        if (!localPlayerId || player.id !== localPlayerId) {
+          console.log(
+            `[NetplayMenu] Updating session state local player ID from ${localPlayerId} to ${player.id} (matched by name)`,
+          );
+          if (this.netplay?.engine?.sessionState) {
+            this.netplay.engine.sessionState.localPlayerId = player.id;
+          }
+        }
+
         const currentLocalSlot =
           this.netplay?.engine?.sessionState?.getLocalPlayerSlot() ??
           this.netplay?.localSlot;
@@ -3466,9 +3681,7 @@ class NetplayMenu {
       if (
         !isLocalPlayer &&
         player.slot !== 8 &&
-        (player.slot === undefined ||
-          player.slot === null ||
-          takenSlots.has(player.slot))
+        (player.slot === undefined || player.slot === null)
       ) {
         // Find lowest available slot
         let newSlot = 0;
@@ -3556,12 +3769,16 @@ class NetplayMenu {
       this.netplay.delaySyncPlayerTable ||
       this.netplay.liveStreamPlayerTable
     ) {
+      // Use getPlayerTable() to ensure local player is always included
+      const playerTable = this.getPlayerTable();
+      const playersToDisplay = Object.values(playerTable);
+
       const tableType = this.netplay.delaySyncPlayerTable
         ? "delay sync"
         : "live stream";
       console.log(
         `[NetplayMenu] Rebuilding ${tableType} player table with`,
-        playersArray.length,
+        playersToDisplay.length,
         "players",
       );
 
@@ -3577,9 +3794,9 @@ class NetplayMenu {
 
       // Rebuild table with current players
       console.log(
-        `[NetplayMenu] Rebuilding table with ${playersArray.length} players`,
+        `[NetplayMenu] Rebuilding table with ${playersToDisplay.length} players`,
       );
-      this.netplayUpdatePlayerTable(playersArray);
+      this.netplayUpdatePlayerTable(playersToDisplay);
 
       console.log(
         "[NetplayMenu] Table rebuild complete, now has",
@@ -3616,21 +3833,47 @@ class NetplayMenu {
     }
 
     // 2. Convert data format
-    const playersArray = this.convertServerPlayersToLocalFormat(data);
+    let playersArray = this.convertServerPlayersToLocalFormat(data);
 
     // 3. Identify local player
     const { localPlayerId, localPlayerName } = this.identifyLocalPlayer();
 
-    // 4. Process slots (including local player preservation)
+    // 4. Ensure local player is included (server might not send local player data)
+    // Don't add if there's already a player with the local name or an "Unknown" player that might be local
+    if (
+      !playersArray.find(
+        (p) =>
+          p.name === localPlayerName ||
+          (p.name === "Unknown" && localPlayerName),
+      )
+    ) {
+      console.log(
+        `[NetplayMenu] Local player ${localPlayerName} not in server data, adding basic entry`,
+      );
+      // Create basic local player entry
+      const localPlayerEntry = {
+        id: localPlayerId || "local-player",
+        name: localPlayerName || "Player",
+        slot: this.netplay?.localSlot || 0,
+        ready: false,
+      };
+      playersArray.push(localPlayerEntry);
+      console.log(
+        `[NetplayMenu] Added basic local player entry to playersArray:`,
+        localPlayerEntry,
+      );
+    }
+
+    // 5. Process slots (including local player preservation)
     this.processPlayerSlots(playersArray, localPlayerId, localPlayerName);
 
-    // 5. Synchronize local state
+    // 6. Synchronize local state
     this.synchronizeLocalState(playersArray);
 
-    // 6. Update UI
+    // 7. Update UI
     this.updatePlayerUI(playersArray);
 
-    // 7. Notify other systems
+    // 8. Notify other systems
     this.notifyPlayerTableUpdated();
   }
 
@@ -3661,14 +3904,61 @@ class NetplayMenu {
     }
 
     // Find the player in the joinedPlayers array
-    const playerIndex = this.netplay.joinedPlayers.findIndex(
+    let playerIndex = this.netplay.joinedPlayers.findIndex(
       (p) => p.id === playerId,
     );
+
+    // If player not found, try to add them from session state
     if (playerIndex === -1) {
-      console.warn(
-        `[NetplayMenu] Player ${playerId} not found in joinedPlayers`,
+      console.log(
+        `[NetplayMenu] Player ${playerId} not found in joinedPlayers, attempting to add from session state`,
       );
-      return;
+
+      // Try to get player data from session state
+      const sessionState = this.netplay.engine?.sessionState;
+      if (sessionState) {
+        const players = sessionState.getPlayers();
+        const playerData = players.get(playerId);
+
+        if (playerData) {
+          console.log(
+            `[NetplayMenu] Found player ${playerId} in session state, adding to joinedPlayers`,
+          );
+          // Add the player to joinedPlayers
+          const newPlayer = {
+            id: playerId,
+            name: playerData.name || playerData.player_name || "Unknown",
+            slot: playerData.slot || playerData.player_slot || 0,
+            ready: playerData.ready || false,
+            ...playerData, // Include any other properties
+          };
+
+          this.netplay.joinedPlayers.push(newPlayer);
+          playerIndex = this.netplay.joinedPlayers.length - 1;
+
+          // Update taken slots for new player
+          if (!this.netplay.takenSlots) {
+            this.netplay.takenSlots = new Set();
+          }
+          if (newPlayer.slot !== 8) {
+            this.netplay.takenSlots.add(newPlayer.slot);
+          }
+
+          console.log(
+            `[NetplayMenu] Added new player ${playerId} to joinedPlayers at index ${playerIndex}`,
+          );
+        } else {
+          console.warn(
+            `[NetplayMenu] Player ${playerId} not found in session state either`,
+          );
+          return;
+        }
+      } else {
+        console.warn(
+          `[NetplayMenu] Player ${playerId} not found in joinedPlayers and no session state available`,
+        );
+        return;
+      }
     }
 
     // Update the player's slot
@@ -4070,14 +4360,7 @@ class NetplayMenu {
       console.log("[NetplayMenu] DataChannelManager mode set to:", inputMode);
 
       // For hosts in P2P mode, set up P2P channels now
-      if (
-        isHost &&
-        (inputMode === "unorderedP2P" || inputMode === "orderedP2P")
-      ) {
-        console.log(
-          "[NetplayMenu] Host setting up P2P channels for mode:",
-          inputMode,
-        );
+      if (isHost) {
         if (engine.netplaySetupP2PChannels) {
           setTimeout(() => {
             engine.netplaySetupP2PChannels().catch((err) => {
@@ -4109,9 +4392,9 @@ class NetplayMenu {
       }
     }
 
-    // For live stream mode, both host and clients should send inputs via data channel
+    // For live stream mode, both host and clients should send inputs via data channel only
     if (engine.dataChannelManager) {
-      // Override InputSync's sendInputCallback to send via data channel
+      // Override InputSync's sendInputCallback to send via data channel (no Socket.IO fallback)
       const originalSendInputCallback = engine.inputSync.sendInputCallback;
       engine.inputSync.sendInputCallback = (frame, inputData) => {
         console.log("[NetplayMenu] sendInputCallback called:", {
@@ -4119,13 +4402,7 @@ class NetplayMenu {
           inputData,
         });
 
-        // Call original callback (for Socket.IO fallback)
-        if (originalSendInputCallback) {
-          console.log("[NetplayMenu] Calling original sendInputCallback");
-          originalSendInputCallback(frame, inputData);
-        }
-
-        // Send via data channel if ready
+        // Send via data channel only (no Socket.IO fallback for inputs)
         if (engine.dataChannelManager && engine.dataChannelManager.isReady()) {
           console.log(
             "[NetplayMenu] DataChannelManager is ready, sending via data channel",
@@ -4164,18 +4441,18 @@ class NetplayMenu {
           }
         } else {
           console.log(
-            "[NetplayMenu] DataChannelManager not ready, inputs will use Socket.IO fallback",
+            "[NetplayMenu] DataChannelManager not ready, inputs cannot be sent",
           );
         }
       };
 
       if (isHost) {
         console.log(
-          "[NetplayMenu] Host input callback configured to send via data channel",
+          "[NetplayMenu] Host input callback configured to send via data channel only",
         );
       } else {
         console.log(
-          "[NetplayMenu] Client input callback configured to send via data channel",
+          "[NetplayMenu] Client input callback configured to send via data channel only",
         );
       }
     }
@@ -4190,21 +4467,36 @@ class NetplayMenu {
         value,
         ...args
       ) => {
-        // Call original simulateInput
-        originalSimulateInput.call(
-          this.emulator.gameManager.functions,
-          playerIndex,
-          inputIndex,
-          value,
-          ...args,
-        );
-
         // Forward to netplay if this is a local input (not from network)
         if (this.engine?.inputSync && !args.includes?.("netplay-remote")) {
+          // Use the current netplay slot for both local application and netplay forwarding
+          const netplaySlot = this.netplay?.localSlot ?? 0;
           console.log(
-            `[NetplayMenu] Forwarding local input to netplay: player ${playerIndex}, input ${inputIndex}, value ${value}`,
+            `[NetplayMenu] Forwarding local input to netplay: emulator player ${playerIndex} -> netplay slot ${netplaySlot}, input ${inputIndex}, value ${value}`,
           );
-          this.engine.inputSync.sendInput(playerIndex, inputIndex, value);
+
+          // Call original simulateInput with the correct player index based on slot
+          originalSimulateInput.call(
+            this.emulator.gameManager.functions,
+            netplaySlot,
+            inputIndex,
+            value,
+            ...args,
+          );
+
+          // Send to netplay with the slot
+          if (netplaySlot !== 8) {
+            this.engine.inputSync.sendInput(netplaySlot, inputIndex, value);
+          }
+        } else {
+          // Not a netplay input, call original simulateInput normally
+          originalSimulateInput.call(
+            this.emulator.gameManager.functions,
+            playerIndex,
+            inputIndex,
+            value,
+            ...args,
+          );
         }
       };
       console.log(
