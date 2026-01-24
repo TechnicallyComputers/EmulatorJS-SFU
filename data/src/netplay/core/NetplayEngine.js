@@ -28,15 +28,15 @@ try {
 class NetplayEngine {
   // Room mode and phase enums for DELAY_SYNC implementation
   static RoomMode = {
-    LIVE_STREAM: 'live_stream',
-    DELAY_SYNC: 'delay_sync'
+    LIVE_STREAM: "live_stream",
+    DELAY_SYNC: "delay_sync",
   };
 
   static RoomPhase = {
-    LOBBY: 'lobby',
-    PREPARE: 'prepare',
-    RUNNING: 'running',
-    ENDED: 'ended'
+    LOBBY: "lobby",
+    PREPARE: "prepare",
+    RUNNING: "running",
+    ENDED: "ended",
   };
 
   /**
@@ -52,10 +52,10 @@ class NetplayEngine {
     const filename = this.config.romName || this.config.romFilename;
     if (filename) {
       // Strip extension
-      return filename.replace(/\.[^/.]+$/, '');
+      return filename.replace(/\.[^/.]+$/, "");
     }
 
-    return 'Unknown ROM';
+    return "Unknown ROM";
   }
 
   /**
@@ -365,10 +365,23 @@ class NetplayEngine {
             this.netplayMenu.netplayHandleGameStart(data);
           }
         },
-        onPlayerValidationUpdated: (playerId, validationStatus, validationReason) => {
-          console.log(`[NetplayEngine] onPlayerValidationUpdated callback called for ${playerId}: ${validationStatus}`);
-          if (this.netplayMenu && this.netplayMenu.netplayUpdatePlayerValidation) {
-            this.netplayMenu.netplayUpdatePlayerValidation(playerId, validationStatus, validationReason);
+        onPlayerValidationUpdated: (
+          playerId,
+          validationStatus,
+          validationReason,
+        ) => {
+          console.log(
+            `[NetplayEngine] onPlayerValidationUpdated callback called for ${playerId}: ${validationStatus}`,
+          );
+          if (
+            this.netplayMenu &&
+            this.netplayMenu.netplayUpdatePlayerValidation
+          ) {
+            this.netplayMenu.netplayUpdatePlayerValidation(
+              playerId,
+              validationStatus,
+              validationReason,
+            );
           }
         },
         onRoomClosed: (data) => {
@@ -377,7 +390,7 @@ class NetplayEngine {
       };
       this.roomManager = new RoomManager(
         this.socketTransport,
-        this.configManager?.loadConfig() || {},
+        { ...this.config, ...(this.configManager?.loadConfig() || {}) },
         this.sessionState,
       );
       this.roomManager.config.callbacks = this.config.callbacks;
@@ -1103,21 +1116,49 @@ class NetplayEngine {
           Object.keys(data),
         );
         Object.entries(data).forEach(([roomId, roomInfo]) => {
-          console.log(`[Netplay] Processing room ${roomId}:`, roomInfo);
+          console.log(`[Netplay] 🔍 Processing room ${roomId}:`, {
+            roomInfo,
+            netplay_mode: roomInfo?.netplay_mode,
+            rom_name: roomInfo?.rom_name,
+            rom_hash: roomInfo?.rom_hash,
+            core_type: roomInfo?.core_type,
+            allKeys: roomInfo ? Object.keys(roomInfo) : [],
+          });
           if (roomInfo && roomInfo.room_name) {
+            // Normalize netplay_mode (handle both string and number formats)
+            const netplayMode =
+              roomInfo.netplay_mode === "delay_sync" ||
+              roomInfo.netplay_mode === 1
+                ? "delay_sync"
+                : "live_stream";
+
             const room = {
               id: roomId,
               name: roomInfo.room_name,
               current: roomInfo.current || 0,
               max: roomInfo.max || 4,
               hasPassword: roomInfo.hasPassword || false,
-              netplay_mode: roomInfo.netplay_mode || 0,
+              netplay_mode: netplayMode, // Use normalized value
               sync_config: roomInfo.sync_config || null,
               spectator_mode: roomInfo.spectator_mode || 1,
+              // Include all ROM and emulator metadata
               rom_hash: roomInfo.rom_hash || null,
+              rom_name: roomInfo.rom_name || null,
               core_type: roomInfo.core_type || null,
+              system: roomInfo.system || null,
+              platform: roomInfo.platform || null,
+              coreId: roomInfo.coreId || null,
+              coreVersion: roomInfo.coreVersion || null,
+              romHash: roomInfo.romHash || null,
+              systemType: roomInfo.systemType || null,
             };
-            console.log(`[Netplay] Added room to list:`, room);
+            console.log(`[Netplay] ✅ Added room to list with metadata:`, {
+              id: room.id,
+              netplay_mode: room.netplay_mode,
+              rom_name: room.rom_name,
+              rom_hash: room.rom_hash,
+              core_type: room.core_type,
+            });
             rooms.push(room);
           } else {
             console.log(
@@ -1178,45 +1219,52 @@ class NetplayEngine {
 
       // Prepare player info for engine
       const playerInfo = {
-        player_name: this.emulator.netplay.getNetplayId(),
+        player_name: playerName,
         player_slot: this.emulator.netplay.localSlot || 0,
         domain: window.location.host,
-        game_id: this.config.gameId || "",
-        netplay_mode: roomType === "delay_sync" ? NetplayEngine.RoomMode.DELAY_SYNC : NetplayEngine.RoomMode.LIVE_STREAM,
-        room_phase: roomType === "delay_sync" ? NetplayEngine.RoomPhase.LOBBY : NetplayEngine.RoomPhase.RUNNING,
-        allow_spectators: allowSpectators,
-        spectator_mode: allowSpectators ? 1 : 0,
+        // ✅ ADD ROM METADATA
+        romHash: this.emulator.config.romHash,
+        romName: this.emulator.config.romName,
+        romFilename: this.emulator.config.romFilename,
+        core: this.emulator.config.core,
+        system: this.emulator.config.system,
+        platform: this.emulator.config.platform,
+        coreId: this.emulator.config.coreId,
+        coreVersion: this.emulator.config.coreVersion,
+        systemType: this.emulator.config.systemType,
       };
 
       // Add structured metadata for DELAY_SYNC rooms
       if (roomType === "delay_sync") {
         const emulatorId = this.config.system || this.config.core || "unknown";
         const EMULATOR_NAMES = {
-          snes9x: 'SNES9x',
-          bsnes: 'bsnes',
-          mupen64plus: 'Mupen64Plus',
-          pcsx_rearmed: 'PCSX-ReARMed',
-          mednafen_psx: 'Mednafen PSX',
-          mednafen_snes: 'Mednafen SNES',
-          melonDS: 'melonDS',
-          citra: 'Citra',
-          dolphin: 'Dolphin',
-          ppsspp: 'PPSSPP'
+          snes9x: "SNES9x",
+          bsnes: "bsnes",
+          mupen64plus: "Mupen64Plus",
+          pcsx_rearmed: "PCSX-ReARMed",
+          mednafen_psx: "Mednafen PSX",
+          mednafen_snes: "Mednafen SNES",
+          melonDS: "melonDS",
+          citra: "Citra",
+          dolphin: "Dolphin",
+          ppsspp: "PPSSPP",
         };
 
         playerInfo.metadata = {
           rom: {
             displayName: this.getRomDisplayName(),
-            hash: this.config.romHash ? {
-              algo: 'sha256', // Assume SHA-256, could be configurable
-              value: this.config.romHash
-            } : null
+            hash: this.config.romHash
+              ? {
+                  algo: "sha256", // Assume SHA-256, could be configurable
+                  value: this.config.romHash,
+                }
+              : null,
           },
           emulator: {
             id: emulatorId,
             displayName: EMULATOR_NAMES[emulatorId] || emulatorId,
-            coreVersion: this.config.coreVersion || null
-          }
+            coreVersion: this.config.coreVersion || null,
+          },
         };
       }
 
@@ -1228,6 +1276,13 @@ class NetplayEngine {
         };
       }
 
+      // Add netplay_mode to playerInfo so it gets sent to server
+      playerInfo.netplay_mode = roomType === "delay_sync" ? 1 : 0;
+      playerInfo.room_phase =
+        roomType === "delay_sync"
+          ? NetplayEngine.RoomPhase.LOBBY
+          : NetplayEngine.RoomPhase.RUNNING;
+
       try {
         const result = await this.createRoom(
           roomName,
@@ -1236,6 +1291,21 @@ class NetplayEngine {
           playerInfo,
         );
         console.log("[Netplay] Room creation successful via engine:", result);
+
+        this.emulator.netplay.engine.roomManager
+          .updatePlayerMetadata(roomName, {
+            coreId: this.emulator.config.system || null, // ✅ Emulator config
+            coreVersion: this.emulator.config.coreVersion || null, // ✅ Emulator config
+            romHash: this.emulator.config.romHash || null, // ✅ Emulator config
+            systemType: this.emulator.config.system || null, // ✅ Emulator config
+            platform: this.emulator.config.platform || null, // ✅ Emulator config
+          })
+          .catch((err) => {
+            console.warn(
+              "[NetplayEngine] Failed to update player metadata:",
+              err,
+            );
+          });
 
         // Keep the room listing engine - it will be upgraded to a main engine
 
@@ -1246,8 +1316,11 @@ class NetplayEngine {
           current: 1, // Creator is already joined
           max: maxPlayers,
           hasPassword: !!password,
-          netplay_mode: roomType === "delay_sync" ? NetplayEngine.RoomMode.DELAY_SYNC : NetplayEngine.RoomMode.LIVE_STREAM,
-          room_phase: roomType === "delay_sync" ? NetplayEngine.RoomPhase.LOBBY : NetplayEngine.RoomPhase.RUNNING,
+          netplay_mode: roomType === "delay_sync" ? 1 : 0,
+          room_phase:
+            roomType === "delay_sync"
+              ? NetplayEngine.RoomPhase.LOBBY
+              : NetplayEngine.RoomPhase.RUNNING,
           sync_config:
             roomType === "delay_sync"
               ? {
@@ -1256,45 +1329,66 @@ class NetplayEngine {
                 }
               : null,
           spectator_mode: allowSpectators ? 1 : 0,
-          // Include new structured metadata for DELAY_SYNC
-          ...(roomType === "delay_sync" ? {
-            metadata: playerInfo.metadata
-          } : {
-            rom_hash: this.config.romHash || this.config.romName || null,
-            core_type: this.config.system || this.config.core || null,
-          }),
+          // Include detailed metadata for all room types
+          metadata: {
+            // Legacy fields for backward compatibility
+            rom_hash: this.emulator.config.romHash || null,
+            core_type: this.emulator.config.system || null, // ✅ Fix: use system
+            system: this.emulator.config.system || null,
+            platform: this.emulator.config.platform || null,
+            coreId: this.emulator.config.system || null, // ✅ Fix: use system
+            coreVersion: this.emulator.config.coreVersion || null,
+            romHash: this.emulator.config.romHash || null,
+            systemType: this.emulator.config.system || null,
+            netplay_mode: roomType === "delay_sync" ? 1 : 0, // ✅ Add netplay_mode
+          },
         };
 
         // For DELAY_SYNC, update room metadata after creation
         if (roomType === "delay_sync") {
-          this.emulator.netplay.engine.roomManager.updateRoomMetadata(roomName, {
-            rom_hash: this.config.romHash || this.config.romName || null,
-            core_type: this.config.system || this.config.core || null,
-          }).catch(err => {
-            console.warn("[NetplayEngine] Failed to update room metadata:", err);
-          });
+          this.emulator.netplay.engine.roomManager
+            .updateRoomMetadata(roomName, {
+              // core, rom and system metadata
+              rom_hash: this.emulator.config.romHash || null,
+              rom_name:
+                this.emulator.config.romName ||
+                this.emulator.config.romFilename ||
+                null,
+              core_type: this.emulator.config.system || null, // Fixed
+              system: this.emulator.config.system || null,
+              platform: this.emulator.config.platform || null,
+              coreId: this.emulator.config.system || null,
+              coreVersion: this.emulator.config.coreVersion || null,
+              romHash: this.emulator.config.romHash || null,
+              systemType: this.emulator.config.system || null,
+            })
+            .catch((err) => {
+              console.warn(
+                "[NetplayEngine] Failed to update room metadata:",
+                err,
+              );
+            });
         }
-
-        // Switch to appropriate room UI and setup based on room type
-        if (roomType === "live_stream") {
-          this.netplayMenu.netplaySwitchToLiveStreamRoom(roomName, password);
-
-          // LIVESTREAM ROOM: Set up WebRTC producer transports for host
-          // Only hosts need to create producers for video/audio streaming
-          console.log(
-            "[Netplay] Livestream room created - setting up producers immediately",
-          );
-          setTimeout(() => this.netplaySetupProducers(), 1000);
-        } else if (roomType === "delay_sync") {
-          this.netplayMenu.netplaySwitchToDelaySyncRoom(
+        // After room creation, join the room using unified join logic
+        // This ensures host and guest use the same code path
+        console.log(
+          "[Netplay] Room created, now joining via unified join logic",
+        );
+        try {
+          // Join the room we just created (host joins their own room)
+          await this.netplayJoinRoom(
             roomName,
-            password,
-            maxPlayers,
+            !!password,
+            roomType === "delay_sync" ? "delay_sync" : "live_stream",
           );
-
-          // DELAY SYNC ROOM: Different setup needed for input synchronization
-          // TODO: Add delay sync specific setup (state synchronization, etc.)
-          // No WebRTC producers needed for delay sync - uses different sync mechanism
+          console.log("[Netplay] Host successfully joined their own room");
+        } catch (joinError) {
+          console.error(
+            "[Netplay] Failed to join room after creation:",
+            joinError,
+          );
+          // Don't throw - room was created successfully, join failure is separate
+          // The UI might already be switched by netplayJoinRoom
         }
 
         return result;
@@ -1401,8 +1495,14 @@ class NetplayEngine {
       spectator_mode: spectatorMode,
       domain: window.location.host,
       game_id: this.config.gameId || "",
-      rom_hash: this.config.romHash || this.config.romName || null,
-      core_type: this.config.system || this.config.core || null,
+      rom_hash: this.emulator.config.romHash || null,
+      core_type: this.emulator.config.core || null,
+      system: this.emulator.config.system || null,
+      platform: this.emulator.config.platform || null,
+      coreId: this.emulator.config.core || null,
+      coreVersion: this.emulator.config.coreVersion || null,
+      romHash: this.emulator.config.romHash || null,
+      systemType: this.emulator.config.system || null,
     };
 
     console.log("[Netplay] Room creation payload:", roomData);
@@ -1947,7 +2047,7 @@ class NetplayEngine {
   }
 
   // Helper method to join a room
-  async netplayJoinRoom(roomId, hasPassword) {
+  async netplayJoinRoom(roomId, hasPassword, roomNetplayMode = null) {
     const playerName = this.getPlayerName();
     if (!playerName || playerName === "Player") {
       throw new Error("Player name not set");
@@ -1964,6 +2064,7 @@ class NetplayEngine {
       console.log("[Netplay] Joining room via NetplayEngine:", {
         roomId,
         password,
+        roomNetplayMode,
       });
 
       // Initialize engine if not already initialized
@@ -1985,6 +2086,20 @@ class NetplayEngine {
         player_name: playerName,
         player_slot: this.emulator.netplay.localSlot || 0,
         domain: window.location.host,
+        // ✅ ADD ROM METADATA FOR COMPATIBILITY VALIDATION
+        romHash: this.emulator.config.romHash || null,
+        romName: this.emulator.config.romName || null,
+        romFilename: this.emulator.config.romFilename || null,
+        core: this.emulator.config.core || null,
+        system: this.emulator.config.system || null,
+        platform: this.emulator.config.platform || null,
+        coreId:
+          this.emulator.config.coreId || this.emulator.config.system || null,
+        coreVersion: this.emulator.config.coreVersion || null,
+        systemType:
+          this.emulator.config.systemType ||
+          this.emulator.config.system ||
+          null,
       };
 
       try {
@@ -2001,18 +2116,50 @@ class NetplayEngine {
         this.emulator.netplay.currentRoomId = roomId;
         this.emulator.netplay.currentRoom = result;
 
-        // Immediately update player list with users from join result
-        if (result && result.users) {
+        // Ensure currentRoom has netplay_mode set (use roomNetplayMode from room list if available)
+        if (this.emulator.netplay.currentRoom) {
+          // Set netplay_mode from roomNetplayMode parameter or result
+          if (roomNetplayMode !== null && roomNetplayMode !== undefined) {
+            this.emulator.netplay.currentRoom.netplay_mode =
+              roomNetplayMode === "delay_sync" || roomNetplayMode === 1
+                ? "delay_sync"
+                : "live_stream";
+          } else if (!this.emulator.netplay.currentRoom.netplay_mode) {
+            // Fallback: determine from result.netplay_mode
+            this.emulator.netplay.currentRoom.netplay_mode =
+              result.netplay_mode === "delay_sync" || result.netplay_mode === 1
+                ? "delay_sync"
+                : "live_stream";
+          }
           console.log(
-            "[Netplay] Updating player list immediately after join with users:",
-            Object.keys(result.users),
+            `[Netplay] Stored currentRoom.netplay_mode: ${this.emulator.netplay.currentRoom.netplay_mode}`,
           );
-          this.netplayMenu.netplayUpdatePlayerList({ players: result.users });
         }
 
+        // Immediately update player list with users from join result
         // Switch to appropriate room UI and setup based on room type
-        const roomType =
-          result.netplay_mode === 1 ? "delay_sync" : "live_stream";
+        // Use roomNetplayMode from room list, fallback to result.netplay_mode
+        let roomType = "live_stream"; // default
+        if (roomNetplayMode === "delay_sync" || roomNetplayMode === 1) {
+          roomType = "delay_sync";
+        } else if (
+          result.netplay_mode === "delay_sync" ||
+          result.netplay_mode === 1
+        ) {
+          roomType = "delay_sync";
+        } else if (roomNetplayMode === "live_stream" || roomNetplayMode === 0) {
+          roomType = "live_stream";
+        } else if (
+          result.netplay_mode === "live_stream" ||
+          result.netplay_mode === 0
+        ) {
+          roomType = "live_stream";
+        }
+
+        console.log(
+          `[Netplay] Determined room type: ${roomType} (from roomNetplayMode: ${roomNetplayMode}, result.netplay_mode: ${result.netplay_mode})`,
+        );
+
         if (roomType === "live_stream") {
           this.netplayMenu.netplaySwitchToLiveStreamRoom(roomId, password);
 
@@ -2664,12 +2811,21 @@ class NetplayEngine {
       }
     }
 
-    // 4. Clean up engine and transport references
+    // 4. Clean up engine and transport references and all session state
     if (this.emulator.netplay) {
+      // Clear engine, transport, and adapter
       this.emulator.netplay.engine = null;
       this.emulator.netplay.transport = null;
       this.emulator.netplay.adapter = null;
-      console.log("[Netplay] Cleared engine and transport references");
+
+      // Clear all room/session state - let everything reinitialize fresh
+      this.emulator.netplay.currentRoom = null;
+      this.emulator.netplay.currentRoomId = null;
+      this.emulator.netplay.joinedPlayers = null;
+      this.emulator.netplay.localSlot = null;
+      // Note: Keep emulator.netplay.name as it's user preference, not session state
+
+      console.log("[Netplay] Cleared all engine, transport, and session state");
     }
 
     // 5. Restore original simulateInput

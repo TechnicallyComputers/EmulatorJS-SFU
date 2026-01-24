@@ -71,6 +71,26 @@ class RoomManager {
           ? window.EJS_NETPLAY_INPUT_MODE
           : null) ||
         "unorderedRelay",
+      // Include netplay_mode and room_phase if provided
+      netplay_mode:
+        playerInfo.netplay_mode !== undefined ? playerInfo.netplay_mode : 0,
+      room_phase:
+        playerInfo.room_phase !== undefined ? playerInfo.room_phase : "running",
+      sync_config: playerInfo.sync_config || null,
+      spectator_mode:
+        playerInfo.spectator_mode !== undefined ? playerInfo.spectator_mode : 1,
+      // Include ROM and emulator metadata for room creation
+      romHash: playerInfo.romHash || null,
+      rom_hash: playerInfo.romHash || null, // Backward compatibility
+      rom_name: playerInfo.romName || playerInfo.romFilename || null,
+      romFilename: playerInfo.romFilename || null,
+      system: playerInfo.system || null,
+      platform: playerInfo.platform || null,
+      coreId: playerInfo.coreId || playerInfo.system || null,
+      core_type: playerInfo.coreId || playerInfo.system || null, // Backward compatibility
+      coreVersion: playerInfo.coreVersion || null,
+      systemType: playerInfo.systemType || playerInfo.system || null,
+      metadata: playerInfo.metadata || null,
     };
 
     // Update session state
@@ -78,7 +98,7 @@ class RoomManager {
     this.sessionState.setLocalPlayer(
       extra.userid,
       extra.player_name,
-      extra.userid
+      extra.userid,
     );
 
     return new Promise((resolve, reject) => {
@@ -96,9 +116,13 @@ class RoomManager {
           }
 
           // Room created successfully
-          this.sessionState.setRoom(roomName, password, this.config.gameMode || null);
+          this.sessionState.setRoom(
+            roomName,
+            password,
+            this.config.gameMode || null,
+          );
           resolve(sessionid);
-        }
+        },
       );
     });
   }
@@ -112,7 +136,13 @@ class RoomManager {
    * @param {Object} playerInfo - Player information
    * @returns {Promise<void>}
    */
-  async joinRoom(sessionId, roomName, maxPlayers, password = null, playerInfo = {}) {
+  async joinRoom(
+    sessionId,
+    roomName,
+    maxPlayers,
+    password = null,
+    playerInfo = {},
+  ) {
     if (!this.socket.isConnected()) {
       throw new Error("Socket not connected");
     }
@@ -135,26 +165,37 @@ class RoomManager {
       player_slot: preferredSlot,
       userid: playerId,
       sessionid: sessionId,
-      input_mode:
-        this.config.inputMode ||
-        (typeof window.EJS_NETPLAY_INPUT_MODE === "string"
-          ? window.EJS_NETPLAY_INPUT_MODE
-          : null) ||
-        "unorderedRelay",
+      netplay_mode: this.config.netplayMode || 0,
+      input_mode: this.config.inputMode || "unorderedRelay",
+
+      // ✅ ADD ROM METADATA FOR COMPATIBILITY VALIDATION
+      rom_hash: playerInfo.romHash || null,
+      rom_name: playerInfo.romName || playerInfo.romFilename || null,
+      core_type: playerInfo.core || playerInfo.system || null,
+      system: playerInfo.system || null,
+      platform: playerInfo.platform || null,
+      coreId: playerInfo.coreId || playerInfo.core || null,
+      coreVersion: playerInfo.coreVersion || null,
+      romHash: playerInfo.romHash || null,
+      systemType: playerInfo.systemType || playerInfo.system || null,
     };
 
-    // Update session state
-    this.sessionState.setHost(false);
+    // Update session state (host status will be determined from server response)
+    // Don't set host status yet - wait for server response
     this.sessionState.setLocalPlayer(playerId, extra.player_name, playerId);
     this.sessionState.setRoom(roomName, password, this.config.gameMode || null);
 
-    console.log(`[RoomManager] joinRoom called: roomName=${roomName}, playerId=${playerId}`);
+    console.log(
+      `[RoomManager] joinRoom called: roomName=${roomName}, playerId=${playerId}`,
+    );
     console.log(`[RoomManager] Socket connected: ${this.socket.isConnected()}`);
 
     return new Promise((resolve, reject) => {
       // Ensure socket is connected
       if (!this.socket.isConnected()) {
-        console.warn("[RoomManager] Socket not connected, waiting for connection...");
+        console.warn(
+          "[RoomManager] Socket not connected, waiting for connection...",
+        );
         // Wait for connection (if callback is provided)
         if (this.config.callbacks?.onSocketReady) {
           this.config.callbacks.onSocketReady(() => {
@@ -163,7 +204,9 @@ class RoomManager {
           });
           return;
         }
-        console.error("[RoomManager] Socket not connected and no onSocketReady callback");
+        console.error(
+          "[RoomManager] Socket not connected and no onSocketReady callback",
+        );
         reject(new Error("Socket not connected"));
         return;
       }
@@ -185,7 +228,7 @@ class RoomManager {
     console.log("[RoomManager] Emitting join-room event:", {
       roomName: extra.room_name,
       playerName: extra.player_name,
-      playerId: extra.userid
+      playerId: extra.userid,
     });
 
     this.socket.emit(
@@ -195,13 +238,17 @@ class RoomManager {
         password: password,
       },
       (error, response) => {
-        console.log("[RoomManager] join-room callback received:", { error, responseKeys: response ? Object.keys(response) : null });
+        console.log("[RoomManager] join-room callback received:", {
+          error,
+          responseKeys: response ? Object.keys(response) : null,
+        });
         if (error) {
           // Handle auth errors specially
           if (
-            error.includes("unauthorized") ||
-            error.includes("token") ||
-            error.includes("auth")
+            typeof error === "string" &&
+            (error.includes("unauthorized") ||
+              error.includes("token") ||
+              error.includes("auth"))
           ) {
             if (window.handleSfuAuthError) {
               window.handleSfuAuthError();
@@ -210,20 +257,49 @@ class RoomManager {
             }
           }
 
-          reject(new Error(error));
+          // For structured errors (like compatibility issues), preserve the object
+          if (typeof error === "object" && error.error) {
+            const structuredError = new Error(error.message || error.error);
+            structuredError.details = error; // Preserve the full error object
+            reject(structuredError);
+          } else {
+            // For string errors, convert to Error object
+            reject(
+              new Error(
+                typeof error === "string" ? error : JSON.stringify(error),
+              ),
+            );
+          }
           return;
         }
 
         // Update players list
         if (this.sessionState && response && response.users) {
-          Object.entries(response.users || {}).forEach(([playerId, playerData]) => {
-            this.sessionState.addPlayer(playerId, playerData);
-          });
+          Object.entries(response.users || {}).forEach(
+            ([playerId, playerData]) => {
+              this.sessionState.addPlayer(playerId, playerData);
+            },
+          );
+        }
+
+        // Check if current player is the host based on server response
+        const localPlayerId = extra.userid;
+        const localPlayerData = response?.users?.[localPlayerId];
+        if (localPlayerData && localPlayerData.is_host === true) {
+          console.log(
+            `[RoomManager] Player ${localPlayerId} is the room host (from server response)`,
+          );
+          this.sessionState.setHost(true);
+        } else {
+          console.log(
+            `[RoomManager] Player ${localPlayerId} is not the room host`,
+          );
+          this.sessionState.setHost(false);
         }
 
         // Room joined successfully - return the response with room info
         resolve(response);
-      }
+      },
     );
   }
 
@@ -239,18 +315,22 @@ class RoomManager {
       this.sessionState.reset();
       return;
     }
-  
+
     return new Promise((resolve) => {
-      this.socket.emit("leave-room", { 
-        roomName: this.sessionState.roomName,
-        reason: reason 
-      }, () => {
-        // Always cleanup, even if server doesn't respond
-        this.sessionState.clearRoom();
-        this.sessionState.reset();
-        resolve();
-      });
-  
+      this.socket.emit(
+        "leave-room",
+        {
+          roomName: this.sessionState.roomName,
+          reason: reason,
+        },
+        () => {
+          // Always cleanup, even if server doesn't respond
+          this.sessionState.clearRoom();
+          this.sessionState.reset();
+          resolve();
+        },
+      );
+
       // Timeout after 2 seconds
       setTimeout(() => {
         this.sessionState.clearRoom();
@@ -274,15 +354,19 @@ class RoomManager {
     }
 
     return new Promise((resolve, reject) => {
-      this.socket.emit("toggle-ready", {
-        roomName: roomName
-      }, (error) => {
-        if (error) {
-          reject(new Error(error));
-          return;
-        }
-        resolve();
-      });
+      this.socket.emit(
+        "toggle-ready",
+        {
+          roomName: roomName,
+        },
+        (error) => {
+          if (error) {
+            reject(new Error(error));
+            return;
+          }
+          resolve();
+        },
+      );
     });
   }
 
@@ -300,15 +384,19 @@ class RoomManager {
     }
 
     return new Promise((resolve, reject) => {
-      this.socket.emit("start-game", {
-        roomName: roomName
-      }, (error) => {
-        if (error) {
-          reject(new Error(error));
-          return;
-        }
-        resolve();
-      });
+      this.socket.emit(
+        "start-game",
+        {
+          roomName: roomName,
+        },
+        (error) => {
+          if (error) {
+            reject(new Error(error));
+            return;
+          }
+          resolve();
+        },
+      );
     });
   }
 
@@ -327,16 +415,20 @@ class RoomManager {
     }
 
     return new Promise((resolve, reject) => {
-      this.socket.emit("ready-at-frame-1", {
-        roomName: roomName,
-        frame: frame
-      }, (error) => {
-        if (error) {
-          reject(new Error(error));
-          return;
-        }
-        resolve();
-      });
+      this.socket.emit(
+        "ready-at-frame-1",
+        {
+          roomName: roomName,
+          frame: frame,
+        },
+        (error) => {
+          if (error) {
+            reject(new Error(error));
+            return;
+          }
+          resolve();
+        },
+      );
     });
   }
 
@@ -347,7 +439,10 @@ class RoomManager {
    * @returns {Promise}
    */
   async updateRoomMetadata(roomName, metadata) {
-    console.log("[RoomManager] updateRoomMetadata called:", { roomName, metadata });
+    console.log("[RoomManager] updateRoomMetadata called:", {
+      roomName,
+      metadata,
+    });
 
     if (!this.socket.isConnected()) {
       console.error("[RoomManager] Socket not connected for metadata update");
@@ -355,16 +450,57 @@ class RoomManager {
     }
 
     return new Promise((resolve, reject) => {
-      this.socket.emit("update-room-metadata", {
-        roomName: roomName,
-        metadata: metadata
-      }, (error) => {
-        if (error) {
-          reject(new Error(error));
-          return;
-        }
-        resolve();
-      });
+      this.socket.emit(
+        "update-room-metadata",
+        {
+          roomName: roomName,
+          metadata: metadata,
+        },
+        (error) => {
+          if (error) {
+            reject(new Error(error));
+            return;
+          }
+          resolve();
+        },
+      );
+    });
+  }
+
+  /**
+   * Update player metadata
+   * @param {string} roomName - Room name
+   * @param {Object} metadata - Metadata to update
+   * @returns {Promise}
+   */
+  async updatePlayerMetadata(roomName, metadata) {
+    console.log("[RoomManager] updatePlayerMetadata called:", {
+      roomName,
+      metadata,
+    });
+
+    if (!this.socket.isConnected()) {
+      console.error(
+        "[RoomManager] Socket not connected for player metadata update",
+      );
+      throw new Error("Socket not connected");
+    }
+
+    return new Promise((resolve, reject) => {
+      this.socket.emit(
+        "update-player-metadata",
+        {
+          roomName: roomName,
+          metadata: metadata,
+        },
+        (error) => {
+          if (error) {
+            reject(new Error(error));
+            return;
+          }
+          resolve();
+        },
+      );
     });
   }
 
@@ -383,16 +519,20 @@ class RoomManager {
     }
 
     return new Promise((resolve, reject) => {
-      this.socket.emit("join-info", {
-        roomName: roomName,
-        ...joinInfo
-      }, (error) => {
-        if (error) {
-          reject(new Error(error));
-          return;
-        }
-        resolve();
-      });
+      this.socket.emit(
+        "join-info",
+        {
+          roomName: roomName,
+          ...joinInfo,
+        },
+        (error) => {
+          if (error) {
+            reject(new Error(error));
+            return;
+          }
+          resolve();
+        },
+      );
     });
   }
 
@@ -433,19 +573,26 @@ class RoomManager {
       throw new Error("Not in a room");
     }
 
-    console.log("[RoomManager] Sending update-player-slot message:", { roomName, playerSlot: slot });
+    console.log("[RoomManager] Sending update-player-slot message:", {
+      roomName,
+      playerSlot: slot,
+    });
 
     return new Promise((resolve, reject) => {
-      this.socket.emit("update-player-slot", {
-        roomName: roomName,
-        playerSlot: slot
-      }, (error) => {
-        if (error) {
-          reject(new Error(error));
-          return;
-        }
-        resolve();
-      });
+      this.socket.emit(
+        "update-player-slot",
+        {
+          roomName: roomName,
+          playerSlot: slot,
+        },
+        (error) => {
+          if (error) {
+            reject(new Error(error));
+            return;
+          }
+          resolve();
+        },
+      );
     });
   }
 
@@ -466,16 +613,24 @@ class RoomManager {
    * Setup Socket.IO event listeners for room events.
    */
   setupEventListeners() {
-    console.log(`[RoomManager] Setting up event listeners, isRoomListing=${this.config.isRoomListing}`);
+    console.log(
+      `[RoomManager] Setting up event listeners, isRoomListing=${this.config.isRoomListing}`,
+    );
 
     // Listen for player join/leave events
     this.socket.on("users-updated", (users) => {
-      console.log("[RoomManager] 🔔 RECEIVED users-updated event:", Object.keys(users || {}));
+      console.log(
+        "[RoomManager] 🔔 RECEIVED users-updated event:",
+        Object.keys(users || {}),
+      );
 
       if (this.sessionState) {
         // Clear existing players
         const currentPlayers = this.sessionState.getPlayers();
-        console.log("[RoomManager] Current players before update:", Array.from(currentPlayers.keys()));
+        console.log(
+          "[RoomManager] Current players before update:",
+          Array.from(currentPlayers.keys()),
+        );
 
         // Remove players that are no longer in the room
         for (const [playerId, playerData] of currentPlayers) {
@@ -487,25 +642,36 @@ class RoomManager {
 
         // Add/update players
         Object.entries(users || {}).forEach(([playerId, playerData]) => {
-          console.log(`[RoomManager] Adding/updating player: ${playerId}`, playerData);
+          console.log(
+            `[RoomManager] Adding/updating player: ${playerId}`,
+            playerData,
+          );
           this.sessionState.addPlayer(playerId, playerData);
         });
 
-        console.log("[RoomManager] Players after update:", Array.from(this.sessionState.getPlayers().keys()));
+        console.log(
+          "[RoomManager] Players after update:",
+          Array.from(this.sessionState.getPlayers().keys()),
+        );
       }
 
       if (this.config.callbacks?.onUsersUpdated) {
         console.log("[RoomManager] Calling onUsersUpdated callback");
         this.config.callbacks.onUsersUpdated(users);
       } else {
-        console.log("[RoomManager] No onUsersUpdated callback available, skipping UI update");
+        console.log(
+          "[RoomManager] No onUsersUpdated callback available, skipping UI update",
+        );
       }
     });
 
     // Listen for player slot updates
     this.socket.on("player-slot-updated", (data) => {
       console.log("[RoomManager] Received player-slot-updated:", data);
-      console.log("[RoomManager] Current session state players:", Array.from(this.sessionState?.getPlayers()?.keys() || []));
+      console.log(
+        "[RoomManager] Current session state players:",
+        Array.from(this.sessionState?.getPlayers()?.keys() || []),
+      );
       if (data && data.playerId && data.playerSlot !== undefined) {
         // Update session state
         if (this.sessionState) {
@@ -518,7 +684,10 @@ class RoomManager {
           // If direct lookup fails, search by player name
           if (!player) {
             for (const [id, playerData] of players) {
-              if (playerData.name === data.playerId || playerData.player_name === data.playerId) {
+              if (
+                playerData.name === data.playerId ||
+                playerData.player_name === data.playerId
+              ) {
                 playerId = id;
                 player = playerData;
                 break;
@@ -531,15 +700,26 @@ class RoomManager {
             player.slot = data.playerSlot;
             // Update the player in the session state
             this.sessionState.addPlayer(playerId, player);
-            console.log("[RoomManager] Updated session state for player:", playerId, "slot:", data.playerSlot);
+            console.log(
+              "[RoomManager] Updated session state for player:",
+              playerId,
+              "slot:",
+              data.playerSlot,
+            );
           } else {
-            console.warn("[RoomManager] Could not find player in session state:", data.playerId);
+            console.warn(
+              "[RoomManager] Could not find player in session state:",
+              data.playerId,
+            );
           }
         }
 
         // Trigger targeted slot update
         if (this.config.callbacks?.onPlayerSlotUpdated) {
-          this.config.callbacks.onPlayerSlotUpdated(data.playerId, data.playerSlot);
+          this.config.callbacks.onPlayerSlotUpdated(
+            data.playerId,
+            data.playerSlot,
+          );
         } else if (this.config.callbacks?.onUsersUpdated) {
           // Fallback to full update if targeted update not available
           const currentUsers = this.sessionState?.getPlayersObject() || {};
@@ -565,7 +745,9 @@ class RoomManager {
           const player = players.get(data.playerId);
           if (player) {
             player.ready = data.ready;
-            console.log(`[RoomManager] Updated ready state for ${data.playerId}: ${data.ready}`);
+            console.log(
+              `[RoomManager] Updated ready state for ${data.playerId}: ${data.ready}`,
+            );
           }
         }
 
@@ -595,13 +777,19 @@ class RoomManager {
           if (player) {
             player.validationStatus = data.validationStatus;
             player.validationReason = data.validationReason;
-            console.log(`[RoomManager] Updated validation for ${data.playerId}: ${data.validationStatus}`);
+            console.log(
+              `[RoomManager] Updated validation for ${data.playerId}: ${data.validationStatus}`,
+            );
           }
         }
 
         // Trigger callback
         if (this.config.callbacks?.onPlayerValidationUpdated) {
-          this.config.callbacks.onPlayerValidationUpdated(data.playerId, data.validationStatus, data.validationReason);
+          this.config.callbacks.onPlayerValidationUpdated(
+            data.playerId,
+            data.validationStatus,
+            data.validationReason,
+          );
         }
       }
     });

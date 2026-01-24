@@ -220,12 +220,12 @@ class EmulatorJS {
               this.versionAsInt(version.version)
             ) {
               console.log(
-                `Using EmulatorJS version ${this.ejs_version} but the newest version is ${version.current_version}\nopen https://github.com/EmulatorJS/EmulatorJS to update`
+                `Using EmulatorJS version ${this.ejs_version} but the newest version is ${version.current_version}\nopen https://github.com/EmulatorJS/EmulatorJS to update`,
               );
             }
           });
         }
-      }
+      },
     );
   }
   versionAsInt(ver) {
@@ -311,7 +311,7 @@ class EmulatorJS {
       this.setupAds(
         this.config.adUrl,
         this.config.adSize[0],
-        this.config.adSize[1]
+        this.config.adSize[1],
       );
     }
     this.isMobile = (() => {
@@ -327,10 +327,10 @@ class EmulatorJS {
       (function (a) {
         if (
           /(android|bb\d+|meego).+mobile|avantgo|bada\/|blackberry|blazer|compal|elaine|fennec|hiptop|iemobile|ip(hone|od)|iris|kindle|lge |maemo|midp|mmp|mobile.+firefox|netfront|opera m(ob|in)i|palm( os)?|phone|p(ixi|re)\/|plucker|pocket|psp|series(4|6)0|symbian|treo|up\.(browser|link)|vodafone|wap|windows ce|xda|xiino|android|ipad|playbook|silk/i.test(
-            a
+            a,
           ) ||
           /1207|6310|6590|3gso|4thp|50[1-6]i|770s|802s|a wa|abac|ac(er|oo|s\-)|ai(ko|rn)|al(av|ca|co)|amoi|an(ex|ny|yw)|aptu|ar(ch|go)|as(te|us)|attw|au(di|\-m|r |s )|avan|be(ck|ll|nq)|bi(lb|rd)|bl(ac|az)|br(e|v)w|bumb|bw\-(n|u)|c55\/|capi|ccwa|cdm\-|cell|chtm|cldc|cmd\-|co(mp|nd)|craw|da(it|ll|ng)|dbte|dc\-s|devi|dica|dmob|do(c|p)o|ds(12|\-d)|el(49|ai)|em(l2|ul)|er(ic|k0)|esl8|ez([4-7]0|os|wa|ze)|fetc|fly(\-|_)|g1 u|g560|gene|gf\-5|g\-mo|go(\.w|od)|gr(ad|un)|haie|hcit|hd\-(m|p|t)|hei\-|hi(pt|ta)|hp( i|ip)|hs\-c|ht(c(\-| |_|a|g|p|s|t)|tp)|hu(aw|tc)|i\-(20|go|ma)|i230|iac( |\-|\/)|ibro|idea|ig01|ikom|im1k|inno|ipaq|iris|ja(t|v)a|jbro|jemu|jigs|kddi|keji|kgt( |\/)|klon|kpt |kwc\-|kyo(c|k)|le(no|xi)|lg( g|\/(k|l|u)|50|54|\-[a-w])|libw|lynx|m1\-w|m3ga|m50\/|ma(te|ui|xo)|mc(01|21|ca)|m\-cr|me(rc|ri)|mi(o8|oa|ts)|mmef|mo(01|02|bi|de|do|t(\-| |o|v)|zz)|mt(50|p1|v )|mwbp|mywa|n10[0-2]|n20[2-3]|n30(0|2)|n50(0|2|5)|n7(0(0|1)|10)|ne((c|m)\-|on|tf|wf|wg|wt)|nok(6|i)|nzph|o2im|op(ti|wv)|oran|owg1|p800|pan(a|d|t)|pdxg|pg(13|\-([1-8]|c))|phil|pire|pl(ay|uc)|pn\-2|po(ck|rt|se)|prox|psio|pt\-g|qa\-a|qc(07|12|21|32|60|\-[2-7]|i\-)|qtek|r380|r600|raks|rim9|ro(ve|zo)|s55\/|sa(ge|ma|mm|ms|ny|va)|sc(01|h\-|oo|p\-)|sdk\/|se(c(\-|0|1)|47|mc|nd|ri)|sgh\-|shar|sie(\-|m)|sk\-0|sl(45|id)|sm(al|ar|b3|it|t5)|so(ft|ny)|sp(01|h\-|v\-|v )|sy(01|mb)|t2(18|50)|t6(00|10|18)|ta(gt|lk)|tcl\-|tdg\-|tel(i|m)|tim\-|t\-mo|to(pl|sh)|ts(70|m\-|m3|m5)|tx\-9|up(\.b|g1|si)|utst|v400|v750|veri|vi(rg|te)|vk(40|5[0-3]|\-v)|vm40|voda|vulc|vx(52|53|60|61|70|80|81|83|85|98)|w3c(\-| )|webc|whit|wi(g |nc|nw)|wmlb|wonu|x700|yas\-|your|zeto|zte\-/i.test(
-            a.substr(0, 4)
+            a.substr(0, 4),
           )
         )
           check = true;
@@ -363,7 +363,7 @@ class EmulatorJS {
     this.capture = this.capture || {};
     this.capture.photo = this.capture.photo || {};
     this.capture.photo.source = ["canvas", "retroarch"].includes(
-      this.capture.photo.source
+      this.capture.photo.source,
     )
       ? this.capture.photo.source
       : "canvas";
@@ -399,7 +399,9 @@ class EmulatorJS {
     // Netplay enablement
     this.netplayEnabled = true;
     this.netplayMenu = new NetplayMenu(this, null); // Create menu first with null engine
-    this.netplayEngine = new NetplayEngine(this, this.netplayMenu);
+    this.netplayEngine = new NetplayEngine(this, this.netplayMenu, {
+      gameId: this.config.gameId,
+    });
     this.netplayMenu.engine = this.netplayEngine; // Set engine reference after creation
     this.netplayCanvas = null;
 
@@ -437,7 +439,6 @@ class EmulatorJS {
         : !!configSimulcast;
     window.EJS_NETPLAY_SIMULCAST = this.netplaySimulcastEnabled;
 
-    
     // Update the button click handler
     // VP9 SVC mode (used when VP9 is selected/negotiated): L1T1 | L1T3 | L2T3
     const normalizeVP9SVCMode = (v) => {
@@ -458,7 +459,7 @@ class EmulatorJS {
         ? this.config.netplayVP9SVC
         : envVP9SVC;
     this.netplayVP9SVCMode = normalizeVP9SVCMode(
-      typeof storedVP9SVC === "string" ? storedVP9SVC : configVP9SVC
+      typeof storedVP9SVC === "string" ? storedVP9SVC : configVP9SVC,
     );
     window.EJS_NETPLAY_VP9_SVC_MODE = this.netplayVP9SVCMode;
 
@@ -478,7 +479,7 @@ class EmulatorJS {
         ? this.config.netplayHostCodec
         : envHostCodec;
     this.netplayHostCodec = normalizeHostCodec(
-      typeof storedHostCodec === "string" ? storedHostCodec : configHostCodec
+      typeof storedHostCodec === "string" ? storedHostCodec : configHostCodec,
     );
     window.EJS_NETPLAY_HOST_CODEC = this.netplayHostCodec;
 
@@ -500,7 +501,7 @@ class EmulatorJS {
     };
 
     const storedSimulcastQuality = this.preGetSetting(
-      "netplayClientSimulcastQuality"
+      "netplayClientSimulcastQuality",
     );
     const storedClientMaxRes = this.preGetSetting("netplayClientMaxResolution");
 
@@ -508,8 +509,8 @@ class EmulatorJS {
       typeof window.EJS_NETPLAY_CLIENT_SIMULCAST_QUALITY === "string"
         ? window.EJS_NETPLAY_CLIENT_SIMULCAST_QUALITY
         : typeof window.EJS_NETPLAY_CLIENT_PREFERRED_QUALITY === "string"
-        ? window.EJS_NETPLAY_CLIENT_PREFERRED_QUALITY
-        : null;
+          ? window.EJS_NETPLAY_CLIENT_PREFERRED_QUALITY
+          : null;
     const envClientMaxRes =
       typeof window.EJS_NETPLAY_CLIENT_MAX_RESOLUTION === "string"
         ? window.EJS_NETPLAY_CLIENT_MAX_RESOLUTION
@@ -540,7 +541,7 @@ class EmulatorJS {
       this.netplayClientSimulcastQuality;
     // Keep legacy global populated for compatibility with older integrations.
     window.EJS_NETPLAY_CLIENT_MAX_RESOLUTION = simulcastQualityToLegacyRes(
-      this.netplayClientSimulcastQuality
+      this.netplayClientSimulcastQuality,
     );
 
     const storedRetryTimer = this.preGetSetting("netplayRetryConnectionTimer");
@@ -558,7 +559,7 @@ class EmulatorJS {
       typeof storedRetryTimer === "string"
         ? storedRetryTimer
         : configRetryTimerRaw,
-      10
+      10,
     );
     if (isNaN(retrySeconds)) retrySeconds = 3;
     if (retrySeconds < 0) retrySeconds = 0;
@@ -567,7 +568,7 @@ class EmulatorJS {
     window.EJS_NETPLAY_RETRY_CONNECTION_TIMER = retrySeconds;
 
     const storedUnorderedRetries = this.preGetSetting(
-      "netplayUnorderedRetries"
+      "netplayUnorderedRetries",
     );
     const envUnorderedRetriesRaw =
       typeof window.EJS_NETPLAY_UNORDERED_RETRIES === "number" ||
@@ -583,7 +584,7 @@ class EmulatorJS {
       typeof storedUnorderedRetries === "string"
         ? storedUnorderedRetries
         : configUnorderedRetriesRaw,
-      10
+      10,
     );
     if (isNaN(unorderedRetries)) unorderedRetries = 0;
     if (unorderedRetries < 0) unorderedRetries = 0;
@@ -611,7 +612,7 @@ class EmulatorJS {
       return "unorderedRelay";
     };
     this.netplayInputMode = normalizeInputMode(
-      typeof storedInputMode === "string" ? storedInputMode : configInputMode
+      typeof storedInputMode === "string" ? storedInputMode : configInputMode,
     );
     window.EJS_NETPLAY_INPUT_MODE = this.netplayInputMode;
 
@@ -654,7 +655,7 @@ class EmulatorJS {
       typeof storedPreferredSlot === "string" ||
         typeof storedPreferredSlot === "number"
         ? storedPreferredSlot
-        : configPreferredSlot
+        : configPreferredSlot,
     );
     window.EJS_NETPLAY_PREFERRED_SLOT = this.netplayPreferredSlot;
 
@@ -665,19 +666,18 @@ class EmulatorJS {
         (server) =>
           server &&
           typeof server.urls === "string" &&
-          server.urls.startsWith("turn:")
+          server.urls.startsWith("turn:"),
       );
       if (!hasTurnServer) {
         this.netplayShowTurnWarning = true;
       }
       if (this.netplayShowTurnWarning && this.debug) {
         console.warn(
-          "WARNING: No TURN addresses are configured! Many clients may fail to connect!"
+          "WARNING: No TURN addresses are configured! Many clients may fail to connect!",
         );
       }
     }
     // End of gathered dependencies. Collect dependencies and sort above here.
-
 
     if ((this.isMobile || this.hasTouchScreen) && this.virtualGamepad) {
       this.virtualGamepad.classList.add("ejs-vgamepad-active");
@@ -723,7 +723,7 @@ class EmulatorJS {
         this.game.classList.add("ejs_game_background_blur");
       this.game.setAttribute(
         "style",
-        `--ejs-background-image: url("${this.config.backgroundImg}"); --ejs-background-color: ${this.config.backgroundColor};`
+        `--ejs-background-image: url("${this.config.backgroundImg}"); --ejs-background-color: ${this.config.backgroundColor};`,
       );
       this.on("start", () => {
         this.game.classList.remove("ejs_game_background");
@@ -733,7 +733,7 @@ class EmulatorJS {
     } else {
       this.game.setAttribute(
         "style",
-        "--ejs-background-color: " + this.config.backgroundColor + ";"
+        "--ejs-background-color: " + this.config.backgroundColor + ";",
       );
     }
 
@@ -796,13 +796,13 @@ class EmulatorJS {
     if (!color || getColor(color) === null) {
       this.elements.parent.setAttribute(
         "style",
-        "--ejs-primary-color: 26,175,255;"
+        "--ejs-primary-color: 26,175,255;",
       );
       return;
     }
     this.elements.parent.setAttribute(
       "style",
-      "--ejs-primary-color:" + getColor(color) + ";"
+      "--ejs-primary-color:" + getColor(color) + ";",
     );
   }
   setupAds(ads, width, height) {
@@ -865,7 +865,7 @@ class EmulatorJS {
       this.setupAds(
         this.config.adUrl,
         this.config.adSize[0],
-        this.config.adSize[1]
+        this.config.adSize[1],
       );
     }
   }
@@ -926,9 +926,14 @@ class EmulatorJS {
   }
   startButtonClicked(e) {
     // DELAY_SYNC: Prevent emulator start while in lobby phase
-    if (window.EJS_emulator?.netplay?.currentRoom?.netplay_mode === 'delay_sync' &&
-        window.EJS_emulator?.netplay?.currentRoom?.room_phase === 'lobby') {
-      console.log("[EmulatorJS] Delaying emulator start - DELAY_SYNC room in lobby phase");
+    if (
+      window.EJS_emulator?.netplay?.currentRoom?.netplay_mode ===
+        "delay_sync" &&
+      window.EJS_emulator?.netplay?.currentRoom?.room_phase === "lobby"
+    ) {
+      console.log(
+        "[EmulatorJS] Delaying emulator start - DELAY_SYNC room in lobby phase",
+      );
       return;
     }
 
@@ -964,7 +969,7 @@ class EmulatorJS {
         if (!this.missingLang.includes(text)) this.missingLang.push(text);
         if (this.debug)
           console.log(
-            `Translation not found for '${text}'. Language set to '${this.config.language}'`
+            `Translation not found for '${text}'. Language set to '${this.config.language}'`,
           );
       }
       return this.config.langJson[text] || text;
@@ -983,7 +988,7 @@ class EmulatorJS {
       (m, appendMsg) => {
         this.textElem.innerText = appendMsg ? msg + m : m;
       },
-      fileCbFunc
+      fileCbFunc,
     );
   }
   checkCoreCompatibility(version) {
@@ -994,7 +999,7 @@ class EmulatorJS {
       this.startGameError(this.localization("Outdated EmulatorJS version"));
       throw new Error(
         "Core requires minimum EmulatorJS version of " +
-          version.minimumEJSVersion
+          version.minimumEJSVersion,
       );
     }
   }
@@ -1018,7 +1023,7 @@ class EmulatorJS {
       this.startGameError(
         this.localization("Error for site owner") +
           "\n" +
-          this.localization("Check console")
+          this.localization("Check console"),
       );
       console.warn("This core requires threads, but EJS_threads is not set!");
       return;
@@ -1031,10 +1036,10 @@ class EmulatorJS {
       this.startGameError(
         this.localization("Error for site owner") +
           "\n" +
-          this.localization("Check console")
+          this.localization("Check console"),
       );
       console.warn(
-        "Threads is set to true, but the SharedArrayBuffer function is not exposed. Threads requires 2 headers to be set when sending you html page. See https://stackoverflow.com/a/68630724"
+        "Threads is set to true, but the SharedArrayBuffer function is not exposed. Threads requires 2 headers to be set when sending you html page. See https://stackoverflow.com/a/68630724",
       );
       return;
     }
@@ -1042,7 +1047,7 @@ class EmulatorJS {
       this.defaultCoreOpts = {};
       this.checkCompression(
         new Uint8Array(data),
-        this.localization("Decompress Game Core")
+        this.localization("Decompress Game Core"),
       ).then((data) => {
         let js, thread, wasm;
         for (let k in data) {
@@ -1054,7 +1059,7 @@ class EmulatorJS {
             js = data[k];
           } else if (k === "build.json") {
             this.checkCoreCompatibility(
-              JSON.parse(new TextDecoder().decode(data[k]))
+              JSON.parse(new TextDecoder().decode(data[k])),
             );
           } else if (k === "core.json") {
             let core = JSON.parse(new TextDecoder().decode(data[k]));
@@ -1094,7 +1099,7 @@ class EmulatorJS {
       }
       if (!rep.buildStart) {
         console.warn(
-          "Could not fetch core report JSON! Core caching will be disabled!"
+          "Could not fetch core report JSON! Core caching will be disabled!",
         );
         rep.buildStart = Math.random() * 100;
       }
@@ -1132,12 +1137,12 @@ class EmulatorJS {
             this.localization("Download Game Core") + progress;
         },
         false,
-        { responseType: "arraybuffer", method: "GET" }
+        { responseType: "arraybuffer", method: "GET" },
       );
       if (res === -1) {
         console.log("File not found, attemping to fetch from emulatorjs cdn.");
         console.error(
-          "**THIS METHOD IS A FAILSAFE, AND NOT OFFICIALLY SUPPORTED. USE AT YOUR OWN RISK**"
+          "**THIS METHOD IS A FAILSAFE, AND NOT OFFICIALLY SUPPORTED. USE AT YOUR OWN RISK**",
         );
         // RomM does not bundle cores; use the upstream EmulatorJS CDN.
         // Default to `nightly` for a consistent "latest cores" location.
@@ -1153,7 +1158,7 @@ class EmulatorJS {
               this.localization("Download Game Core") + progress;
           },
           true,
-          { responseType: "arraybuffer", method: "GET" }
+          { responseType: "arraybuffer", method: "GET" },
         );
         if (res === -1) {
           if (!this.supportsWebgl2) {
@@ -1163,13 +1168,13 @@ class EmulatorJS {
               this.localization("Error downloading core") +
                 " (" +
                 filename +
-                ")"
+                ")",
             );
           }
           return;
         }
         console.warn(
-          "File was not found locally, but was found on the emulatorjs cdn.\nIt is recommended to download the stable release from here: https://cdn.emulatorjs.org/releases/"
+          "File was not found locally, but was found on the emulatorjs cdn.\nIt is recommended to download the stable release from here: https://cdn.emulatorjs.org/releases/",
         );
       }
       gotCore(res.data);
@@ -1182,7 +1187,7 @@ class EmulatorJS {
   initGameCore(js, wasm, thread) {
     let script = this.createElement("script");
     script.src = URL.createObjectURL(
-      new Blob([js], { type: "application/javascript" })
+      new Blob([js], { type: "application/javascript" }),
     );
     script.addEventListener("load", () => {
       this.initModule(wasm, thread);
@@ -1228,7 +1233,7 @@ class EmulatorJS {
       () => {
         this.msgElem.innerText = "";
       },
-      typeof time === "number" && time > 0 ? time : 3000
+      typeof time === "number" && time > 0 ? time : 3000,
     );
     this.msgElem.innerText = message;
   }
@@ -1251,11 +1256,11 @@ class EmulatorJS {
             this.localization("Download Game State") + progress;
         },
         true,
-        { responseType: "arraybuffer", method: "GET" }
+        { responseType: "arraybuffer", method: "GET" },
       ).then((res) => {
         if (res === -1) {
           this.startGameError(
-            this.localization("Error downloading game state")
+            this.localization("Error downloading game state"),
           );
           return;
         }
@@ -1280,32 +1285,32 @@ class EmulatorJS {
         const coreFilename = "/" + this.fileName;
         const coreFilePath = coreFilename.substring(
           0,
-          coreFilename.length - coreFilename.split("/").pop().length
+          coreFilename.length - coreFilename.split("/").pop().length,
         );
         if (this.config.dontExtractBIOS === true) {
           this.gameManager.FS.writeFile(
             coreFilePath + assetUrl.split("/").pop(),
-            new Uint8Array(input)
+            new Uint8Array(input),
           );
           return resolve(assetUrl);
         }
         const data = await this.checkCompression(
           new Uint8Array(input),
-          decompressProgressMessage
+          decompressProgressMessage,
         );
         for (const k in data) {
           if (k === "!!notCompressedData") {
             this.gameManager.FS.writeFile(
               coreFilePath +
                 assetUrl.split("/").pop().split("#")[0].split("?")[0],
-              data[k]
+              data[k],
             );
             break;
           }
           if (k.endsWith("/")) continue;
           this.gameManager.FS.writeFile(
             coreFilePath + k.split("/").pop(),
-            data[k]
+            data[k],
           );
         }
       };
@@ -1331,7 +1336,7 @@ class EmulatorJS {
           this.textElem.innerText = progressMessage + progress;
         },
         true,
-        { responseType: "arraybuffer", method: "GET" }
+        { responseType: "arraybuffer", method: "GET" },
       );
       if (res === -1) {
         this.startGameError(this.localization("Network Error"));
@@ -1368,7 +1373,7 @@ class EmulatorJS {
         this.config.gamePatchUrl,
         "patch",
         this.localization("Download Game Patch"),
-        this.localization("Decompress Game Patch")
+        this.localization("Decompress Game Patch"),
       );
       resolve();
     });
@@ -1379,7 +1384,7 @@ class EmulatorJS {
         this.config.gameParentUrl,
         "parent",
         this.localization("Download Game Parent"),
-        this.localization("Decompress Game Parent")
+        this.localization("Decompress Game Parent"),
       );
       resolve();
     });
@@ -1390,7 +1395,7 @@ class EmulatorJS {
         this.config.biosUrl,
         "bios",
         this.localization("Download Game BIOS"),
-        this.localization("Decompress Game BIOS")
+        this.localization("Decompress Game BIOS"),
       );
       resolve();
     });
@@ -1405,7 +1410,7 @@ class EmulatorJS {
     return new Promise((resolve) => {
       this.textElem.innerText = this.localization("Download Game Data");
 
-      const gotGameData = (data) => {
+      const gotGameData = async (data) => {
         const coreName = this.getCore(true);
         const altName = this.getBaseFileName(true);
         if (
@@ -1414,6 +1419,10 @@ class EmulatorJS {
         ) {
           this.fileName = altName;
           this.gameManager.FS.writeFile(this.fileName, new Uint8Array(data));
+
+          // Calculate and store ROM metadata for netplay
+          await this.calculateAndStoreRomMetadata(data, altName);
+
           resolve();
           return;
         }
@@ -1431,7 +1440,7 @@ class EmulatorJS {
         this.checkCompression(
           new Uint8Array(data),
           this.localization("Decompress Game Data"),
-          (fileName, fileData) => {
+          async (fileName, fileData) => {
             if (fileName.includes("/")) {
               const paths = fileName.split("/");
               let cp = "";
@@ -1454,8 +1463,8 @@ class EmulatorJS {
               this.gameManager.FS.writeFile(`/${fileName}`, fileData);
               fileNames.push(fileName);
             }
-          }
-        ).then(() => {
+          },
+        ).then(async () => {
           let isoFile = null;
           let supportedFile = null;
           let cueFile = null;
@@ -1519,6 +1528,13 @@ class EmulatorJS {
           if (this.getCore(true) === "dos" && !this.config.disableBatchBootup) {
             this.fileName = this.gameManager.writeBootupBatchFile();
           }
+
+          // Calculate and store ROM metadata for netplay
+          await this.calculateAndStoreRomMetadata(
+            data,
+            this.fileName || this.getBaseFileName(),
+          );
+
           resolve();
         });
       };
@@ -1530,7 +1546,7 @@ class EmulatorJS {
               this.localization("Download Game Data") + progress;
           },
           true,
-          { responseType: "arraybuffer", method: "GET" }
+          { responseType: "arraybuffer", method: "GET" },
         );
         if (res === -1) {
           this.startGameError(this.localization("Network Error"));
@@ -1603,7 +1619,7 @@ class EmulatorJS {
     if (typeof window.EJS_Runtime !== "function") {
       console.warn("EJS_Runtime is not defined!");
       this.startGameError(
-        this.localization("Error loading EmulatorJS runtime")
+        this.localization("Error loading EmulatorJS runtime"),
       );
       throw new Error("EJS_Runtime is not defined!");
     }
@@ -1655,7 +1671,7 @@ class EmulatorJS {
               return Reflect.construct(
                 Ctor,
                 [nextOptions],
-                PatchedAudioContext
+                PatchedAudioContext,
               );
             }
 
@@ -1686,7 +1702,7 @@ class EmulatorJS {
             originalAudioContext.prototype.createScriptProcessor = function (
               bufferSize,
               numberOfInputChannels,
-              numberOfOutputChannels
+              numberOfOutputChannels,
             ) {
               let nextBufferSize = bufferSize;
               if (
@@ -1700,7 +1716,7 @@ class EmulatorJS {
                 this,
                 nextBufferSize,
                 numberOfInputChannels,
-                numberOfOutputChannels
+                numberOfOutputChannels,
               );
             };
             cleanups.push(() => {
@@ -1737,7 +1753,7 @@ class EmulatorJS {
             "latencyHint=",
             desiredLatencyHint,
             "minScriptProcessorBufferSize=",
-            minScriptProcessorBufferSize
+            minScriptProcessorBufferSize,
           );
         }
       }
@@ -1768,11 +1784,11 @@ class EmulatorJS {
           if (this.debug) console.log(fileName);
           if (fileName.endsWith(".wasm")) {
             return URL.createObjectURL(
-              new Blob([wasmData], { type: "application/wasm" })
+              new Blob([wasmData], { type: "application/wasm" }),
             );
           } else if (fileName.endsWith(".worker.js")) {
             return URL.createObjectURL(
-              new Blob([threadData], { type: "application/javascript" })
+              new Blob([threadData], { type: "application/javascript" }),
             );
           }
         },
@@ -1823,22 +1839,22 @@ class EmulatorJS {
       const displayWidth = Math.floor((rect.width || 0) * dpr);
       const displayHeight = Math.floor((rect.height || 0) * dpr);
       const nativeWidth = Math.floor(
-        (initialResolution && initialResolution.width) || 0
+        (initialResolution && initialResolution.width) || 0,
       );
       const nativeHeight = Math.floor(
-        (initialResolution && initialResolution.height) || 0
+        (initialResolution && initialResolution.height) || 0,
       );
       const initialWidth = Math.max(
         1,
         displayWidth,
         nativeWidth,
-        Math.floor(640 * dpr)
+        Math.floor(640 * dpr),
       );
       const initialHeight = Math.max(
         1,
         displayHeight,
         nativeHeight,
-        Math.floor(480 * dpr)
+        Math.floor(480 * dpr),
       );
       this.canvas.width = initialWidth;
       this.canvas.height = initialHeight;
@@ -1936,7 +1952,7 @@ class EmulatorJS {
     this.addEventListener(
       this.elements.parent,
       "keydown keyup",
-      this.keyChange.bind(this)
+      this.keyChange.bind(this),
     );
     this.addEventListener(this.elements.parent, "mousedown touchstart", (e) => {
       if (
@@ -1951,7 +1967,7 @@ class EmulatorJS {
     let counter = 0;
     this.elements.statePopupPanel = this.createPopup("", {}, true);
     this.elements.statePopupPanel.innerText = this.localization(
-      "Drop save state here to load"
+      "Drop save state here to load",
     );
     this.elements.statePopupPanel.style["text-align"] = "center";
     this.elements.statePopupPanel.style["font-size"] = "28px";
@@ -1965,7 +1981,7 @@ class EmulatorJS {
           this.handleResize.bind(this);
           if (this.config.noAutoFocus !== true) this.elements.parent.focus();
         }, 0);
-      }
+      },
     );
     this.addEventListener(window, "beforeunload", (e) => {
       if (this.config.disableAutoUnload) {
@@ -2035,7 +2051,7 @@ class EmulatorJS {
     });
     this.gamepad.on("disconnected", (e) => {
       const gamepadIndex = this.gamepad.gamepads.indexOf(
-        this.gamepad.gamepads.find((f) => f.index == e.gamepadIndex)
+        this.gamepad.gamepads.find((f) => f.index == e.gamepadIndex),
       );
       const gamepadSelection =
         this.gamepad.gamepads[gamepadIndex].id +
@@ -2081,7 +2097,7 @@ class EmulatorJS {
         const opt = this.createElement("option");
         opt.setAttribute(
           "value",
-          this.gamepad.gamepads[j].id + "_" + this.gamepad.gamepads[j].index
+          this.gamepad.gamepads[j].id + "_" + this.gamepad.gamepads[j].index,
         );
         opt.innerText =
           this.gamepad.gamepads[j].id + "_" + this.gamepad.gamepads[j].index;
@@ -2255,7 +2271,7 @@ class EmulatorJS {
           ) {
             if (this.debug)
               console.warn(
-                `Custom button "${searchKey}" is missing required properties`
+                `Custom button "${searchKey}" is missing required properties`,
               );
             continue;
           }
@@ -2306,7 +2322,7 @@ class EmulatorJS {
               };
             } else if (this.debug) {
               console.warn(
-                `Custom button "${searchKey}" is missing required properties`
+                `Custom button "${searchKey}" is missing required properties`,
               );
             }
           }
@@ -2363,10 +2379,10 @@ class EmulatorJS {
       this.elements.contextmenu.style.display = "none";
     };
     this.addEventListener(this.elements.contextmenu, "contextmenu", (e) =>
-      e.preventDefault()
+      e.preventDefault(),
     );
     this.addEventListener(this.elements.parent, "contextmenu", (e) =>
-      e.preventDefault()
+      e.preventDefault(),
     );
     this.addEventListener(this.game, "mousedown touchend", hideMenu);
     const parent = this.createElement("ul");
@@ -2423,7 +2439,7 @@ class EmulatorJS {
         startScreenRecording.setAttribute("hidden", "hidden");
         stopScreenRecording.removeAttribute("hidden");
         hideMenu();
-      }
+      },
     );
     const stopScreenRecording = addButton("Stop Screen Recording", true, () => {
       if (screenMediaRecorder !== null) {
@@ -2441,7 +2457,7 @@ class EmulatorJS {
         : "1";
       if (this.gameManager.quickSave(slot)) {
         this.displayMessage(
-          this.localization("SAVED STATE TO SLOT") + " " + slot
+          this.localization("SAVED STATE TO SLOT") + " " + slot,
         );
       } else {
         this.displayMessage(this.localization("FAILED TO SAVE STATE"));
@@ -2454,7 +2470,7 @@ class EmulatorJS {
         : "1";
       this.gameManager.quickLoad(slot);
       this.displayMessage(
-        this.localization("LOADED STATE FROM SLOT") + " " + slot
+        this.localization("LOADED STATE FROM SLOT") + " " + slot,
       );
       hideMenu();
     });
@@ -2523,14 +2539,14 @@ class EmulatorJS {
         home,
         "https://github.com/EmulatorJS/EmulatorJS",
         "View on GitHub",
-        true
+        true,
       );
 
       this.createLink(
         home,
         "https://discord.gg/6akryGkETU",
         "Join the discord",
-        true
+        true,
       );
 
       const info = this.createElement("div");
@@ -2541,7 +2557,7 @@ class EmulatorJS {
       this.createLink(
         info,
         "https://github.com/libretro/RetroArch/",
-        "RetroArch"
+        "RetroArch",
       );
       if (this.repository && this.coreName) {
         info.innerHTML += ". This core is powered by ";
@@ -2561,7 +2577,7 @@ class EmulatorJS {
           current.style.display = "none";
         }
         let activeLi = li.parentElement.querySelector(
-          ".ejs_active_list_element"
+          ".ejs_active_list_element",
         );
         if (activeLi) {
           activeLi.classList.remove("ejs_active_list_element");
@@ -2599,7 +2615,7 @@ class EmulatorJS {
       licenseLink.href =
         "https://github.com/libretro/RetroArch/blob/master/COPYING";
       licenseLink.innerText = this.localization(
-        "View the RetroArch license here"
+        "View the RetroArch license here",
       );
       a.appendChild(this.createElement("br"));
       a.appendChild(licenseLink);
@@ -2792,13 +2808,13 @@ class EmulatorJS {
         this.menu.mousemoveListener = this.addEventListener(
           this.elements.parent,
           "mousemove",
-          mouseListener
+          mouseListener,
         );
       } else {
         this.menu.mousemoveListener = this.addEventListener(
           this.elements.parent,
           "mousemove",
-          clickListener
+          clickListener,
         );
       }
 
@@ -2931,7 +2947,7 @@ class EmulatorJS {
         try {
           this.netplay.socket.emit(
             this.paused ? "netplay-host-paused" : "netplay-host-resumed",
-            {}
+            {},
           );
         } catch (e) {
           // ignore
@@ -2987,7 +3003,7 @@ class EmulatorJS {
       const { screenshot, format } = await this.takeScreenshot(
         this.capture.photo.source,
         this.capture.photo.format,
-        this.capture.photo.upscale
+        this.capture.photo.upscale,
       );
       const called = this.callEvent("saveState", {
         screenshot: screenshot,
@@ -3050,7 +3066,7 @@ class EmulatorJS {
         const { screenshot, format } = await this.takeScreenshot(
           this.capture.photo.source,
           this.capture.photo.format,
-          this.capture.photo.upscale
+          this.capture.photo.upscale,
         );
         const called = this.callEvent("saveSave", {
           screenshot: screenshot,
@@ -3064,7 +3080,7 @@ class EmulatorJS {
         a.href = savUrl;
         a.download = this.gameManager.getSaveFilePath().split("/").pop();
         a.click();
-      }
+      },
     );
     const loadSavFiles = addButton(
       this.config.buttonOpts.loadSavFiles,
@@ -3086,7 +3102,7 @@ class EmulatorJS {
           this.gameManager.FS.unlink(path);
         this.gameManager.FS.writeFile(path, sav);
         this.gameManager.loadSaveFiles();
-      }
+      },
     );
     const netplay = addButton(this.config.buttonOpts.netplay, async () => {
       this.netplayMenu.createNetplayMenu();
@@ -3121,7 +3137,7 @@ class EmulatorJS {
         this.muted = true;
         this.setVolume(0);
       },
-      volumeSettings
+      volumeSettings,
     );
     const unmuteButton = addButton(
       this.config.buttonOpts.unmute,
@@ -3132,7 +3148,7 @@ class EmulatorJS {
         this.muted = false;
         this.setVolume(this.volume);
       },
-      volumeSettings
+      volumeSettings,
     );
     unmuteButton.style.display = "none";
 
@@ -3155,13 +3171,13 @@ class EmulatorJS {
       volumeSlider.setAttribute("aria-valuenow", volume * 100);
       volumeSlider.setAttribute(
         "aria-valuetext",
-        (volume * 100).toFixed(1) + "%"
+        (volume * 100).toFixed(1) + "%",
       );
       volumeSlider.setAttribute(
         "style",
         "--value: " +
           volume * 100 +
-          "%;margin-left: 5px;position: relative;z-index: 2;"
+          "%;margin-left: 5px;position: relative;z-index: 2;",
       );
       if (
         this.Module.AL &&
@@ -3188,7 +3204,7 @@ class EmulatorJS {
           this.volume = newVal;
           this.setVolume(this.volume);
         }, 5);
-      }
+      },
     );
 
     if (!this.config.buttonOpts || this.config.buttonOpts.volume !== false) {
@@ -3216,7 +3232,7 @@ class EmulatorJS {
         } else {
           this.elements.contextmenu.style.display = "none";
         }
-      }
+      },
     );
 
     this.diskParent = this.createElement("div");
@@ -3231,7 +3247,7 @@ class EmulatorJS {
         diskButton[2].classList.toggle("ejs_disks_text", this.disksMenuOpen);
       },
       this.diskParent,
-      true
+      true,
     );
     this.elements.menu.appendChild(this.diskParent);
     this.closeDisksMenu = () => {
@@ -3256,16 +3272,16 @@ class EmulatorJS {
         this.settingsMenuOpen = !this.settingsMenuOpen;
         settingButton[1].classList.toggle(
           "ejs_svg_rotate",
-          this.settingsMenuOpen
+          this.settingsMenuOpen,
         );
         this.settingsMenu.style.display = this.settingsMenuOpen ? "" : "none";
         settingButton[2].classList.toggle(
           "ejs_settings_text",
-          this.settingsMenuOpen
+          this.settingsMenuOpen,
         );
       },
       this.settingParent,
-      true
+      true,
     );
     this.elements.menu.appendChild(this.settingParent);
     this.closeSettingsMenu = () => {
@@ -3273,11 +3289,11 @@ class EmulatorJS {
       this.settingsMenuOpen = false;
       settingButton[1].classList.toggle(
         "ejs_svg_rotate",
-        this.settingsMenuOpen
+        this.settingsMenuOpen,
       );
       settingButton[2].classList.toggle(
         "ejs_settings_text",
-        this.settingsMenuOpen
+        this.settingsMenuOpen,
       );
       this.settingsMenu.style.display = "none";
     };
@@ -3404,7 +3420,7 @@ class EmulatorJS {
           this.callEvent("exit");
         });
         setTimeout(this.menu.close.bind(this), 20);
-      }
+      },
     );
 
     this.addEventListener(
@@ -3420,7 +3436,7 @@ class EmulatorJS {
           exit.style.display = "";
           enter.style.display = "none";
         }
-      }
+      },
     );
 
     const hasFullscreen = !!(
@@ -3560,7 +3576,7 @@ class EmulatorJS {
       const getSize = function (size) {
         let i = -1;
         do {
-          (size /= 1024), i++;
+          ((size /= 1024), i++);
         } while (size > 1024);
         return (
           Math.max(size, 0.1).toFixed(1) +
@@ -3626,7 +3642,7 @@ class EmulatorJS {
           if (this.controlMenu) this.controlMenu.style.display = "none";
         },
       },
-      true
+      true,
     );
     this.setupKeys();
     this.controlMenu = body.parentElement;
@@ -4019,7 +4035,7 @@ class EmulatorJS {
       { id: 26, label: this.localization("CHANGE STATE SLOT") },
       { id: 27, label: this.localization("FAST FORWARD") },
       { id: 29, label: this.localization("SLOW MOTION") },
-      { id: 28, label: this.localization("REWIND") }
+      { id: 28, label: this.localization("REWIND") },
     );
     let nums = [];
     for (let i = 0; i < buttons.length; i++) {
@@ -4153,7 +4169,7 @@ class EmulatorJS {
           input.checked = !input.checked;
           this.changeSettingOption(
             "virtual-gamepad",
-            input.checked ? "enabled" : "disabled"
+            input.checked ? "enabled" : "disabled",
           );
         });
         this.on("start", (e) => {
@@ -4283,7 +4299,7 @@ class EmulatorJS {
         this.addEventListener(buttonText, "mousedown", (e) => {
           e.preventDefault();
           this.controlPopup.parentElement.parentElement.removeAttribute(
-            "hidden"
+            "hidden",
           );
           this.controlPopup.innerText =
             "[ " + controlLabel + " ]\n" + this.localization("Press Keyboard");
@@ -4558,7 +4574,7 @@ class EmulatorJS {
       for (let j = 0; j < 30; j++) {
         if (this.controls[i][j]) {
           this.controls[i][j].value = parseInt(
-            this.keyLookup(this.controls[i][j].value)
+            this.keyLookup(this.controls[i][j].value),
           );
           if (this.controls[i][j].value === -1 && this.debug) {
             delete this.controls[i][j].value;
@@ -4610,17 +4626,20 @@ class EmulatorJS {
       for (let j = 0; j < 30; j++) {
         if (this.controls[i][j] && this.controls[i][j].value === e.keyCode) {
           // Route through netplay.simulateInput if netplay is active
-          if (this.netplay && typeof this.netplay.simulateInput === 'function') {
+          if (
+            this.netplay &&
+            typeof this.netplay.simulateInput === "function"
+          ) {
             this.netplay.simulateInput(
               i,
               j,
-              e.type === "keyup" ? 0 : special.includes(j) ? 0x7fff : 1
+              e.type === "keyup" ? 0 : special.includes(j) ? 0x7fff : 1,
             );
           } else {
             this.gameManager.simulateInput(
               i,
               j,
-              e.type === "keyup" ? 0 : special.includes(j) ? 0x7fff : 1
+              e.type === "keyup" ? 0 : special.includes(j) ? 0x7fff : 1,
             );
           }
         }
@@ -4632,7 +4651,7 @@ class EmulatorJS {
     const gamepadIndex = this.gamepadSelection.indexOf(
       this.gamepad.gamepads[e.gamepadIndex].id +
         "_" +
-        this.gamepad.gamepads[e.gamepadIndex].index
+        this.gamepad.gamepads[e.gamepadIndex].index,
     );
     if (gamepadIndex < 0) {
       return; // Gamepad not set anywhere
@@ -4640,7 +4659,7 @@ class EmulatorJS {
 
     // Helper function to route input through netplay or gameManager
     const simulateInput = (playerIndex, inputIndex, value) => {
-      if (this.netplay && typeof this.netplay.simulateInput === 'function') {
+      if (this.netplay && typeof this.netplay.simulateInput === "function") {
         this.netplay.simulateInput(playerIndex, inputIndex, value);
       } else {
         this.gameManager.simulateInput(playerIndex, inputIndex, value);
@@ -4689,7 +4708,7 @@ class EmulatorJS {
           simulateInput(
             i,
             j,
-            e.type === "buttonup" ? 0 : special.includes(j) ? 0x7fff : 1
+            e.type === "buttonup" ? 0 : special.includes(j) ? 0x7fff : 1,
           );
         } else if (e.type === "axischanged") {
           if (
@@ -4795,14 +4814,14 @@ class EmulatorJS {
         if (!Array.isArray(set)) {
           if (this.debug)
             console.warn(
-              "Virtual gamepad settings is not array! Using default gamepad settings"
+              "Virtual gamepad settings is not array! Using default gamepad settings",
             );
           return false;
         }
         if (!set.length) {
           if (this.debug)
             console.warn(
-              "Virtual gamepad settings is empty! Using default gamepad settings"
+              "Virtual gamepad settings is empty! Using default gamepad settings",
             );
           return false;
         }
@@ -4814,14 +4833,14 @@ class EmulatorJS {
                 console.warn(
                   "Missing location value for " +
                     set[i].type +
-                    "! Using default gamepad settings"
+                    "! Using default gamepad settings",
                 );
                 return false;
               } else if (!set[i].inputValues) {
                 console.warn(
                   "Missing inputValues for " +
                     set[i].type +
-                    "! Using default gamepad settings"
+                    "! Using default gamepad settings",
                 );
                 return false;
               }
@@ -4831,34 +4850,34 @@ class EmulatorJS {
               console.warn(
                 "Missing location value for button " +
                   set[i].text +
-                  "! Using default gamepad settings"
+                  "! Using default gamepad settings",
               );
               return false;
             } else if (!set[i].type) {
               console.warn(
                 "Missing type value for button " +
                   set[i].text +
-                  "! Using default gamepad settings"
+                  "! Using default gamepad settings",
               );
               return false;
             } else if (!set[i].id.toString()) {
               console.warn(
                 "Missing id value for button " +
                   set[i].text +
-                  "! Using default gamepad settings"
+                  "! Using default gamepad settings",
               );
               return false;
             } else if (!set[i].input_value.toString()) {
               console.warn(
                 "Missing input_value for button " +
                   set[i].text +
-                  "! Using default gamepad settings"
+                  "! Using default gamepad settings",
               );
               return false;
             }
           } catch (e) {
             console.warn(
-              "Error checking values! Using default gamepad settings"
+              "Error checking values! Using default gamepad settings",
             );
             return false;
           }
@@ -6487,17 +6506,17 @@ class EmulatorJS {
             if (e.type === "touchend" || e.type === "touchcancel") {
               e.target.classList.remove("ejs_virtualGamepad_button_down");
               window.setTimeout(() => {
-                this.netplay && typeof this.netplay.simulateInput === 'function' ?
-                  this.netplay.simulateInput(0, value, 0) :
-                  this.gameManager.simulateInput(0, value, 0);
+                this.netplay && typeof this.netplay.simulateInput === "function"
+                  ? this.netplay.simulateInput(0, value, 0)
+                  : this.gameManager.simulateInput(0, value, 0);
               });
             } else {
               e.target.classList.add("ejs_virtualGamepad_button_down");
-              this.netplay && typeof this.netplay.simulateInput === 'function' ?
-                this.netplay.simulateInput(0, value, downValue) :
-                this.gameManager.simulateInput(0, value, downValue);
+              this.netplay && typeof this.netplay.simulateInput === "function"
+                ? this.netplay.simulateInput(0, value, downValue)
+                : this.gameManager.simulateInput(0, value, downValue);
             }
-          }
+          },
         );
       }
     }
@@ -6622,8 +6641,10 @@ class EmulatorJS {
             if (left === 1) left = 0x7fff;
             if (right === 1) right = 0x7fff;
           }
-          const simulateInput = this.netplay && typeof this.netplay.simulateInput === 'function' ?
-            this.netplay.simulateInput : this.gameManager.simulateInput;
+          const simulateInput =
+            this.netplay && typeof this.netplay.simulateInput === "function"
+              ? this.netplay.simulateInput
+              : this.gameManager.simulateInput;
           simulateInput(0, dpad.inputValues[0], up);
           simulateInput(0, dpad.inputValues[1], down);
           simulateInput(0, dpad.inputValues[2], left);
@@ -6650,7 +6671,7 @@ class EmulatorJS {
         "touchstart touchmove touchend touchcancel",
         (e) => {
           e.preventDefault();
-        }
+        },
       );
       elem.classList.add(controlSchemeCls);
       if (zone.id) {
@@ -6667,8 +6688,10 @@ class EmulatorJS {
         color: zone.color || "red",
       });
       zoneObj.on("end", () => {
-        const simulateInput = this.netplay && typeof this.netplay.simulateInput === 'function' ?
-          this.netplay.simulateInput : this.gameManager.simulateInput;
+        const simulateInput =
+          this.netplay && typeof this.netplay.simulateInput === "function"
+            ? this.netplay.simulateInput
+            : this.gameManager.simulateInput;
         simulateInput(0, zone.inputValues[0], 0);
         simulateInput(0, zone.inputValues[1], 0);
         simulateInput(0, zone.inputValues[2], 0);
@@ -6712,8 +6735,10 @@ class EmulatorJS {
             x = distance / 50;
             y = (0.022222222222222223 * (360 - degree) * distance) / 50;
           }
-          const simulateInput = this.netplay && typeof this.netplay.simulateInput === 'function' ?
-            this.netplay.simulateInput : this.gameManager.simulateInput;
+          const simulateInput =
+            this.netplay && typeof this.netplay.simulateInput === "function"
+              ? this.netplay.simulateInput
+              : this.gameManager.simulateInput;
           if (x > 0) {
             simulateInput(0, zone.inputValues[0], 0x7fff * x);
             simulateInput(0, zone.inputValues[1], 0);
@@ -6792,7 +6817,7 @@ class EmulatorJS {
           ready = false;
           e.preventDefault();
           this.menu.toggle();
-        }
+        },
       );
       this.elements.menuToggle = menuButton;
     }
@@ -6813,12 +6838,12 @@ class EmulatorJS {
     const positionInfo = this.elements.parent.getBoundingClientRect();
     this.game.parentElement.classList.toggle(
       "ejs_small_screen",
-      positionInfo.width <= 575
+      positionInfo.width <= 575,
     );
     //This wouldnt work using :not()... strange.
     this.game.parentElement.classList.toggle(
       "ejs_big_screen",
-      positionInfo.width > 575
+      positionInfo.width > 575,
     );
 
     if (!this.handleSettingsResize) return;
@@ -6857,7 +6882,7 @@ class EmulatorJS {
     localStorage.setItem("ejs-settings", JSON.stringify(ejs_settings));
     localStorage.setItem(
       this.getLocalStorageKey(),
-      JSON.stringify(coreSpecific)
+      JSON.stringify(coreSpecific),
     );
   }
   getLocalStorageKey() {
@@ -6873,7 +6898,7 @@ class EmulatorJS {
       identifier += "-" + this.config.gameUrl.name;
     } else if (typeof this.config.gameId !== "number") {
       console.warn(
-        "gameId (EJS_gameID) is not set. This may result in settings persisting across games."
+        "gameId (EJS_gameID) is not set. This may result in settings persisting across games.",
       );
     }
     return "ejs-" + identifier + "-settings";
@@ -7102,7 +7127,7 @@ class EmulatorJS {
                 (c) =>
                   c &&
                   typeof c.mimeType === "string" &&
-                  c.mimeType.toLowerCase() === "video/vp9"
+                  c.mimeType.toLowerCase() === "video/vp9",
               );
             } catch (e) {
               return false;
@@ -7169,7 +7194,7 @@ class EmulatorJS {
       window.EJS_NETPLAY_CLIENT_PREFERRED_QUALITY =
         this.netplayClientSimulcastQuality;
       window.EJS_NETPLAY_CLIENT_MAX_RESOLUTION = simulcastQualityToLegacyRes(
-        this.netplayClientSimulcastQuality
+        this.netplayClientSimulcastQuality,
       );
     } else if (option === "netplayRetryConnectionTimer") {
       let retrySeconds = parseInt(value, 10);
@@ -7328,7 +7353,7 @@ class EmulatorJS {
         for (let j = 0; j < buttons.length; j++) {
           buttons[j].classList.toggle(
             "ejs_option_row_selected",
-            buttons[j].getAttribute("ejs_value") === this.disks[id]
+            buttons[j].getAttribute("ejs_value") === this.disks[id],
           );
         }
         this.menuOptionChanged(id, this.disks[id]);
@@ -7394,7 +7419,7 @@ class EmulatorJS {
           // remove the file extension from the disk file name
           let diskLabel = diskLabelValues[0].replace(
             "." + diskLabelValues[0].split(".").pop(),
-            ""
+            "",
           );
           if (diskLabelValues.length >= 2) {
             // has a label - use that instead
@@ -7407,7 +7432,7 @@ class EmulatorJS {
         this.localization("Disk"),
         "disk",
         diskLabels,
-        this.gameManager.getCurrentDisk().toString()
+        this.gameManager.getCurrentDisk().toString(),
       );
     }
 
@@ -7552,11 +7577,11 @@ class EmulatorJS {
       }
       this.settingsMenu.classList.toggle(
         "ejs_settings_center_left",
-        !onTheRight
+        !onTheRight,
       );
       this.settingsMenu.classList.toggle(
         "ejs_settings_center_right",
-        onTheRight
+        onTheRight,
       );
       if (needChange) {
         this.settingsMenu.style.display = "none";
@@ -7583,7 +7608,7 @@ class EmulatorJS {
       options,
       defaultOption,
       parentElement,
-      useParentParent
+      useParentParent,
     ) => {
       if (
         Array.isArray(this.config.hideSettings) &&
@@ -7660,7 +7685,7 @@ class EmulatorJS {
         for (let j = 0; j < buttons.length; j++) {
           buttons[j].classList.toggle(
             "ejs_option_row_selected",
-            buttons[j].getAttribute("ejs_value") === settings[id]
+            buttons[j].getAttribute("ejs_value") === settings[id],
           );
         }
         this.menuOptionChanged(id, settings[id]);
@@ -7709,12 +7734,12 @@ class EmulatorJS {
     if (core && core.length > 1) {
       addToMenu(
         this.localization(
-          "Core" + " (" + this.localization("Requires restart") + ")"
+          "Core" + " (" + this.localization("Requires restart") + ")",
         ),
         "retroarch_core",
         core,
         this.getCore(),
-        home
+        home,
       );
     }
     if (
@@ -7729,14 +7754,14 @@ class EmulatorJS {
           disabled: this.localization("Disabled"),
         },
         this.config.threads ? "enabled" : "disabled",
-        home
+        home,
       );
     }
 
     const graphicsOptions = createSettingParent(
       true,
       "Graphics Settings",
-      home
+      home,
     );
 
     if (this.config.shaders) {
@@ -7772,7 +7797,7 @@ class EmulatorJS {
         shaderMenu,
         "disabled",
         graphicsOptions,
-        true
+        true,
       );
     }
 
@@ -7789,7 +7814,7 @@ class EmulatorJS {
         },
         this.webgl2Enabled ? "enabled" : "disabled",
         graphicsOptions,
-        true
+        true,
       );
     }
 
@@ -7802,7 +7827,7 @@ class EmulatorJS {
       },
       "hide",
       graphicsOptions,
-      true
+      true,
     );
 
     addToMenu(
@@ -7814,7 +7839,7 @@ class EmulatorJS {
       },
       "disabled",
       graphicsOptions,
-      true
+      true,
     );
 
     addToMenu(
@@ -7828,13 +7853,13 @@ class EmulatorJS {
       },
       this.videoRotation.toString(),
       graphicsOptions,
-      true
+      true,
     );
 
     const screenCaptureOptions = createSettingParent(
       true,
       "Screen Capture",
-      home
+      home,
     );
 
     addToMenu(
@@ -7846,7 +7871,7 @@ class EmulatorJS {
       },
       this.capture.photo.source,
       screenCaptureOptions,
-      true
+      true,
     );
 
     let screenshotFormats = {
@@ -7866,7 +7891,7 @@ class EmulatorJS {
       screenshotFormats,
       this.capture.photo.format,
       screenCaptureOptions,
-      true
+      true,
     );
 
     const screenshotUpscale = this.capture.photo.upscale.toString();
@@ -7885,7 +7910,7 @@ class EmulatorJS {
       screenshotUpscales,
       screenshotUpscale,
       screenCaptureOptions,
-      true
+      true,
     );
 
     const screenRecordFPS = this.capture.video.fps.toString();
@@ -7902,7 +7927,7 @@ class EmulatorJS {
       screenRecordFPSs,
       screenRecordFPS,
       screenCaptureOptions,
-      true
+      true,
     );
 
     let screenRecordFormats = {
@@ -7923,7 +7948,7 @@ class EmulatorJS {
       screenRecordFormats,
       this.capture.video.format,
       screenCaptureOptions,
-      true
+      true,
     );
 
     const screenRecordUpscale = this.capture.video.upscale.toString();
@@ -7942,7 +7967,7 @@ class EmulatorJS {
       screenRecordUpscales,
       screenRecordUpscale,
       screenCaptureOptions,
-      true
+      true,
     );
 
     const screenRecordVideoBitrate = this.capture.video.videoBitrate.toString();
@@ -7963,7 +7988,7 @@ class EmulatorJS {
       screenRecordVideoBitrates,
       screenRecordVideoBitrate,
       screenCaptureOptions,
-      true
+      true,
     );
 
     const screenRecordAudioBitrate = this.capture.video.audioBitrate.toString();
@@ -7984,7 +8009,7 @@ class EmulatorJS {
       screenRecordAudioBitrates,
       screenRecordAudioBitrate,
       screenCaptureOptions,
-      true
+      true,
     );
 
     checkForEmptyMenu(screenCaptureOptions);
@@ -8000,7 +8025,7 @@ class EmulatorJS {
       },
       "disabled",
       speedOptions,
-      true
+      true,
     );
 
     addToMenu(
@@ -8029,7 +8054,7 @@ class EmulatorJS {
       ],
       "3.0",
       speedOptions,
-      true
+      true,
     );
 
     addToMenu(
@@ -8041,7 +8066,7 @@ class EmulatorJS {
       },
       "disabled",
       speedOptions,
-      true
+      true,
     );
 
     addToMenu(
@@ -8069,12 +8094,12 @@ class EmulatorJS {
       ],
       "3.0",
       speedOptions,
-      true
+      true,
     );
 
     addToMenu(
       this.localization(
-        "Rewind Enabled" + " (" + this.localization("Requires restart") + ")"
+        "Rewind Enabled" + " (" + this.localization("Requires restart") + ")",
       ),
       "rewindEnabled",
       {
@@ -8083,7 +8108,7 @@ class EmulatorJS {
       },
       "disabled",
       speedOptions,
-      true
+      true,
     );
 
     if (this.rewindEnabled) {
@@ -8093,7 +8118,7 @@ class EmulatorJS {
         ["1", "3", "6", "12", "25", "50", "100"],
         "6",
         speedOptions,
-        true
+        true,
       );
     }
 
@@ -8108,7 +8133,7 @@ class EmulatorJS {
       },
       "downward",
       inputOptions,
-      true
+      true,
     );
 
     addToMenu(
@@ -8122,7 +8147,7 @@ class EmulatorJS {
         ? "enabled"
         : "disabled",
       inputOptions,
-      true
+      true,
     );
 
     addToMenu(
@@ -8134,7 +8159,7 @@ class EmulatorJS {
       },
       "disabled",
       inputOptions,
-      true
+      true,
     );
 
     addToMenu(
@@ -8146,7 +8171,7 @@ class EmulatorJS {
       },
       this.enableMouseLock === true ? "enabled" : "disabled",
       inputOptions,
-      true
+      true,
     );
 
     checkForEmptyMenu(inputOptions);
@@ -8159,7 +8184,7 @@ class EmulatorJS {
         ["1", "2", "3", "4", "5", "6", "7", "8", "9"],
         "1",
         saveStateOpts,
-        true
+        true,
       );
       addToMenu(
         this.localization("Save State Location"),
@@ -8170,7 +8195,7 @@ class EmulatorJS {
         },
         "download",
         saveStateOpts,
-        true
+        true,
       );
       if (!this.config.fixedSaveInterval) {
         addToMenu(
@@ -8187,7 +8212,7 @@ class EmulatorJS {
           },
           "300",
           saveStateOpts,
-          true
+          true,
         );
       }
       checkForEmptyMenu(saveStateOpts);
@@ -8204,7 +8229,7 @@ class EmulatorJS {
         },
         this.isMobile ? "enabled" : "disabled",
         virtualGamepad,
-        true
+        true,
       );
       addToMenu(
         this.localization("Menu Bar Button"),
@@ -8215,7 +8240,7 @@ class EmulatorJS {
         },
         "visible",
         virtualGamepad,
-        true
+        true,
       );
       addToMenu(
         this.localization("Left Handed Mode"),
@@ -8226,7 +8251,7 @@ class EmulatorJS {
         },
         "disabled",
         virtualGamepad,
-        true
+        true,
       );
       checkForEmptyMenu(virtualGamepad);
     }
@@ -8239,7 +8264,7 @@ class EmulatorJS {
       const coreOptions = createSettingParent(
         true,
         "Backend Core Options",
-        home
+        home,
       );
       coreOpts.split("\n").forEach((line, index) => {
         let option = line.split("; ");
@@ -8255,7 +8280,7 @@ class EmulatorJS {
         for (let i = 0; i < options.length; i++) {
           availableOptions[options[i]] = this.localization(
             options[i],
-            this.config.settingsLanguage
+            this.config.settingsLanguage,
           );
         }
         addToMenu(
@@ -8266,7 +8291,7 @@ class EmulatorJS {
             ? name.split("|")[1]
             : options[0].replace("(Default) ", ""),
           coreOptions,
-          true
+          true,
         );
       });
       checkForEmptyMenu(coreOptions);
@@ -8292,7 +8317,7 @@ class EmulatorJS {
           " (" +
           this.localization("Requires restart") +
           ")",
-        home
+        home,
       );
       this.retroarchOpts.forEach((option) => {
         addToMenu(
@@ -8301,7 +8326,7 @@ class EmulatorJS {
           option.options,
           option.default,
           retroarchOptsMenu,
-          true
+          true,
         );
       });
       checkForEmptyMenu(retroarchOptsMenu);
@@ -8352,36 +8377,39 @@ class EmulatorJS {
   updateCheatUI() {
     if (!this.cheatsMenu) return;
 
-    const body = this.cheatsMenu.querySelector('.ejs_popup_body');
+    const body = this.cheatsMenu.querySelector(".ejs_popup_body");
     if (!body) return;
 
     // Clear existing content
-    body.innerHTML = '';
+    body.innerHTML = "";
 
     if (this.cheats.length === 0) {
-      body.innerHTML = '<div style="text-align: center; padding: 20px; color: #666;">No cheats available</div>';
+      body.innerHTML =
+        '<div style="text-align: center; padding: 20px; color: #666;">No cheats available</div>';
       return;
     }
 
     // Add cheat toggles
     this.cheats.forEach((cheat, index) => {
-      const cheatDiv = this.createElement('div');
-      cheatDiv.style.marginBottom = '10px';
+      const cheatDiv = this.createElement("div");
+      cheatDiv.style.marginBottom = "10px";
 
-      const checkbox = this.createElement('input');
-      checkbox.type = 'checkbox';
+      const checkbox = this.createElement("input");
+      checkbox.type = "checkbox";
       checkbox.id = `cheat_${index}`;
       checkbox.checked = cheat.checked || false;
       checkbox.onchange = () => {
         cheat.checked = checkbox.checked;
         // TODO: Apply/remove cheat code
-        console.log(`Cheat "${cheat.desc}" ${cheat.checked ? 'enabled' : 'disabled'}`);
+        console.log(
+          `Cheat "${cheat.desc}" ${cheat.checked ? "enabled" : "disabled"}`,
+        );
       };
 
-      const label = this.createElement('label');
+      const label = this.createElement("label");
       label.htmlFor = `cheat_${index}`;
       label.textContent = cheat.desc;
-      label.style.marginLeft = '8px';
+      label.style.marginLeft = "8px";
 
       cheatDiv.appendChild(checkbox);
       cheatDiv.appendChild(label);
@@ -8390,11 +8418,7 @@ class EmulatorJS {
   }
 
   createCheatsMenu() {
-    const body = this.createPopup(
-      "Cheats",
-      {},
-      true
-    );
+    const body = this.createPopup("Cheats", {}, true);
     this.cheatsMenu = body.parentElement;
     this.updateCheatUI();
   }
@@ -8406,7 +8430,7 @@ class EmulatorJS {
    * @returns {AudioNode|null} The audio node feeding the speakers, or null if not available
    */
   getAudioOutputNode() {
-    console.log('[EmulatorJS] getAudioOutputNode called');
+    console.log("[EmulatorJS] getAudioOutputNode called");
 
     // Try to find the audio node that feeds into AudioContext.destination
     // This varies by emulator core and WebAudio setup
@@ -8414,44 +8438,60 @@ class EmulatorJS {
     // First, check if there's a direct reference to an audio context and destination node
     if (this.Module && this.Module.AL && this.Module.AL.currentCtx) {
       const openALCtx = this.Module.AL.currentCtx;
-      console.log('[EmulatorJS] Found OpenAL context, checking for audio nodes:', {
-        hasAudioDestination: !!openALCtx.audioDestination,
-        hasMasterGain: !!openALCtx.masterGain,
-        hasOutputNode: !!openALCtx.outputNode,
-        contextKeys: Object.keys(openALCtx).filter(k => k.toLowerCase().includes('audio') || k.toLowerCase().includes('node'))
-      });
+      console.log(
+        "[EmulatorJS] Found OpenAL context, checking for audio nodes:",
+        {
+          hasAudioDestination: !!openALCtx.audioDestination,
+          hasMasterGain: !!openALCtx.masterGain,
+          hasOutputNode: !!openALCtx.outputNode,
+          contextKeys: Object.keys(openALCtx).filter(
+            (k) =>
+              k.toLowerCase().includes("audio") ||
+              k.toLowerCase().includes("node"),
+          ),
+        },
+      );
 
       // Some cores store the WebAudio destination node here
       if (openALCtx.audioDestination) {
-        console.log('[EmulatorJS] Returning audioDestination node');
+        console.log("[EmulatorJS] Returning audioDestination node");
         return openALCtx.audioDestination;
       }
       // Some cores have a master gain node before destination
       if (openALCtx.masterGain) {
-        console.log('[EmulatorJS] Returning masterGain node');
+        console.log("[EmulatorJS] Returning masterGain node");
         return openALCtx.masterGain;
       }
       // Some cores have an explicit output node
       if (openALCtx.outputNode) {
-        console.log('[EmulatorJS] Returning outputNode');
+        console.log("[EmulatorJS] Returning outputNode");
         return openALCtx.outputNode;
       }
 
       // Look for ScriptProcessor or AudioWorklet nodes (common in emscripten OpenAL)
       if (openALCtx.scriptProcessor) {
-        console.log('[EmulatorJS] Returning scriptProcessor node');
+        console.log("[EmulatorJS] Returning scriptProcessor node");
         return openALCtx.scriptProcessor;
       }
       if (openALCtx.audioWorklet) {
-        console.log('[EmulatorJS] Returning audioWorklet node');
+        console.log("[EmulatorJS] Returning audioWorklet node");
         return openALCtx.audioWorklet;
       }
 
       // Check for other common audio node patterns in OpenAL context
       // Some cores might have differently named properties
-      const potentialNodes = ['gainNode', 'outputGain', 'mainGain', 'audioGain', 'masterVolume'];
+      const potentialNodes = [
+        "gainNode",
+        "outputGain",
+        "mainGain",
+        "audioGain",
+        "masterVolume",
+      ];
       for (const nodeName of potentialNodes) {
-        if (openALCtx[nodeName] && typeof openALCtx[nodeName].connect === 'function') {
+        if (
+          openALCtx[nodeName] &&
+          typeof openALCtx[nodeName].connect === "function"
+        ) {
           console.log(`[EmulatorJS] Found potential audio node '${nodeName}'`);
           return openALCtx[nodeName];
         }
@@ -8461,7 +8501,7 @@ class EmulatorJS {
     // Second, try to inspect the global WebAudio state for emulator audio
     // This is more aggressive but may find the audio node
     try {
-      console.log('[EmulatorJS] Attempting global WebAudio inspection...');
+      console.log("[EmulatorJS] Attempting global WebAudio inspection...");
 
       // Get all audio contexts (browsers may have multiple)
       // We can't directly enumerate contexts, but we can look for active audio nodes
@@ -8471,26 +8511,180 @@ class EmulatorJS {
         window.AudioContext?.prototype,
         window.webkitAudioContext?.prototype,
         // Check for any global audio contexts that might be from the emulator
-        ...Object.values(window).filter(obj =>
-          obj && typeof obj === 'object' &&
-          (obj.constructor?.name?.includes('AudioContext') ||
-           obj.toString?.().includes('AudioContext'))
-        )
+        ...Object.values(window).filter(
+          (obj) =>
+            obj &&
+            typeof obj === "object" &&
+            (obj.constructor?.name?.includes("AudioContext") ||
+              obj.toString?.().includes("AudioContext")),
+        ),
       ];
 
-      console.log('[EmulatorJS] Found potential audio contexts:', potentialContexts.length);
+      console.log(
+        "[EmulatorJS] Found potential audio contexts:",
+        potentialContexts.length,
+      );
 
       // This is a fallback that won't work reliably but shows we're trying
       // The real fix is for cores to expose their audioDestination/masterGain
-      console.log('[EmulatorJS] getAudioOutputNode: No direct audio node access found');
-      console.log('[EmulatorJS] Emulator cores need to expose audioDestination or masterGain in Module.AL.currentCtx');
-
+      console.log(
+        "[EmulatorJS] getAudioOutputNode: No direct audio node access found",
+      );
+      console.log(
+        "[EmulatorJS] Emulator cores need to expose audioDestination or masterGain in Module.AL.currentCtx",
+      );
     } catch (e) {
-      console.warn('[EmulatorJS] getAudioOutputNode: Error during WebAudio inspection:', e);
+      console.warn(
+        "[EmulatorJS] getAudioOutputNode: Error during WebAudio inspection:",
+        e,
+      );
     }
 
-    console.log('[EmulatorJS] getAudioOutputNode: No suitable audio output node found');
-    console.log('[EmulatorJS] Audio capture will fall back to silent track');
+    console.log(
+      "[EmulatorJS] getAudioOutputNode: No suitable audio output node found",
+    );
+    console.log("[EmulatorJS] Audio capture will fall back to silent track");
     return null;
+  }
+
+  // Calculate and store ROM metadata for netplay
+  async calculateAndStoreRomMetadata(romData, romFilename) {
+    try {
+      // Calculate ROM hash
+      const romHash = await this.calculateRomHash(romData);
+
+      // Detect platform from filename
+      const platform = this.getPlatformFromFilename(romFilename);
+
+      // Store metadata in config
+      this.config.romHash = romHash;
+      this.config.romFilename = romFilename;
+      this.config.romName = romFilename;
+      this.config.platform = platform;
+      this.config.core = this.config.system; // Ensure core is set
+      this.config.coreVersion = this.coreName || null;
+
+      console.log("[Emulator] ROM metadata stored:", {
+        romHash: this.config.romHash,
+        romFilename: this.config.romFilename,
+        platform: this.config.platform,
+        core: this.config.core,
+        coreVersion: this.config.coreVersion,
+      });
+    } catch (error) {
+      console.warn("[Emulator] Failed to calculate ROM metadata:", error);
+      // Set defaults even if calculation fails
+      this.config.romHash = null;
+      this.config.platform = "unknown";
+      this.config.core = this.config.system;
+    }
+    // Update player metadata if in netplay session
+    if (this.netplay?.engine && this.netplay.currentRoomId) {
+      console.log("[Emulator] Updating player metadata with ROM data");
+      this.netplay.engine.roomManager
+        .updatePlayerMetadata(this.netplay.currentRoomId, {
+          coreId: this.config.system || null,
+          coreVersion: this.config.coreVersion || null,
+          romHash: this.config.romHash || null,
+          systemType: this.config.system || null,
+          platform: this.config.platform || null,
+        })
+        .catch((err) => {
+          console.warn(
+            "[Emulator] Failed to update player metadata after ROM load:",
+            err,
+          );
+        });
+    }
+  }
+
+  // Calculate ROM hash using SHA-256
+  async calculateRomHash(data) {
+    try {
+      // Convert data to ArrayBuffer if it's not already
+      let arrayBuffer;
+      if (data instanceof ArrayBuffer) {
+        arrayBuffer = data;
+      } else if (data instanceof Uint8Array) {
+        arrayBuffer = data.buffer.slice(
+          data.byteOffset,
+          data.byteOffset + data.byteLength,
+        );
+      } else {
+        // Convert other array types to Uint8Array
+        arrayBuffer = new Uint8Array(data).buffer;
+      }
+
+      const hashBuffer = await crypto.subtle.digest("SHA-256", arrayBuffer);
+      const hashArray = Array.from(new Uint8Array(hashBuffer));
+      return hashArray
+        .map((b) => b.toString(16).padStart(2, "0"))
+        .join("")
+        .substring(0, 16);
+    } catch (error) {
+      console.warn("[Emulator] Hash calculation failed:", error);
+      return null;
+    }
+  }
+
+  // Detect platform from filename extension
+  getPlatformFromFilename(filename) {
+    if (!filename) return "unknown";
+
+    const ext = filename.split(".").pop().toLowerCase();
+    const platformMap = {
+      // NES
+      nes: "nes",
+      fds: "nes",
+      unf: "nes",
+      unif: "nes",
+      // SNES
+      sfc: "snes",
+      smc: "snes",
+      fig: "snes",
+      // Game Boy
+      gb: "gb",
+      gbc: "gb",
+      // Game Boy Advance
+      gba: "gba",
+      // Nintendo 64
+      n64: "n64",
+      z64: "n64",
+      v64: "n64",
+      // PlayStation
+      bin: "psx",
+      cue: "psx",
+      iso: "psx",
+      // Sega Genesis/Mega Drive
+      md: "genesis",
+      smd: "genesis",
+      gen: "genesis",
+      // Sega Master System
+      sms: "sms",
+      // Sega Game Gear
+      gg: "gamegear",
+      // TurboGrafx-16/PC Engine
+      pce: "pce",
+      // Neo Geo Pocket
+      ngp: "ngp",
+      ngc: "ngp",
+      // WonderSwan
+      ws: "wswan",
+      wsc: "wswan",
+      // Atari 2600
+      a26: "atari2600",
+      // Atari 7800
+      a78: "atari7800",
+      // ColecoVision
+      col: "coleco",
+      // MSX
+      rom: "msx",
+      // DOS
+      exe: "dos",
+      com: "dos",
+      bat: "dos",
+    };
+
+    return platformMap[ext] || "unknown";
   }
 }

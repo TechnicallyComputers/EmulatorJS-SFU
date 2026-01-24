@@ -2406,6 +2406,26 @@ class RoomManager {
           ? window.EJS_NETPLAY_INPUT_MODE
           : null) ||
         "unorderedRelay",
+      // Include netplay_mode and room_phase if provided
+      netplay_mode:
+        playerInfo.netplay_mode !== undefined ? playerInfo.netplay_mode : 0,
+      room_phase:
+        playerInfo.room_phase !== undefined ? playerInfo.room_phase : "running",
+      sync_config: playerInfo.sync_config || null,
+      spectator_mode:
+        playerInfo.spectator_mode !== undefined ? playerInfo.spectator_mode : 1,
+      // Include ROM and emulator metadata for room creation
+      romHash: playerInfo.romHash || null,
+      rom_hash: playerInfo.romHash || null, // Backward compatibility
+      rom_name: playerInfo.romName || playerInfo.romFilename || null,
+      romFilename: playerInfo.romFilename || null,
+      system: playerInfo.system || null,
+      platform: playerInfo.platform || null,
+      coreId: playerInfo.coreId || playerInfo.system || null,
+      core_type: playerInfo.coreId || playerInfo.system || null, // Backward compatibility
+      coreVersion: playerInfo.coreVersion || null,
+      systemType: playerInfo.systemType || playerInfo.system || null,
+      metadata: playerInfo.metadata || null,
     };
 
     // Update session state
@@ -2413,7 +2433,7 @@ class RoomManager {
     this.sessionState.setLocalPlayer(
       extra.userid,
       extra.player_name,
-      extra.userid
+      extra.userid,
     );
 
     return new Promise((resolve, reject) => {
@@ -2431,9 +2451,13 @@ class RoomManager {
           }
 
           // Room created successfully
-          this.sessionState.setRoom(roomName, password, this.config.gameMode || null);
+          this.sessionState.setRoom(
+            roomName,
+            password,
+            this.config.gameMode || null,
+          );
           resolve(sessionid);
-        }
+        },
       );
     });
   }
@@ -2447,7 +2471,13 @@ class RoomManager {
    * @param {Object} playerInfo - Player information
    * @returns {Promise<void>}
    */
-  async joinRoom(sessionId, roomName, maxPlayers, password = null, playerInfo = {}) {
+  async joinRoom(
+    sessionId,
+    roomName,
+    maxPlayers,
+    password = null,
+    playerInfo = {},
+  ) {
     if (!this.socket.isConnected()) {
       throw new Error("Socket not connected");
     }
@@ -2470,26 +2500,37 @@ class RoomManager {
       player_slot: preferredSlot,
       userid: playerId,
       sessionid: sessionId,
-      input_mode:
-        this.config.inputMode ||
-        (typeof window.EJS_NETPLAY_INPUT_MODE === "string"
-          ? window.EJS_NETPLAY_INPUT_MODE
-          : null) ||
-        "unorderedRelay",
+      netplay_mode: this.config.netplayMode || 0,
+      input_mode: this.config.inputMode || "unorderedRelay",
+
+      // ✅ ADD ROM METADATA FOR COMPATIBILITY VALIDATION
+      rom_hash: playerInfo.romHash || null,
+      rom_name: playerInfo.romName || playerInfo.romFilename || null,
+      core_type: playerInfo.core || playerInfo.system || null,
+      system: playerInfo.system || null,
+      platform: playerInfo.platform || null,
+      coreId: playerInfo.coreId || playerInfo.core || null,
+      coreVersion: playerInfo.coreVersion || null,
+      romHash: playerInfo.romHash || null,
+      systemType: playerInfo.systemType || playerInfo.system || null,
     };
 
-    // Update session state
-    this.sessionState.setHost(false);
+    // Update session state (host status will be determined from server response)
+    // Don't set host status yet - wait for server response
     this.sessionState.setLocalPlayer(playerId, extra.player_name, playerId);
     this.sessionState.setRoom(roomName, password, this.config.gameMode || null);
 
-    console.log(`[RoomManager] joinRoom called: roomName=${roomName}, playerId=${playerId}`);
+    console.log(
+      `[RoomManager] joinRoom called: roomName=${roomName}, playerId=${playerId}`,
+    );
     console.log(`[RoomManager] Socket connected: ${this.socket.isConnected()}`);
 
     return new Promise((resolve, reject) => {
       // Ensure socket is connected
       if (!this.socket.isConnected()) {
-        console.warn("[RoomManager] Socket not connected, waiting for connection...");
+        console.warn(
+          "[RoomManager] Socket not connected, waiting for connection...",
+        );
         // Wait for connection (if callback is provided)
         if (this.config.callbacks?.onSocketReady) {
           this.config.callbacks.onSocketReady(() => {
@@ -2498,7 +2539,9 @@ class RoomManager {
           });
           return;
         }
-        console.error("[RoomManager] Socket not connected and no onSocketReady callback");
+        console.error(
+          "[RoomManager] Socket not connected and no onSocketReady callback",
+        );
         reject(new Error("Socket not connected"));
         return;
       }
@@ -2520,7 +2563,7 @@ class RoomManager {
     console.log("[RoomManager] Emitting join-room event:", {
       roomName: extra.room_name,
       playerName: extra.player_name,
-      playerId: extra.userid
+      playerId: extra.userid,
     });
 
     this.socket.emit(
@@ -2530,13 +2573,17 @@ class RoomManager {
         password: password,
       },
       (error, response) => {
-        console.log("[RoomManager] join-room callback received:", { error, responseKeys: response ? Object.keys(response) : null });
+        console.log("[RoomManager] join-room callback received:", {
+          error,
+          responseKeys: response ? Object.keys(response) : null,
+        });
         if (error) {
           // Handle auth errors specially
           if (
-            error.includes("unauthorized") ||
-            error.includes("token") ||
-            error.includes("auth")
+            typeof error === "string" &&
+            (error.includes("unauthorized") ||
+              error.includes("token") ||
+              error.includes("auth"))
           ) {
             if (window.handleSfuAuthError) {
               window.handleSfuAuthError();
@@ -2545,20 +2592,49 @@ class RoomManager {
             }
           }
 
-          reject(new Error(error));
+          // For structured errors (like compatibility issues), preserve the object
+          if (typeof error === "object" && error.error) {
+            const structuredError = new Error(error.message || error.error);
+            structuredError.details = error; // Preserve the full error object
+            reject(structuredError);
+          } else {
+            // For string errors, convert to Error object
+            reject(
+              new Error(
+                typeof error === "string" ? error : JSON.stringify(error),
+              ),
+            );
+          }
           return;
         }
 
         // Update players list
         if (this.sessionState && response && response.users) {
-          Object.entries(response.users || {}).forEach(([playerId, playerData]) => {
-            this.sessionState.addPlayer(playerId, playerData);
-          });
+          Object.entries(response.users || {}).forEach(
+            ([playerId, playerData]) => {
+              this.sessionState.addPlayer(playerId, playerData);
+            },
+          );
+        }
+
+        // Check if current player is the host based on server response
+        const localPlayerId = extra.userid;
+        const localPlayerData = response?.users?.[localPlayerId];
+        if (localPlayerData && localPlayerData.is_host === true) {
+          console.log(
+            `[RoomManager] Player ${localPlayerId} is the room host (from server response)`,
+          );
+          this.sessionState.setHost(true);
+        } else {
+          console.log(
+            `[RoomManager] Player ${localPlayerId} is not the room host`,
+          );
+          this.sessionState.setHost(false);
         }
 
         // Room joined successfully - return the response with room info
         resolve(response);
-      }
+      },
     );
   }
 
@@ -2574,18 +2650,22 @@ class RoomManager {
       this.sessionState.reset();
       return;
     }
-  
+
     return new Promise((resolve) => {
-      this.socket.emit("leave-room", { 
-        roomName: this.sessionState.roomName,
-        reason: reason 
-      }, () => {
-        // Always cleanup, even if server doesn't respond
-        this.sessionState.clearRoom();
-        this.sessionState.reset();
-        resolve();
-      });
-  
+      this.socket.emit(
+        "leave-room",
+        {
+          roomName: this.sessionState.roomName,
+          reason: reason,
+        },
+        () => {
+          // Always cleanup, even if server doesn't respond
+          this.sessionState.clearRoom();
+          this.sessionState.reset();
+          resolve();
+        },
+      );
+
       // Timeout after 2 seconds
       setTimeout(() => {
         this.sessionState.clearRoom();
@@ -2609,15 +2689,19 @@ class RoomManager {
     }
 
     return new Promise((resolve, reject) => {
-      this.socket.emit("toggle-ready", {
-        roomName: roomName
-      }, (error) => {
-        if (error) {
-          reject(new Error(error));
-          return;
-        }
-        resolve();
-      });
+      this.socket.emit(
+        "toggle-ready",
+        {
+          roomName: roomName,
+        },
+        (error) => {
+          if (error) {
+            reject(new Error(error));
+            return;
+          }
+          resolve();
+        },
+      );
     });
   }
 
@@ -2635,15 +2719,19 @@ class RoomManager {
     }
 
     return new Promise((resolve, reject) => {
-      this.socket.emit("start-game", {
-        roomName: roomName
-      }, (error) => {
-        if (error) {
-          reject(new Error(error));
-          return;
-        }
-        resolve();
-      });
+      this.socket.emit(
+        "start-game",
+        {
+          roomName: roomName,
+        },
+        (error) => {
+          if (error) {
+            reject(new Error(error));
+            return;
+          }
+          resolve();
+        },
+      );
     });
   }
 
@@ -2662,16 +2750,20 @@ class RoomManager {
     }
 
     return new Promise((resolve, reject) => {
-      this.socket.emit("ready-at-frame-1", {
-        roomName: roomName,
-        frame: frame
-      }, (error) => {
-        if (error) {
-          reject(new Error(error));
-          return;
-        }
-        resolve();
-      });
+      this.socket.emit(
+        "ready-at-frame-1",
+        {
+          roomName: roomName,
+          frame: frame,
+        },
+        (error) => {
+          if (error) {
+            reject(new Error(error));
+            return;
+          }
+          resolve();
+        },
+      );
     });
   }
 
@@ -2682,7 +2774,10 @@ class RoomManager {
    * @returns {Promise}
    */
   async updateRoomMetadata(roomName, metadata) {
-    console.log("[RoomManager] updateRoomMetadata called:", { roomName, metadata });
+    console.log("[RoomManager] updateRoomMetadata called:", {
+      roomName,
+      metadata,
+    });
 
     if (!this.socket.isConnected()) {
       console.error("[RoomManager] Socket not connected for metadata update");
@@ -2690,16 +2785,57 @@ class RoomManager {
     }
 
     return new Promise((resolve, reject) => {
-      this.socket.emit("update-room-metadata", {
-        roomName: roomName,
-        metadata: metadata
-      }, (error) => {
-        if (error) {
-          reject(new Error(error));
-          return;
-        }
-        resolve();
-      });
+      this.socket.emit(
+        "update-room-metadata",
+        {
+          roomName: roomName,
+          metadata: metadata,
+        },
+        (error) => {
+          if (error) {
+            reject(new Error(error));
+            return;
+          }
+          resolve();
+        },
+      );
+    });
+  }
+
+  /**
+   * Update player metadata
+   * @param {string} roomName - Room name
+   * @param {Object} metadata - Metadata to update
+   * @returns {Promise}
+   */
+  async updatePlayerMetadata(roomName, metadata) {
+    console.log("[RoomManager] updatePlayerMetadata called:", {
+      roomName,
+      metadata,
+    });
+
+    if (!this.socket.isConnected()) {
+      console.error(
+        "[RoomManager] Socket not connected for player metadata update",
+      );
+      throw new Error("Socket not connected");
+    }
+
+    return new Promise((resolve, reject) => {
+      this.socket.emit(
+        "update-player-metadata",
+        {
+          roomName: roomName,
+          metadata: metadata,
+        },
+        (error) => {
+          if (error) {
+            reject(new Error(error));
+            return;
+          }
+          resolve();
+        },
+      );
     });
   }
 
@@ -2718,16 +2854,20 @@ class RoomManager {
     }
 
     return new Promise((resolve, reject) => {
-      this.socket.emit("join-info", {
-        roomName: roomName,
-        ...joinInfo
-      }, (error) => {
-        if (error) {
-          reject(new Error(error));
-          return;
-        }
-        resolve();
-      });
+      this.socket.emit(
+        "join-info",
+        {
+          roomName: roomName,
+          ...joinInfo,
+        },
+        (error) => {
+          if (error) {
+            reject(new Error(error));
+            return;
+          }
+          resolve();
+        },
+      );
     });
   }
 
@@ -2768,19 +2908,26 @@ class RoomManager {
       throw new Error("Not in a room");
     }
 
-    console.log("[RoomManager] Sending update-player-slot message:", { roomName, playerSlot: slot });
+    console.log("[RoomManager] Sending update-player-slot message:", {
+      roomName,
+      playerSlot: slot,
+    });
 
     return new Promise((resolve, reject) => {
-      this.socket.emit("update-player-slot", {
-        roomName: roomName,
-        playerSlot: slot
-      }, (error) => {
-        if (error) {
-          reject(new Error(error));
-          return;
-        }
-        resolve();
-      });
+      this.socket.emit(
+        "update-player-slot",
+        {
+          roomName: roomName,
+          playerSlot: slot,
+        },
+        (error) => {
+          if (error) {
+            reject(new Error(error));
+            return;
+          }
+          resolve();
+        },
+      );
     });
   }
 
@@ -2801,16 +2948,24 @@ class RoomManager {
    * Setup Socket.IO event listeners for room events.
    */
   setupEventListeners() {
-    console.log(`[RoomManager] Setting up event listeners, isRoomListing=${this.config.isRoomListing}`);
+    console.log(
+      `[RoomManager] Setting up event listeners, isRoomListing=${this.config.isRoomListing}`,
+    );
 
     // Listen for player join/leave events
     this.socket.on("users-updated", (users) => {
-      console.log("[RoomManager] 🔔 RECEIVED users-updated event:", Object.keys(users || {}));
+      console.log(
+        "[RoomManager] 🔔 RECEIVED users-updated event:",
+        Object.keys(users || {}),
+      );
 
       if (this.sessionState) {
         // Clear existing players
         const currentPlayers = this.sessionState.getPlayers();
-        console.log("[RoomManager] Current players before update:", Array.from(currentPlayers.keys()));
+        console.log(
+          "[RoomManager] Current players before update:",
+          Array.from(currentPlayers.keys()),
+        );
 
         // Remove players that are no longer in the room
         for (const [playerId, playerData] of currentPlayers) {
@@ -2822,25 +2977,36 @@ class RoomManager {
 
         // Add/update players
         Object.entries(users || {}).forEach(([playerId, playerData]) => {
-          console.log(`[RoomManager] Adding/updating player: ${playerId}`, playerData);
+          console.log(
+            `[RoomManager] Adding/updating player: ${playerId}`,
+            playerData,
+          );
           this.sessionState.addPlayer(playerId, playerData);
         });
 
-        console.log("[RoomManager] Players after update:", Array.from(this.sessionState.getPlayers().keys()));
+        console.log(
+          "[RoomManager] Players after update:",
+          Array.from(this.sessionState.getPlayers().keys()),
+        );
       }
 
       if (this.config.callbacks?.onUsersUpdated) {
         console.log("[RoomManager] Calling onUsersUpdated callback");
         this.config.callbacks.onUsersUpdated(users);
       } else {
-        console.log("[RoomManager] No onUsersUpdated callback available, skipping UI update");
+        console.log(
+          "[RoomManager] No onUsersUpdated callback available, skipping UI update",
+        );
       }
     });
 
     // Listen for player slot updates
     this.socket.on("player-slot-updated", (data) => {
       console.log("[RoomManager] Received player-slot-updated:", data);
-      console.log("[RoomManager] Current session state players:", Array.from(this.sessionState?.getPlayers()?.keys() || []));
+      console.log(
+        "[RoomManager] Current session state players:",
+        Array.from(this.sessionState?.getPlayers()?.keys() || []),
+      );
       if (data && data.playerId && data.playerSlot !== undefined) {
         // Update session state
         if (this.sessionState) {
@@ -2853,7 +3019,10 @@ class RoomManager {
           // If direct lookup fails, search by player name
           if (!player) {
             for (const [id, playerData] of players) {
-              if (playerData.name === data.playerId || playerData.player_name === data.playerId) {
+              if (
+                playerData.name === data.playerId ||
+                playerData.player_name === data.playerId
+              ) {
                 playerId = id;
                 player = playerData;
                 break;
@@ -2866,15 +3035,26 @@ class RoomManager {
             player.slot = data.playerSlot;
             // Update the player in the session state
             this.sessionState.addPlayer(playerId, player);
-            console.log("[RoomManager] Updated session state for player:", playerId, "slot:", data.playerSlot);
+            console.log(
+              "[RoomManager] Updated session state for player:",
+              playerId,
+              "slot:",
+              data.playerSlot,
+            );
           } else {
-            console.warn("[RoomManager] Could not find player in session state:", data.playerId);
+            console.warn(
+              "[RoomManager] Could not find player in session state:",
+              data.playerId,
+            );
           }
         }
 
         // Trigger targeted slot update
         if (this.config.callbacks?.onPlayerSlotUpdated) {
-          this.config.callbacks.onPlayerSlotUpdated(data.playerId, data.playerSlot);
+          this.config.callbacks.onPlayerSlotUpdated(
+            data.playerId,
+            data.playerSlot,
+          );
         } else if (this.config.callbacks?.onUsersUpdated) {
           // Fallback to full update if targeted update not available
           const currentUsers = this.sessionState?.getPlayersObject() || {};
@@ -2900,7 +3080,9 @@ class RoomManager {
           const player = players.get(data.playerId);
           if (player) {
             player.ready = data.ready;
-            console.log(`[RoomManager] Updated ready state for ${data.playerId}: ${data.ready}`);
+            console.log(
+              `[RoomManager] Updated ready state for ${data.playerId}: ${data.ready}`,
+            );
           }
         }
 
@@ -2930,13 +3112,19 @@ class RoomManager {
           if (player) {
             player.validationStatus = data.validationStatus;
             player.validationReason = data.validationReason;
-            console.log(`[RoomManager] Updated validation for ${data.playerId}: ${data.validationStatus}`);
+            console.log(
+              `[RoomManager] Updated validation for ${data.playerId}: ${data.validationStatus}`,
+            );
           }
         }
 
         // Trigger callback
         if (this.config.callbacks?.onPlayerValidationUpdated) {
-          this.config.callbacks.onPlayerValidationUpdated(data.playerId, data.validationStatus, data.validationReason);
+          this.config.callbacks.onPlayerValidationUpdated(
+            data.playerId,
+            data.validationStatus,
+            data.validationReason,
+          );
         }
       }
     });
@@ -5862,15 +6050,15 @@ try {
 class NetplayEngine {
   // Room mode and phase enums for DELAY_SYNC implementation
   static RoomMode = {
-    LIVE_STREAM: 'live_stream',
-    DELAY_SYNC: 'delay_sync'
+    LIVE_STREAM: "live_stream",
+    DELAY_SYNC: "delay_sync",
   };
 
   static RoomPhase = {
-    LOBBY: 'lobby',
-    PREPARE: 'prepare',
-    RUNNING: 'running',
-    ENDED: 'ended'
+    LOBBY: "lobby",
+    PREPARE: "prepare",
+    RUNNING: "running",
+    ENDED: "ended",
   };
 
   /**
@@ -5886,10 +6074,10 @@ class NetplayEngine {
     const filename = this.config.romName || this.config.romFilename;
     if (filename) {
       // Strip extension
-      return filename.replace(/\.[^/.]+$/, '');
+      return filename.replace(/\.[^/.]+$/, "");
     }
 
-    return 'Unknown ROM';
+    return "Unknown ROM";
   }
 
   /**
@@ -6199,10 +6387,23 @@ class NetplayEngine {
             this.netplayMenu.netplayHandleGameStart(data);
           }
         },
-        onPlayerValidationUpdated: (playerId, validationStatus, validationReason) => {
-          console.log(`[NetplayEngine] onPlayerValidationUpdated callback called for ${playerId}: ${validationStatus}`);
-          if (this.netplayMenu && this.netplayMenu.netplayUpdatePlayerValidation) {
-            this.netplayMenu.netplayUpdatePlayerValidation(playerId, validationStatus, validationReason);
+        onPlayerValidationUpdated: (
+          playerId,
+          validationStatus,
+          validationReason,
+        ) => {
+          console.log(
+            `[NetplayEngine] onPlayerValidationUpdated callback called for ${playerId}: ${validationStatus}`,
+          );
+          if (
+            this.netplayMenu &&
+            this.netplayMenu.netplayUpdatePlayerValidation
+          ) {
+            this.netplayMenu.netplayUpdatePlayerValidation(
+              playerId,
+              validationStatus,
+              validationReason,
+            );
           }
         },
         onRoomClosed: (data) => {
@@ -6211,7 +6412,7 @@ class NetplayEngine {
       };
       this.roomManager = new RoomManager(
         this.socketTransport,
-        this.configManager?.loadConfig() || {},
+        { ...this.config, ...(this.configManager?.loadConfig() || {}) },
         this.sessionState,
       );
       this.roomManager.config.callbacks = this.config.callbacks;
@@ -6937,21 +7138,49 @@ class NetplayEngine {
           Object.keys(data),
         );
         Object.entries(data).forEach(([roomId, roomInfo]) => {
-          console.log(`[Netplay] Processing room ${roomId}:`, roomInfo);
+          console.log(`[Netplay] 🔍 Processing room ${roomId}:`, {
+            roomInfo,
+            netplay_mode: roomInfo?.netplay_mode,
+            rom_name: roomInfo?.rom_name,
+            rom_hash: roomInfo?.rom_hash,
+            core_type: roomInfo?.core_type,
+            allKeys: roomInfo ? Object.keys(roomInfo) : [],
+          });
           if (roomInfo && roomInfo.room_name) {
+            // Normalize netplay_mode (handle both string and number formats)
+            const netplayMode =
+              roomInfo.netplay_mode === "delay_sync" ||
+              roomInfo.netplay_mode === 1
+                ? "delay_sync"
+                : "live_stream";
+
             const room = {
               id: roomId,
               name: roomInfo.room_name,
               current: roomInfo.current || 0,
               max: roomInfo.max || 4,
               hasPassword: roomInfo.hasPassword || false,
-              netplay_mode: roomInfo.netplay_mode || 0,
+              netplay_mode: netplayMode, // Use normalized value
               sync_config: roomInfo.sync_config || null,
               spectator_mode: roomInfo.spectator_mode || 1,
+              // Include all ROM and emulator metadata
               rom_hash: roomInfo.rom_hash || null,
+              rom_name: roomInfo.rom_name || null,
               core_type: roomInfo.core_type || null,
+              system: roomInfo.system || null,
+              platform: roomInfo.platform || null,
+              coreId: roomInfo.coreId || null,
+              coreVersion: roomInfo.coreVersion || null,
+              romHash: roomInfo.romHash || null,
+              systemType: roomInfo.systemType || null,
             };
-            console.log(`[Netplay] Added room to list:`, room);
+            console.log(`[Netplay] ✅ Added room to list with metadata:`, {
+              id: room.id,
+              netplay_mode: room.netplay_mode,
+              rom_name: room.rom_name,
+              rom_hash: room.rom_hash,
+              core_type: room.core_type,
+            });
             rooms.push(room);
           } else {
             console.log(
@@ -7012,45 +7241,52 @@ class NetplayEngine {
 
       // Prepare player info for engine
       const playerInfo = {
-        player_name: this.emulator.netplay.getNetplayId(),
+        player_name: playerName,
         player_slot: this.emulator.netplay.localSlot || 0,
         domain: window.location.host,
-        game_id: this.config.gameId || "",
-        netplay_mode: roomType === "delay_sync" ? NetplayEngine.RoomMode.DELAY_SYNC : NetplayEngine.RoomMode.LIVE_STREAM,
-        room_phase: roomType === "delay_sync" ? NetplayEngine.RoomPhase.LOBBY : NetplayEngine.RoomPhase.RUNNING,
-        allow_spectators: allowSpectators,
-        spectator_mode: allowSpectators ? 1 : 0,
+        // ✅ ADD ROM METADATA
+        romHash: this.emulator.config.romHash,
+        romName: this.emulator.config.romName,
+        romFilename: this.emulator.config.romFilename,
+        core: this.emulator.config.core,
+        system: this.emulator.config.system,
+        platform: this.emulator.config.platform,
+        coreId: this.emulator.config.coreId,
+        coreVersion: this.emulator.config.coreVersion,
+        systemType: this.emulator.config.systemType,
       };
 
       // Add structured metadata for DELAY_SYNC rooms
       if (roomType === "delay_sync") {
         const emulatorId = this.config.system || this.config.core || "unknown";
         const EMULATOR_NAMES = {
-          snes9x: 'SNES9x',
-          bsnes: 'bsnes',
-          mupen64plus: 'Mupen64Plus',
-          pcsx_rearmed: 'PCSX-ReARMed',
-          mednafen_psx: 'Mednafen PSX',
-          mednafen_snes: 'Mednafen SNES',
-          melonDS: 'melonDS',
-          citra: 'Citra',
-          dolphin: 'Dolphin',
-          ppsspp: 'PPSSPP'
+          snes9x: "SNES9x",
+          bsnes: "bsnes",
+          mupen64plus: "Mupen64Plus",
+          pcsx_rearmed: "PCSX-ReARMed",
+          mednafen_psx: "Mednafen PSX",
+          mednafen_snes: "Mednafen SNES",
+          melonDS: "melonDS",
+          citra: "Citra",
+          dolphin: "Dolphin",
+          ppsspp: "PPSSPP",
         };
 
         playerInfo.metadata = {
           rom: {
             displayName: this.getRomDisplayName(),
-            hash: this.config.romHash ? {
-              algo: 'sha256', // Assume SHA-256, could be configurable
-              value: this.config.romHash
-            } : null
+            hash: this.config.romHash
+              ? {
+                  algo: "sha256", // Assume SHA-256, could be configurable
+                  value: this.config.romHash,
+                }
+              : null,
           },
           emulator: {
             id: emulatorId,
             displayName: EMULATOR_NAMES[emulatorId] || emulatorId,
-            coreVersion: this.config.coreVersion || null
-          }
+            coreVersion: this.config.coreVersion || null,
+          },
         };
       }
 
@@ -7062,6 +7298,13 @@ class NetplayEngine {
         };
       }
 
+      // Add netplay_mode to playerInfo so it gets sent to server
+      playerInfo.netplay_mode = roomType === "delay_sync" ? 1 : 0;
+      playerInfo.room_phase =
+        roomType === "delay_sync"
+          ? NetplayEngine.RoomPhase.LOBBY
+          : NetplayEngine.RoomPhase.RUNNING;
+
       try {
         const result = await this.createRoom(
           roomName,
@@ -7070,6 +7313,21 @@ class NetplayEngine {
           playerInfo,
         );
         console.log("[Netplay] Room creation successful via engine:", result);
+
+        this.emulator.netplay.engine.roomManager
+          .updatePlayerMetadata(roomName, {
+            coreId: this.emulator.config.system || null, // ✅ Emulator config
+            coreVersion: this.emulator.config.coreVersion || null, // ✅ Emulator config
+            romHash: this.emulator.config.romHash || null, // ✅ Emulator config
+            systemType: this.emulator.config.system || null, // ✅ Emulator config
+            platform: this.emulator.config.platform || null, // ✅ Emulator config
+          })
+          .catch((err) => {
+            console.warn(
+              "[NetplayEngine] Failed to update player metadata:",
+              err,
+            );
+          });
 
         // Keep the room listing engine - it will be upgraded to a main engine
 
@@ -7080,8 +7338,11 @@ class NetplayEngine {
           current: 1, // Creator is already joined
           max: maxPlayers,
           hasPassword: !!password,
-          netplay_mode: roomType === "delay_sync" ? NetplayEngine.RoomMode.DELAY_SYNC : NetplayEngine.RoomMode.LIVE_STREAM,
-          room_phase: roomType === "delay_sync" ? NetplayEngine.RoomPhase.LOBBY : NetplayEngine.RoomPhase.RUNNING,
+          netplay_mode: roomType === "delay_sync" ? 1 : 0,
+          room_phase:
+            roomType === "delay_sync"
+              ? NetplayEngine.RoomPhase.LOBBY
+              : NetplayEngine.RoomPhase.RUNNING,
           sync_config:
             roomType === "delay_sync"
               ? {
@@ -7090,45 +7351,66 @@ class NetplayEngine {
                 }
               : null,
           spectator_mode: allowSpectators ? 1 : 0,
-          // Include new structured metadata for DELAY_SYNC
-          ...(roomType === "delay_sync" ? {
-            metadata: playerInfo.metadata
-          } : {
-            rom_hash: this.config.romHash || this.config.romName || null,
-            core_type: this.config.system || this.config.core || null,
-          }),
+          // Include detailed metadata for all room types
+          metadata: {
+            // Legacy fields for backward compatibility
+            rom_hash: this.emulator.config.romHash || null,
+            core_type: this.emulator.config.system || null, // ✅ Fix: use system
+            system: this.emulator.config.system || null,
+            platform: this.emulator.config.platform || null,
+            coreId: this.emulator.config.system || null, // ✅ Fix: use system
+            coreVersion: this.emulator.config.coreVersion || null,
+            romHash: this.emulator.config.romHash || null,
+            systemType: this.emulator.config.system || null,
+            netplay_mode: roomType === "delay_sync" ? 1 : 0, // ✅ Add netplay_mode
+          },
         };
 
         // For DELAY_SYNC, update room metadata after creation
         if (roomType === "delay_sync") {
-          this.emulator.netplay.engine.roomManager.updateRoomMetadata(roomName, {
-            rom_hash: this.config.romHash || this.config.romName || null,
-            core_type: this.config.system || this.config.core || null,
-          }).catch(err => {
-            console.warn("[NetplayEngine] Failed to update room metadata:", err);
-          });
+          this.emulator.netplay.engine.roomManager
+            .updateRoomMetadata(roomName, {
+              // core, rom and system metadata
+              rom_hash: this.emulator.config.romHash || null,
+              rom_name:
+                this.emulator.config.romName ||
+                this.emulator.config.romFilename ||
+                null,
+              core_type: this.emulator.config.system || null, // Fixed
+              system: this.emulator.config.system || null,
+              platform: this.emulator.config.platform || null,
+              coreId: this.emulator.config.system || null,
+              coreVersion: this.emulator.config.coreVersion || null,
+              romHash: this.emulator.config.romHash || null,
+              systemType: this.emulator.config.system || null,
+            })
+            .catch((err) => {
+              console.warn(
+                "[NetplayEngine] Failed to update room metadata:",
+                err,
+              );
+            });
         }
-
-        // Switch to appropriate room UI and setup based on room type
-        if (roomType === "live_stream") {
-          this.netplayMenu.netplaySwitchToLiveStreamRoom(roomName, password);
-
-          // LIVESTREAM ROOM: Set up WebRTC producer transports for host
-          // Only hosts need to create producers for video/audio streaming
-          console.log(
-            "[Netplay] Livestream room created - setting up producers immediately",
-          );
-          setTimeout(() => this.netplaySetupProducers(), 1000);
-        } else if (roomType === "delay_sync") {
-          this.netplayMenu.netplaySwitchToDelaySyncRoom(
+        // After room creation, join the room using unified join logic
+        // This ensures host and guest use the same code path
+        console.log(
+          "[Netplay] Room created, now joining via unified join logic",
+        );
+        try {
+          // Join the room we just created (host joins their own room)
+          await this.netplayJoinRoom(
             roomName,
-            password,
-            maxPlayers,
+            !!password,
+            roomType === "delay_sync" ? "delay_sync" : "live_stream",
           );
-
-          // DELAY SYNC ROOM: Different setup needed for input synchronization
-          // TODO: Add delay sync specific setup (state synchronization, etc.)
-          // No WebRTC producers needed for delay sync - uses different sync mechanism
+          console.log("[Netplay] Host successfully joined their own room");
+        } catch (joinError) {
+          console.error(
+            "[Netplay] Failed to join room after creation:",
+            joinError,
+          );
+          // Don't throw - room was created successfully, join failure is separate
+          // The UI might already be switched by netplayJoinRoom
         }
 
         return result;
@@ -7235,8 +7517,14 @@ class NetplayEngine {
       spectator_mode: spectatorMode,
       domain: window.location.host,
       game_id: this.config.gameId || "",
-      rom_hash: this.config.romHash || this.config.romName || null,
-      core_type: this.config.system || this.config.core || null,
+      rom_hash: this.emulator.config.romHash || null,
+      core_type: this.emulator.config.core || null,
+      system: this.emulator.config.system || null,
+      platform: this.emulator.config.platform || null,
+      coreId: this.emulator.config.core || null,
+      coreVersion: this.emulator.config.coreVersion || null,
+      romHash: this.emulator.config.romHash || null,
+      systemType: this.emulator.config.system || null,
     };
 
     console.log("[Netplay] Room creation payload:", roomData);
@@ -7781,7 +8069,7 @@ class NetplayEngine {
   }
 
   // Helper method to join a room
-  async netplayJoinRoom(roomId, hasPassword) {
+  async netplayJoinRoom(roomId, hasPassword, roomNetplayMode = null) {
     const playerName = this.getPlayerName();
     if (!playerName || playerName === "Player") {
       throw new Error("Player name not set");
@@ -7798,6 +8086,7 @@ class NetplayEngine {
       console.log("[Netplay] Joining room via NetplayEngine:", {
         roomId,
         password,
+        roomNetplayMode,
       });
 
       // Initialize engine if not already initialized
@@ -7819,6 +8108,20 @@ class NetplayEngine {
         player_name: playerName,
         player_slot: this.emulator.netplay.localSlot || 0,
         domain: window.location.host,
+        // ✅ ADD ROM METADATA FOR COMPATIBILITY VALIDATION
+        romHash: this.emulator.config.romHash || null,
+        romName: this.emulator.config.romName || null,
+        romFilename: this.emulator.config.romFilename || null,
+        core: this.emulator.config.core || null,
+        system: this.emulator.config.system || null,
+        platform: this.emulator.config.platform || null,
+        coreId:
+          this.emulator.config.coreId || this.emulator.config.system || null,
+        coreVersion: this.emulator.config.coreVersion || null,
+        systemType:
+          this.emulator.config.systemType ||
+          this.emulator.config.system ||
+          null,
       };
 
       try {
@@ -7835,18 +8138,50 @@ class NetplayEngine {
         this.emulator.netplay.currentRoomId = roomId;
         this.emulator.netplay.currentRoom = result;
 
-        // Immediately update player list with users from join result
-        if (result && result.users) {
+        // Ensure currentRoom has netplay_mode set (use roomNetplayMode from room list if available)
+        if (this.emulator.netplay.currentRoom) {
+          // Set netplay_mode from roomNetplayMode parameter or result
+          if (roomNetplayMode !== null && roomNetplayMode !== undefined) {
+            this.emulator.netplay.currentRoom.netplay_mode =
+              roomNetplayMode === "delay_sync" || roomNetplayMode === 1
+                ? "delay_sync"
+                : "live_stream";
+          } else if (!this.emulator.netplay.currentRoom.netplay_mode) {
+            // Fallback: determine from result.netplay_mode
+            this.emulator.netplay.currentRoom.netplay_mode =
+              result.netplay_mode === "delay_sync" || result.netplay_mode === 1
+                ? "delay_sync"
+                : "live_stream";
+          }
           console.log(
-            "[Netplay] Updating player list immediately after join with users:",
-            Object.keys(result.users),
+            `[Netplay] Stored currentRoom.netplay_mode: ${this.emulator.netplay.currentRoom.netplay_mode}`,
           );
-          this.netplayMenu.netplayUpdatePlayerList({ players: result.users });
         }
 
+        // Immediately update player list with users from join result
         // Switch to appropriate room UI and setup based on room type
-        const roomType =
-          result.netplay_mode === 1 ? "delay_sync" : "live_stream";
+        // Use roomNetplayMode from room list, fallback to result.netplay_mode
+        let roomType = "live_stream"; // default
+        if (roomNetplayMode === "delay_sync" || roomNetplayMode === 1) {
+          roomType = "delay_sync";
+        } else if (
+          result.netplay_mode === "delay_sync" ||
+          result.netplay_mode === 1
+        ) {
+          roomType = "delay_sync";
+        } else if (roomNetplayMode === "live_stream" || roomNetplayMode === 0) {
+          roomType = "live_stream";
+        } else if (
+          result.netplay_mode === "live_stream" ||
+          result.netplay_mode === 0
+        ) {
+          roomType = "live_stream";
+        }
+
+        console.log(
+          `[Netplay] Determined room type: ${roomType} (from roomNetplayMode: ${roomNetplayMode}, result.netplay_mode: ${result.netplay_mode})`,
+        );
+
         if (roomType === "live_stream") {
           this.netplayMenu.netplaySwitchToLiveStreamRoom(roomId, password);
 
@@ -8498,12 +8833,21 @@ class NetplayEngine {
       }
     }
 
-    // 4. Clean up engine and transport references
+    // 4. Clean up engine and transport references and all session state
     if (this.emulator.netplay) {
+      // Clear engine, transport, and adapter
       this.emulator.netplay.engine = null;
       this.emulator.netplay.transport = null;
       this.emulator.netplay.adapter = null;
-      console.log("[Netplay] Cleared engine and transport references");
+
+      // Clear all room/session state - let everything reinitialize fresh
+      this.emulator.netplay.currentRoom = null;
+      this.emulator.netplay.currentRoomId = null;
+      this.emulator.netplay.joinedPlayers = null;
+      this.emulator.netplay.localSlot = null;
+      // Note: Keep emulator.netplay.name as it's user preference, not session state
+
+      console.log("[Netplay] Cleared all engine, transport, and session state");
     }
 
     // 5. Restore original simulateInput
@@ -12039,6 +12383,13 @@ class NetplayMenu {
 
     // Update taken slots tracking (for backward compatibility)
     this.updateTakenSlotsFromPlayerTable();
+
+    // Update ready and launch button states (for delay sync rooms)
+    const room = this.emulator.netplay.currentRoom;
+    if (room && room.netplay_mode === "delay_sync") {
+      this.netplayUpdateReadyButton();
+      this.netplayUpdateLaunchButton();
+    }
   }
 
   /**
@@ -12515,6 +12866,24 @@ class NetplayMenu {
       }
     }
 
+    // Hide delay sync table if it exists (we're in live stream mode)
+    if (
+      this.netplay.delaySyncPlayerTable &&
+      this.netplay.delaySyncPlayerTable.parentElement
+    ) {
+      const table = this.netplay.delaySyncPlayerTable.parentElement;
+      table.style.display = "none";
+    }
+
+    // Show live stream table
+    if (
+      this.netplay.liveStreamPlayerTable &&
+      this.netplay.liveStreamPlayerTable.parentElement
+    ) {
+      const table = this.netplay.liveStreamPlayerTable.parentElement;
+      table.style.display = "";
+    }
+
     // This populates and updates the table.
     this.netplayUpdatePlayerTable(this.netplay.joinedPlayers); // Uses real data
     // Setup the bottom bar buttons.
@@ -12565,35 +12934,174 @@ class NetplayMenu {
       this.netplay.passwordElem.style.display = password ? "" : "none";
     }
 
-    // Create the Delay Sync UI if it doesn't exist.
+    // Ensure slot selector exists first (must be before player table)
+    if (!this.netplay.slotSelect) {
+      // Use netplaySetupSlotSelector which creates and initializes the listener
+      this.netplaySetupSlotSelector();
+
+      // Ensure the container is positioned correctly for delay sync
+      if (this.netplay.slotSelect && this.netplay.slotSelect.parentElement) {
+        const slotContainer = this.netplay.slotSelect.parentElement;
+        const joinedDiv = this.netplay.tabs[1];
+
+        // Move container to be after room name/password if needed
+        if (
+          joinedDiv &&
+          this.netplay.passwordElem &&
+          this.netplay.passwordElem.parentElement === joinedDiv
+        ) {
+          const nextSibling = this.netplay.passwordElem.nextSibling;
+          if (nextSibling !== slotContainer) {
+            joinedDiv.insertBefore(
+              slotContainer,
+              this.netplay.passwordElem.nextSibling,
+            );
+          }
+        } else if (
+          joinedDiv &&
+          this.netplay.roomNameElem &&
+          this.netplay.roomNameElem.parentElement === joinedDiv
+        ) {
+          const nextSibling = this.netplay.roomNameElem.nextSibling;
+          if (nextSibling !== slotContainer) {
+            joinedDiv.insertBefore(
+              slotContainer,
+              this.netplay.roomNameElem.nextSibling,
+            );
+          }
+        }
+
+        // Ensure container has proper styling
+        slotContainer.classList.add("ejs_netplay_header");
+        slotContainer.style.display = "flex";
+        slotContainer.style.alignItems = "center";
+        slotContainer.style.gap = "10px";
+        slotContainer.style.margin = "10px 0";
+        slotContainer.style.justifyContent = "center";
+      }
+
+      // Ensure event listener is attached using native onchange (backup/override)
+      const slotSelect = this.netplay.slotSelect;
+      if (slotSelect) {
+        console.log(
+          "[NetplayMenu] Ensuring native event listener for delay sync",
+        );
+        slotSelect.onchange = () => {
+          console.log("[NetplayMenu] Native onchange fired for slot selector");
+          const raw = parseInt(slotSelect.value, 10);
+          const slot = isNaN(raw) ? 0 : Math.max(0, Math.min(8, raw));
+          console.log("[NetplayMenu] Slot selector changed to:", slot);
+
+          // Use centralized slot change system
+          this.requestSlotChange(slot);
+
+          // Update the slot selector UI after slot change
+          this.netplayUpdateSlotSelector();
+
+          // Reapply styling after update (since it clears innerHTML)
+          const updatedSelect = this.netplay.slotSelect;
+          if (updatedSelect) {
+            updatedSelect.setAttribute(
+              "style",
+              "background-color: #333 !important; " +
+                "border: 1px solid #555 !important; " +
+                "border-radius: 4px !important; " +
+                "padding: 4px 8px !important; " +
+                "min-width: 80px !important; " +
+                "cursor: pointer !important; " +
+                "color: #fff !important;",
+            );
+            // Reattach listener after update
+            updatedSelect.onchange = slotSelect.onchange;
+          }
+
+          // Save settings
+          if (this.settings) {
+            this.settings.netplayPreferredSlot = String(slot);
+          }
+          this.saveSettings();
+        };
+      }
+    } else {
+      // Slot selector already exists - ensure it's visible and styled
+      const slotSelect = this.netplay.slotSelect;
+      if (slotSelect && slotSelect.parentElement) {
+        slotSelect.parentElement.style.display = "flex";
+        slotSelect.parentElement.style.justifyContent = "center";
+      }
+      if (slotSelect) {
+        slotSelect.style.display = "";
+        // Reapply styling
+        slotSelect.setAttribute(
+          "style",
+          "background-color: #333 !important; " +
+            "border: 1px solid #555 !important; " +
+            "border-radius: 4px !important; " +
+            "padding: 4px 8px !important; " +
+            "min-width: 80px !important; " +
+            "cursor: pointer !important; " +
+            "color: #fff !important;",
+        );
+        // Ensure listener is attached
+        if (!slotSelect.onchange) {
+          slotSelect.onchange = () => {
+            const raw = parseInt(slotSelect.value, 10);
+            const slot = isNaN(raw) ? 0 : Math.max(0, Math.min(8, raw));
+            this.requestSlotChange(slot);
+            this.netplayUpdateSlotSelector();
+            const updatedSelect = this.netplay.slotSelect;
+            if (updatedSelect) {
+              updatedSelect.setAttribute(
+                "style",
+                "background-color: #333 !important; " +
+                  "border: 1px solid #555 !important; " +
+                  "border-radius: 4px !important; " +
+                  "padding: 4px 8px !important; " +
+                  "min-width: 80px !important; " +
+                  "cursor: pointer !important; " +
+                  "color: #fff !important;",
+              );
+              updatedSelect.onchange = slotSelect.onchange;
+            }
+            if (this.settings) {
+              this.settings.netplayPreferredSlot = String(slot);
+            }
+            this.saveSettings();
+          };
+        }
+      }
+    }
+
+    // Create the Delay Sync player table if it doesn't exist
     if (!this.netplay.delaySyncPlayerTable) {
-      // Set up the player slot selector first
-      const joinedDiv = this.netplay.tabs[1];
-      const joinedControls = joinedDiv.querySelector(".ejs_netplay_header");
-      const slotSelect = this.createSlotSelector(joinedControls);
-      this.netplay.slotSelect = slotSelect;
-
-      // Update the slot selector with current available slots.
-      this.netplayUpdateSlotSelector();
-
       // Create the player table
       const table = this.createNetplayTable("delaysync");
 
-      // Insert table after the slot selector
+      // Insert table after the slot selector (as sibling of slot selector's parent container)
       if (this.netplay.slotSelect && this.netplay.slotSelect.parentElement) {
         this.netplay.slotSelect.parentElement.parentElement.insertBefore(
           table,
           this.netplay.slotSelect.parentElement.nextSibling,
         );
       }
+    }
 
-      // Hide Live Stream player slot if it exists
-      if (
-        this.netplay.playerSlotSelect &&
-        this.netplay.playerSlotSelect.parentElement
-      ) {
-        this.netplay.playerSlotSelect.parentElement.style.display = "none";
-      }
+    // Hide live stream table if it exists (we're in delay sync mode)
+    if (
+      this.netplay.liveStreamPlayerTable &&
+      this.netplay.liveStreamPlayerTable.parentElement
+    ) {
+      const table = this.netplay.liveStreamPlayerTable.parentElement;
+      table.style.display = "none";
+    }
+
+    // Show delay sync table
+    if (
+      this.netplay.delaySyncPlayerTable &&
+      this.netplay.delaySyncPlayerTable.parentElement
+    ) {
+      const table = this.netplay.delaySyncPlayerTable.parentElement;
+      table.style.display = "";
     }
 
     // Initialize player list (host is always player 1)
@@ -12602,8 +13110,16 @@ class NetplayMenu {
     // Bottom bar buttons for Delay Sync mode
     this.setupNetplayBottomBar("delaysync");
 
-    // Update ready button state for validation
+    // Update ready and launch button states
     this.netplayUpdateReadyButton();
+    this.netplayUpdateLaunchButton();
+
+    // Also update buttons after a short delay to ensure player data has arrived
+    // (users-updated event might arrive after this function completes)
+    setTimeout(() => {
+      this.netplayUpdateReadyButton();
+      this.netplayUpdateLaunchButton();
+    }, 500);
 
     this.isNetplay = true;
     // Set global EJS netplay state for GameManager.simulateInput()
@@ -12747,7 +13263,7 @@ class NetplayMenu {
     }
 
     // Create appropriate buttons for this room type
-    this.createBottomBarButtons(this.currentRoomType);
+    this.createBottomBarButtons(roomType);
   }
 
   createBottomBarButtons(roomType) {
@@ -12814,6 +13330,9 @@ class NetplayMenu {
         style: { backgroundColor: "#666" }, // Grey for passive button
       },
     };
+
+    this.netplayUpdateReadyButton();
+    this.netplayUpdateLaunchButton();
 
     // Create applicable buttons
     Object.entries(buttonConfigs).forEach(([key, config]) => {
@@ -13307,19 +13826,48 @@ class NetplayMenu {
   }
 
   // Update player table - handles both individual players and bulk updates
+  // Update player table - handles both individual players and bulk updates
   netplayUpdatePlayerTable(playersOrSlot) {
-    // Determine which table type we're using
+    // Determine which table type we're using based on current room type
     let tbody;
     let isDelaySync = false;
 
-    if (this.netplay.delaySyncPlayerTable) {
+    // Use currentRoomType to determine which table to use (prevents using wrong table)
+    const currentRoomType = this.currentRoomType;
+    if (currentRoomType === "delaysync" && this.netplay.delaySyncPlayerTable) {
+      tbody = this.netplay.delaySyncPlayerTable;
+      isDelaySync = true;
+    } else if (
+      currentRoomType === "livestream" &&
+      this.netplay.liveStreamPlayerTable
+    ) {
+      tbody = this.netplay.liveStreamPlayerTable;
+      isDelaySync = false;
+    } else if (this.netplay.delaySyncPlayerTable) {
+      // Fallback: use delay sync table if it exists
       tbody = this.netplay.delaySyncPlayerTable;
       isDelaySync = true;
     } else if (this.netplay.liveStreamPlayerTable) {
+      // Fallback: use live stream table if it exists
       tbody = this.netplay.liveStreamPlayerTable;
       isDelaySync = false;
     } else {
       return; // No table to update
+    }
+
+    // If no argument provided, use joinedPlayers array
+    if (playersOrSlot === undefined || playersOrSlot === null) {
+      if (
+        this.netplay?.joinedPlayers &&
+        Array.isArray(this.netplay.joinedPlayers)
+      ) {
+        playersOrSlot = this.netplay.joinedPlayers;
+      } else {
+        console.warn(
+          "[NetplayMenu] netplayUpdatePlayerTable called without arguments and no joinedPlayers available",
+        );
+        return;
+      }
     }
 
     // Handle array of players (bulk update)
@@ -13341,6 +13889,15 @@ class NetplayMenu {
 
       // Rebuild table with current players
       playersArray.forEach((player, index) => {
+        // Skip invalid players
+        if (!player || !player.id) {
+          console.warn(
+            `[NetplayMenu] Skipping invalid player at index ${index}:`,
+            player,
+          );
+          return;
+        }
+
         console.log(`[NetplayMenu] Adding player ${index}:`, player);
 
         const row = this.createElement("tr");
@@ -13367,15 +13924,19 @@ class NetplayMenu {
           let statusText = "";
           let statusColor = "";
 
-          if (player.validationStatus === "ok") {
-            statusText = player.ready ? "✅ Ready" : "⏳ Not Ready";
+          if (
+            player.validationStatus === "ok" ||
+            player.validationStatus === undefined
+          ) {
+            // Validation passed or not yet validated (treat as valid)
+            statusText = player.ready ? "✅" : "⏳";
             statusColor = player.ready ? "green" : "orange";
           } else if (player.validationStatus) {
-            statusText = "❌ Invalid";
+            statusText = "❌";
             statusColor = "red";
             thirdCell.title = player.validationReason || "Validation failed";
           } else {
-            statusText = "⏳ Validating...";
+            statusText = "⏳";
             statusColor = "gray";
           }
 
@@ -13417,6 +13978,14 @@ class NetplayMenu {
     const slot = playersOrSlot;
     if (!this.netplay?.joinedPlayers) return; // joinedPlayers not initialized yet
     const player = this.netplay.joinedPlayers.find((p) => p.slot === slot);
+
+    // Guard: ensure player exists before accessing properties
+    if (!player || !player.id) {
+      console.warn(
+        `[NetplayMenu] Player not found for slot ${slot} or player missing id`,
+      );
+      return;
+    }
 
     // Check if a row for this player already exists
     const existingRow = tbody.querySelector(
@@ -13475,78 +14044,6 @@ class NetplayMenu {
     if (!existingRow) {
       tbody.appendChild(row);
     }
-  }
-
-  // Update player slot in table
-  netplayUpdatePlayerSlot(slot) {
-    // Find and update the local player in joinedPlayers
-    if (this.netplay.joinedPlayers) {
-      const localPlayerId = this.netplay.engine?.sessionState?.localPlayerId;
-      const localPlayerName = this.netplay.name;
-      const localPlayer = this.netplay.joinedPlayers.find(
-        (p) =>
-          (localPlayerId && p.id === localPlayerId) ||
-          (localPlayerName && p.name === localPlayerName),
-      );
-
-      if (localPlayer) {
-        // Store old slot for takenSlots update
-        const oldSlot = localPlayer.slot;
-
-        // Update the player's slot
-        localPlayer.slot = slot;
-
-        // Update taken slots
-        if (!this.netplay.takenSlots) {
-          this.netplay.takenSlots = new Set();
-        }
-        if (oldSlot !== null && oldSlot !== undefined && oldSlot < 4) {
-          this.netplay.takenSlots.delete(oldSlot);
-        }
-        if (slot < 4) {
-          this.netplay.takenSlots.add(slot);
-        }
-
-        // Re-render the player table with updated data
-        if (this.netplay.joinedPlayers.length > 0) {
-          this.netplayUpdatePlayerTable(this.netplay.joinedPlayers);
-        }
-      }
-    }
-
-    // Update Delay Sync table if it exists (legacy compatibility)
-    if (this.netplay.delaySyncPlayerTable && this.netplay.joinedPlayers) {
-      const hostPlayer = this.netplay.joinedPlayers.find((p) =>
-        this.isPlayerHost(p),
-      );
-      if (hostPlayer) {
-        // Move from old slot to new slot
-        const oldSlot = hostPlayer.slot;
-        hostPlayer.slot = slot;
-
-        // Update taken slots
-        if (!this.netplay.takenSlots) this.netplay.takenSlots = new Set();
-        this.netplay.takenSlots.delete(oldSlot);
-        this.netplay.takenSlots.add(slot);
-
-        // Re-render the table
-        this.netplayUpdatePlayerTable(this.netplay.joinedPlayers); // Uses real data
-      }
-    }
-
-    // Update Live Stream table if it exists
-    if (this.netplay.liveStreamPlayerTable) {
-      const tbody = this.netplay.liveStreamPlayerTable;
-      if (tbody.children[0]) {
-        const playerCell = tbody.children[0].querySelector("td:first-child");
-        if (playerCell) {
-          playerCell.innerText = this.getSlotDisplayText(slot);
-        }
-      }
-    }
-
-    // Update slot selector to reflect taken slots
-    this.netplayUpdateSlotSelector();
   }
 
   netplaySetupSlotSelector() {
@@ -13638,6 +14135,24 @@ class NetplayMenu {
 
         // Use centralized slot change system
         this.requestSlotChange(slot);
+
+        // Update the slot selector UI after slot change
+        this.netplayUpdateSlotSelector();
+
+        // Reapply styling after update (since it clears innerHTML)
+        const updatedSelect = this.netplay.slotSelect;
+        if (updatedSelect) {
+          updatedSelect.setAttribute(
+            "style",
+            "background-color: #333 !important; " +
+              "border: 1px solid #555 !important; " +
+              "border-radius: 4px !important; " +
+              "padding: 4px 8px !important; " +
+              "min-width: 80px !important; " +
+              "cursor: pointer !important; " +
+              "color: #fff !important;",
+          );
+        }
 
         // Save settings
         if (this.settings) {
@@ -13795,48 +14310,68 @@ class NetplayMenu {
 
   // Toggle ready status
   async netplayToggleReady() {
-    if (!this.netplay.readyButton) return;
+    console.log("[NetplayMenu] netplayToggleReady called");
 
-    const roomName = this.emulator.netplay.currentRoom?.room_name;
-    if (!roomName) return;
-
-    // DELAY_SYNC: Check validation status before allowing ready toggle
-    const room = this.emulator.netplay.currentRoom;
-    if (room && room.netplay_mode === "delay_sync") {
-      // Find local player
-      const localPlayerId = this.emulator.netplay.engine.sessionState?.localPlayerId;
-      const localPlayer = this.netplay.joinedPlayers?.find(p => p.id === localPlayerId);
-
-      if (localPlayer && localPlayer.validationStatus !== "ok") {
-        alert(localPlayer.validationReason || "Validation failed - cannot ready up");
-        return;
-      }
-
-      // Send join-info if not already sent (first time ready toggle)
-      if (!localPlayer.joinInfoSent) {
-        try {
-          const emulatorId = this.emulator.netplay.engine.config.system || this.emulator.netplay.engine.config.core || "unknown";
-          const romHash = this.emulator.netplay.engine.config.romHash;
-
-          await this.emulator.netplay.engine.roomManager.sendJoinInfo(roomName, {
-            romHash: romHash,
-            emulatorId: emulatorId,
-            emulatorVersion: this.emulator.netplay.engine.config.coreVersion || null
-          });
-
-          localPlayer.joinInfoSent = true;
-          console.log("[NetplayMenu] Join info sent successfully");
-        } catch (error) {
-          console.error("[NetplayMenu] Failed to send join info:", error);
-          alert(`Failed to validate: ${error.message}`);
-          return;
-        }
-      }
+    if (!this.netplay.readyButton) {
+      console.log("[NetplayMenu] Ready button not found, returning");
+      return;
     }
 
+    // Get room name from currentRoomId or currentRoom properties
+    const roomName =
+      this.emulator.netplay.currentRoomId ||
+      this.emulator.netplay.currentRoom?.room_name ||
+      this.emulator.netplay.currentRoom?.name;
+    if (!roomName) {
+      console.log("[NetplayMenu] No room name found, returning");
+      console.log(
+        "[NetplayMenu] currentRoomId:",
+        this.emulator.netplay.currentRoomId,
+      );
+      console.log(
+        "[NetplayMenu] currentRoom:",
+        this.emulator.netplay.currentRoom,
+      );
+      return;
+    }
+
+    // Find local player
+    const localPlayerId =
+      this.emulator.netplay.engine.sessionState?.localPlayerId;
+    const localPlayer = this.netplay.joinedPlayers?.find(
+      (p) => p.id === localPlayerId,
+    );
+
+    console.log("[NetplayMenu] Toggle ready check:", {
+      roomName,
+      localPlayerId,
+      localPlayerFound: !!localPlayer,
+      playerSlot: localPlayer?.slot,
+      playerRole: localPlayer?.role,
+      buttonDisabled: this.netplay.readyButton.disabled,
+    });
+
+    // Block spectators from using ready button
+    if (
+      localPlayer &&
+      (localPlayer.slot === 8 || localPlayer.role === "spectator")
+    ) {
+      console.log("[NetplayMenu] Spectators cannot toggle ready status");
+      return;
+    }
+
+    // Block if button is disabled (e.g., validation failed)
+    if (this.netplay.readyButton.disabled) {
+      console.log("[NetplayMenu] Ready button is disabled, returning");
+      return;
+    }
+
+    console.log("[NetplayMenu] Calling roomManager.toggleReady");
     try {
       await this.emulator.netplay.engine.roomManager.toggleReady(roomName);
       console.log("[NetplayMenu] Ready state toggled successfully");
+      // Don't update button here - wait for player-ready-updated event
+      // The event handler (netplayUpdatePlayerReady) will update the button
     } catch (error) {
       console.error("[NetplayMenu] Failed to toggle ready state:", error);
       alert(`Failed to toggle ready: ${error.message}`);
@@ -13845,11 +14380,13 @@ class NetplayMenu {
 
   // DELAY_SYNC: Update player validation status
   netplayUpdatePlayerValidation(playerId, validationStatus, validationReason) {
-    console.log(`[NetplayMenu] Updating validation for player ${playerId}: ${validationStatus}`);
+    console.log(
+      `[NetplayMenu] Updating validation for player ${playerId}: ${validationStatus}`,
+    );
 
     // Update the player in joinedPlayers
     if (this.netplay.joinedPlayers) {
-      const player = this.netplay.joinedPlayers.find(p => p.id === playerId);
+      const player = this.netplay.joinedPlayers.find((p) => p.id === playerId);
       if (player) {
         player.validationStatus = validationStatus;
         player.validationReason = validationReason;
@@ -13865,11 +14402,13 @@ class NetplayMenu {
 
   // DELAY_SYNC: Update player ready state
   netplayUpdatePlayerReady(playerId, ready) {
-    console.log(`[NetplayMenu] Updating ready state for player ${playerId}: ${ready}`);
+    console.log(
+      `[NetplayMenu] Updating ready state for player ${playerId}: ${ready}`,
+    );
 
     // Update the player in joinedPlayers
     if (this.netplay.joinedPlayers) {
-      const player = this.netplay.joinedPlayers.find(p => p.id === playerId);
+      const player = this.netplay.joinedPlayers.find((p) => p.id === playerId);
       if (player) {
         player.ready = ready;
       }
@@ -13903,7 +14442,7 @@ class NetplayMenu {
       }
 
       // Wait a bit for reset to complete
-      await new Promise(resolve => setTimeout(resolve, 100));
+      await new Promise((resolve) => setTimeout(resolve, 100));
 
       // Start emulator (it should load the ROM automatically)
       if (this.emulator.start) {
@@ -13914,7 +14453,7 @@ class NetplayMenu {
       // Wait for emulator to be ready and reach frame 1
       // This is a simplified implementation - in a real system you'd need
       // to wait for the emulator to actually reach frame 1
-      await new Promise(resolve => setTimeout(resolve, 500));
+      await new Promise((resolve) => setTimeout(resolve, 500));
 
       // Pause emulator at frame 1
       if (this.emulator.pause) {
@@ -13925,10 +14464,12 @@ class NetplayMenu {
       // Send ready-at-frame-1 to server
       const roomName = this.emulator.netplay.currentRoom?.room_name;
       if (roomName) {
-        await this.emulator.netplay.engine.roomManager.sendReadyAtFrame1(roomName, 1);
+        await this.emulator.netplay.engine.roomManager.sendReadyAtFrame1(
+          roomName,
+          1,
+        );
         console.log("[NetplayMenu] Sent ready-at-frame-1 to server");
       }
-
     } catch (error) {
       console.error("[NetplayMenu] Error in prepare phase:", error);
     }
@@ -13953,7 +14494,9 @@ class NetplayMenu {
         this.startSynchronizedGame(frame);
       }, delay);
     } else {
-      console.log("[NetplayMenu] Start time already passed, starting immediately");
+      console.log(
+        "[NetplayMenu] Start time already passed, starting immediately",
+      );
       this.startSynchronizedGame(frame);
     }
   }
@@ -13977,30 +14520,99 @@ class NetplayMenu {
     this.hide();
   }
 
-  // Update ready button state based on validation
+  // Update ready button state
   netplayUpdateReadyButton() {
-    if (!this.netplay.readyButton) return;
+    if (!this.netplay.readyButton) {
+      console.log("[NetplayMenu] Ready button not found");
+      return;
+    }
 
     const room = this.emulator.netplay.currentRoom;
-    if (!room || room.netplay_mode !== "delay_sync") return;
+    if (!room || room.netplay_mode !== "delay_sync") {
+      console.log(
+        "[NetplayMenu] Not in delay_sync room, skipping ready button update",
+      );
+      return;
+    }
 
     // Find local player
-    const localPlayerId = this.emulator.netplay.engine.sessionState?.localPlayerId;
-    const localPlayer = this.netplay.joinedPlayers?.find(p => p.id === localPlayerId);
+    const localPlayerId =
+      this.emulator.netplay.engine.sessionState?.localPlayerId;
+    const localPlayer = this.netplay.joinedPlayers?.find(
+      (p) => p.id === localPlayerId,
+    );
 
-    if (localPlayer) {
-      // Disable ready button if validation failed
-      const isValid = localPlayer.validationStatus === "ok" || localPlayer.validationStatus === undefined;
-      this.netplay.readyButton.disabled = !isValid;
+    console.log("[NetplayMenu] Updating ready button:", {
+      localPlayerId,
+      localPlayerFound: !!localPlayer,
+      joinedPlayersCount: this.netplay.joinedPlayers?.length || 0,
+      playerReady: localPlayer?.ready,
+      playerSlot: localPlayer?.slot,
+    });
 
-      // Update button text to show validation status
-      if (!isValid && localPlayer.validationReason) {
-        this.netplay.readyButton.innerText = "Validation Failed";
-        this.netplay.readyButton.title = localPlayer.validationReason;
-      } else {
-        this.netplay.readyButton.innerText = localPlayer.ready ? "Not Ready" : "Ready";
-        this.netplay.readyButton.title = "";
-      }
+    if (!localPlayer) {
+      console.warn(
+        "[NetplayMenu] Local player not found in joinedPlayers, enabling button anyway",
+      );
+      // Enable button and set action even if player not found yet
+      // (player might be added to joinedPlayers after button is created)
+      this.netplay.readyButton.disabled = false;
+      this.netplay.readyButton.style.cursor = "pointer";
+      this.netplay.readyButton.title = "";
+      this.netplay.readyButton.onclick = () => {
+        this.netplayToggleReady();
+      };
+      this.netplay.readyButton.innerText = "Ready";
+      this.netplay.readyButton.style.backgroundColor = "#4caf50"; // Green
+      this.netplay.readyButton.style.opacity = "1";
+      return;
+    }
+
+    // Check if spectator (slot 8)
+    const isSpectator =
+      localPlayer.slot === 8 || localPlayer.role === "spectator";
+
+    if (isSpectator) {
+      // Spectator: disabled, transparent, always shows "Ready"
+      console.log("[NetplayMenu] Player is spectator, disabling ready button");
+      this.netplay.readyButton.disabled = true;
+      this.netplay.readyButton.innerText = "Ready";
+      this.netplay.readyButton.style.backgroundColor = "#4caf50"; // Green
+      this.netplay.readyButton.style.opacity = "0.3";
+      this.netplay.readyButton.style.cursor = "not-allowed";
+      this.netplay.readyButton.title = "Spectators cannot toggle ready status";
+      this.netplay.readyButton.onclick = null; // Remove action for spectators
+      return;
+    }
+    // Regular players: button state based on ready status
+    console.log(
+      "[NetplayMenu] Updating ready button for regular player, ready:",
+      localPlayer.ready,
+    );
+    this.netplay.readyButton.disabled = false;
+    this.netplay.readyButton.style.cursor = "pointer";
+    this.netplay.readyButton.title = "";
+    // Ensure button is visible (not hidden)
+    this.netplay.readyButton.style.display = "";
+    // Set action to toggle ready status
+    this.netplay.readyButton.onclick = () => {
+      console.log("[NetplayMenu] Ready button clicked");
+      this.netplayToggleReady();
+    };
+
+    // Update button text and color based on ready state
+    if (localPlayer.ready) {
+      // Ready = true: shows "Not Ready", grey (clicking will set ready to false)
+      this.netplay.readyButton.innerText = "Not Ready";
+      this.netplay.readyButton.style.backgroundColor = "#666"; // Grey
+      this.netplay.readyButton.style.opacity = "1";
+      console.log("[NetplayMenu] Button set to 'Not Ready' (grey)");
+    } else {
+      // Ready = false: shows "Ready", green (clicking will set ready to true)
+      this.netplay.readyButton.innerText = "Ready";
+      this.netplay.readyButton.style.backgroundColor = "#4caf50"; // Green
+      this.netplay.readyButton.style.opacity = "1";
+      console.log("[NetplayMenu] Button set to 'Ready' (green)");
     }
   }
 
@@ -14008,9 +14620,57 @@ class NetplayMenu {
   netplayUpdateLaunchButton() {
     if (!this.netplay.launchButton || !this.netplay.joinedPlayers) return;
 
-    // Check if all joined players are ready
-    const allReady = this.netplay.joinedPlayers.every((player) => player.ready);
-    this.netplay.launchButton.disabled = !allReady;
+    // Check if local player is host (check multiple sources)
+    const isHostFromSessionState =
+      this.netplay?.engine?.sessionState?.isHostRole() || false;
+    const localPlayerId =
+      this.emulator.netplay.engine.sessionState?.localPlayerId;
+    const localPlayer = this.netplay.joinedPlayers?.find(
+      (p) => p.id === localPlayerId,
+    );
+    const isHostFromPlayer = localPlayer?.is_host || false;
+    const isHost = isHostFromSessionState || isHostFromPlayer;
+
+    console.log("[NetplayMenu] Updating launch button:", {
+      localPlayerId,
+      localPlayerFound: !!localPlayer,
+      isHostFromSessionState,
+      isHostFromPlayer,
+      isHost,
+      playerIsHost: localPlayer?.is_host,
+    });
+
+    // Check if player is spectator (slot 8)
+    const isSpectator =
+      localPlayer &&
+      (localPlayer.slot === 8 || localPlayer.role === "spectator");
+
+    // Launch button is only for hosts (not guests/spectators)
+    if (!isHost) {
+      // Guests/spectators: green but transparent and disabled
+      console.log("[NetplayMenu] Launch button: Not host, making transparent");
+      this.netplay.launchButton.disabled = true;
+      this.netplay.launchButton.style.backgroundColor = "#4caf50"; // Green
+      this.netplay.launchButton.style.opacity = "0.3";
+      this.netplay.launchButton.style.cursor = "not-allowed";
+      // Ensure button is visible (not hidden)
+      this.netplay.launchButton.style.display = "";
+    } else {
+      // Host: check if all players are ready
+      console.log("[NetplayMenu] Launch button: Host, checking ready status");
+      const allReady = this.netplay.joinedPlayers.every(
+        (player) => player.ready,
+      );
+      this.netplay.launchButton.disabled = !allReady;
+      this.netplay.launchButton.style.backgroundColor = "#4caf50"; // Green
+      this.netplay.launchButton.style.opacity = allReady ? "1" : "0.6";
+      this.netplay.launchButton.style.cursor = allReady
+        ? "pointer"
+        : "not-allowed";
+      // Ensure button is visible
+      this.netplay.launchButton.style.display = "";
+      console.log("[NetplayMenu] Launch button: Host, allReady:", allReady);
+    }
   }
 
   // Launch game (host only)
@@ -14031,6 +14691,30 @@ class NetplayMenu {
   netplayUpdateRoomTable(rooms) {
     if (!this.netplay || !this.netplay.table) return;
 
+    // Debug: log received room data with source indicator
+    const source = new Error().stack?.includes("Socket.IO")
+      ? "Socket.IO"
+      : "HTTP";
+    console.log(
+      `[NetplayMenu] 📊 Updating room table (source: ${source}) with`,
+      rooms.length,
+      "rooms",
+    );
+    if (rooms.length > 0) {
+      console.log(`[NetplayMenu] 📊 First room data (source: ${source}):`, {
+        id: rooms[0].id,
+        name: rooms[0].name,
+        netplay_mode: rooms[0].netplay_mode,
+        typeof_netplay_mode: typeof rooms[0].netplay_mode,
+        rom_name: rooms[0].rom_name,
+        rom_hash: rooms[0].rom_hash,
+        core_type: rooms[0].core_type,
+        coreId: rooms[0].coreId,
+        allKeys: Object.keys(rooms[0]),
+        fullObject: rooms[0], // Include full object for inspection
+      });
+    }
+
     const tbody = this.netplay.table;
     tbody.innerHTML = ""; // Clear existing rows
 
@@ -14047,6 +14731,12 @@ class NetplayMenu {
     }
 
     rooms.forEach((room) => {
+      // Normalize netplay_mode (handle both string and numeric formats)
+      const netplayMode =
+        room.netplay_mode === "delay_sync" || room.netplay_mode === 1
+          ? "delay_sync"
+          : "live_stream";
+
       // Main row
       const row = this.createElement("tr");
       row.style.cursor = "pointer";
@@ -14055,7 +14745,7 @@ class NetplayMenu {
       // Room type cell
       const typeCell = this.createElement("td");
       typeCell.innerText =
-        room.netplay_mode === 1 ? "Delay Sync" : "Live Stream";
+        netplayMode === "delay_sync" ? "Delay Sync" : "Live Stream";
       typeCell.style.textAlign = "center";
       typeCell.style.fontSize = "12px";
       typeCell.style.fontWeight = "bold";
@@ -14080,9 +14770,65 @@ class NetplayMenu {
       const joinBtn = this.createElement("button");
       joinBtn.classList.add("ejs_button_button");
       joinBtn.innerText = room.hasPassword ? "Join (PW)" : "Join";
-      joinBtn.onclick = (e) => {
+      joinBtn.onclick = async (e) => {
         e.stopPropagation(); // Don't trigger row expansion
-        this.engine.netplayJoinRoom(room.id, room.hasPassword);
+
+        try {
+          await this.engine.netplayJoinRoom(
+            room.id,
+            room.hasPassword,
+            room.netplay_mode,
+          );
+        } catch (error) {
+          console.error("[NetplayMenu] Failed to join room:", error);
+
+          // Handle all compatibility errors (delay sync and general ROM/core mismatches)
+          if (
+            (error.details &&
+              (error.details.error === "delay_sync_incompatible" ||
+                error.details.error === "delay_sync_requirements_not_met" ||
+                error.details.error === "incompatible_game")) ||
+            error.message.includes("delay_sync_incompatible") ||
+            error.message.includes("delay_sync_requirements_not_met") ||
+            error.message.includes("incompatible_game") ||
+            error.message.includes("ROM or emulator core doesn't match")
+          ) {
+            // Format incompatible_game errors for the dialog
+            if (error.details && error.details.error === "incompatible_game") {
+              // Enhance error details with compatibility issues if not present
+              if (!error.details.compatibilityIssues) {
+                error.details.compatibilityIssues = [];
+                if (error.details.requiredRomHash) {
+                  error.details.compatibilityIssues.push(
+                    `ROM hash mismatch: room requires '${error.details.requiredRomHash}'`,
+                  );
+                }
+                if (error.details.requiredCoreType) {
+                  error.details.compatibilityIssues.push(
+                    `Emulator core mismatch: room requires '${error.details.requiredCoreType}'`,
+                  );
+                }
+              }
+              if (!error.details.requiredMetadata) {
+                error.details.requiredMetadata = {};
+                if (error.details.requiredRomHash) {
+                  error.details.requiredMetadata.rom_hash =
+                    error.details.requiredRomHash;
+                }
+                if (error.details.requiredCoreType) {
+                  error.details.requiredMetadata.core_type =
+                    error.details.requiredCoreType;
+                }
+              }
+            }
+            const errorDetails = this.parseCompatibilityError(error);
+            this.showCompatibilityErrorDialog(errorDetails);
+            return;
+          }
+
+          // Generic error fallback
+          alert(`Failed to join room: ${error.message || "Unknown error"}`);
+        }
       };
 
       joinCell.appendChild(joinBtn);
@@ -14106,11 +14852,11 @@ class NetplayMenu {
       detailsContainer.style.justifyContent = "space-between";
 
       const leftCol = this.createElement("div");
-      leftCol.innerText = `Core: ${room.core_type || "Unknown"}`;
+      leftCol.innerText = `Core: ${room.core_type || room.coreId || "Unknown"}`;
       leftCol.style.fontSize = "14px";
 
       const rightCol = this.createElement("div");
-      rightCol.innerText = `ROM: ${room.rom_hash ? room.rom_hash.substring(0, 16) + "..." : "Unknown"}`;
+      rightCol.innerText = `ROM: ${room.rom_name || (room.rom_hash ? room.rom_hash.substring(0, 16) + "..." : "Unknown")}`;
       rightCol.style.fontSize = "14px";
       rightCol.style.textAlign = "right";
 
@@ -14170,42 +14916,6 @@ class NetplayMenu {
       this.netplay = {};
     }
 
-    // Define updateList function for refreshing room lists
-    if (!this.netplay.updateList) {
-      let updateInterval = null;
-      this.netplay.updateList = {
-        start: () => {
-          // Stop any existing interval
-          this.netplay.updateList.stop();
-
-          // Start updating room list every 5 seconds
-          const updateRooms = async () => {
-            if (!this.netplay || !this.netplay.table) return;
-
-            try {
-              // Get room list from SFU server
-              const rooms = await this.engine.netplayGetRoomList();
-              this.netplayUpdateRoomTable(rooms);
-            } catch (error) {
-              console.error("[Netplay] Failed to update room list:", error);
-            }
-          };
-
-          // Initial update
-          updateRooms();
-
-          // Set up periodic updates
-          updateInterval = setInterval(updateRooms, 5000);
-        },
-        stop: () => {
-          if (updateInterval) {
-            clearInterval(updateInterval);
-            updateInterval = null;
-          }
-        },
-      };
-    }
-
     // Define reset function
     if (!this.netplay.reset) {
       this.netplay.reset = () => {
@@ -14222,6 +14932,373 @@ class NetplayMenu {
         }
         // TODO: Add more reset logic as needed
       };
+    }
+
+    // Replace the current polling mechanism with Socket.IO listener
+    this.netplay.updateList = {
+      start: () => {
+        // Stop any existing operations
+        this.netplay.updateList.stop();
+
+        // Set up real-time Socket.IO listener for room updates
+        this.netplay.updateList.setupSocketListener();
+
+        // Initial fetch as fallback
+        this.netplay.updateList.doInitialFetch();
+      },
+      setupSocketListener: () => {
+        // Clean up any existing listener and timeout
+        this.netplay.updateList.removeSocketListener();
+
+        // Check if socket transport exists and is connected
+        // Check if socket transport exists and is connected
+        const socketTransport = this.emulator?.netplay?.engine?.socketTransport;
+        console.log(
+          `[Netplay] setupSocketListener: socketTransport exists: ${!!socketTransport}, isConnected: ${socketTransport?.isConnected()}`,
+        );
+
+        if (socketTransport?.isConnected()) {
+          console.log(
+            `[Netplay] Setting up rooms-updated listener on socket ${socketTransport.getSocketId()}`,
+          );
+          socketTransport.on("rooms-updated", (rooms) => {
+            console.log(
+              `[Netplay] 🔔 rooms-updated event callback triggered! Received ${rooms?.length || 0} rooms`,
+            );
+            if (!this.netplay || !this.netplay.table) {
+              console.warn(
+                "[Netplay] Socket.IO rooms-updated received but table not ready",
+              );
+              return;
+            }
+            console.log(
+              "[Netplay] ✅ Socket.IO rooms-updated event received:",
+              rooms.length,
+              "rooms",
+            );
+            // Debug: log full first room data structure
+            if (rooms.length > 0) {
+              console.log(
+                "[Netplay] ✅ Full first room object from Socket.IO:",
+                JSON.stringify(rooms[0], null, 2),
+              );
+              console.log("[Netplay] ✅ First room metadata:", {
+                id: rooms[0].id,
+                name: rooms[0].name,
+                netplay_mode: rooms[0].netplay_mode,
+                typeof_netplay_mode: typeof rooms[0].netplay_mode,
+                rom_name: rooms[0].rom_name,
+                rom_hash: rooms[0].rom_hash,
+                core_type: rooms[0].core_type,
+                coreId: rooms[0].coreId,
+                allKeys: Object.keys(rooms[0]),
+              });
+            } else {
+              console.log("[Netplay] ⚠️ Socket.IO sent empty room list");
+            }
+            this.netplayUpdateRoomTable(rooms);
+          });
+          console.log(
+            "[Netplay] Socket.IO listener for rooms-updated established",
+          );
+
+          // Clear any pending timeouts
+          if (this.netplay.updateList.socketListenerTimeout) {
+            clearTimeout(this.netplay.updateList.socketListenerTimeout);
+            this.netplay.updateList.socketListenerTimeout = null;
+          }
+          if (this.netplay.updateList.fallbackTimeout) {
+            clearTimeout(this.netplay.updateList.fallbackTimeout);
+            this.netplay.updateList.fallbackTimeout = null;
+          }
+        } else {
+          console.log(
+            "[Netplay] Socket not connected, will retry listener setup",
+          );
+          // Retry after a short delay if socket isn't ready yet
+          this.netplay.updateList.socketListenerTimeout = setTimeout(
+            () => this.netplay.updateList.setupSocketListener(),
+            1000,
+          );
+
+          // Set a fallback timeout to enable HTTP polling if Socket.IO completely fails
+          if (!this.netplay.updateList.fallbackTimeout) {
+            this.netplay.updateList.fallbackTimeout = setTimeout(() => {
+              console.log(
+                "[Netplay] Socket.IO setup timeout, falling back to HTTP polling",
+              );
+              this.netplayUpdateRoomTable([]);
+            }, 30000); // 30 second timeout
+          }
+        }
+      },
+      enableHttpPolling: () => {
+        // Fallback to HTTP polling if Socket.IO fails completely
+        console.log("[Netplay] Enabling HTTP polling fallback");
+        const pollRooms = async () => {
+          if (!this.netplay || !this.netplay.table) return;
+
+          try {
+            const rooms = await this.engine.netplayGetRoomList();
+            this.netplayUpdateRoomTable(rooms);
+          } catch (error) {
+            console.error("[Netplay] HTTP polling failed:", error);
+          }
+        };
+
+        // Initial poll
+        pollRooms();
+        // Set up periodic polling
+        this.netplay.updateList.httpPollingInterval = setInterval(
+          pollRooms,
+          5000,
+        );
+      },
+      removeSocketListener: () => {
+        if (this.emulator?.netplay?.engine?.socketTransport) {
+          this.emulator.netplay.engine.socketTransport.off("rooms-updated");
+        }
+        if (this.netplay.updateList.socketListenerTimeout) {
+          clearTimeout(this.netplay.updateList.socketListenerTimeout);
+          this.netplay.updateList.socketListenerTimeout = null;
+        }
+        if (this.netplay.updateList.fallbackTimeout) {
+          clearTimeout(this.netplay.updateList.fallbackTimeout);
+          this.netplay.updateList.fallbackTimeout = null;
+        }
+        if (this.netplay.updateList.httpPollingInterval) {
+          clearInterval(this.netplay.updateList.httpPollingInterval);
+          this.netplay.updateList.httpPollingInterval = null;
+        }
+      },
+      doInitialFetch: async () => {
+        // Request room list via Socket.IO instead of HTTP
+        if (!this.netplay || !this.netplay.table) return;
+
+        // Get engine reference (consistent with setupSocketListener)
+        const engine = this.emulator?.netplay?.engine || this.engine;
+
+        // Ensure engine is initialized (this creates the socket connection)
+        if (!engine || !engine.socketTransport) {
+          console.log("[Netplay] Engine not initialized, initializing now...");
+          try {
+            if (!engine) {
+              // Engine doesn't exist yet, wait for it to be created
+              console.log("[Netplay] Waiting for engine to be created...");
+              return;
+            }
+            await engine.initialize();
+            console.log("[Netplay] Engine initialized successfully");
+          } catch (error) {
+            console.error("[Netplay] Failed to initialize engine:", error);
+            // Fallback to HTTP if socket initialization fails
+            try {
+              const rooms = await engine.netplayGetRoomList();
+              this.netplayUpdateRoomTable(rooms);
+            } catch (httpError) {
+              console.error("[Netplay] HTTP fallback also failed:", httpError);
+            }
+            return;
+          }
+        }
+
+        // Wait for Socket.IO connection, set up listener, then request room list
+        let retryCount = 0;
+        const maxRetries = 20; // 10 seconds max wait
+        const requestRoomList = () => {
+          const socketTransport = engine?.socketTransport;
+          if (socketTransport?.isConnected()) {
+            // Ensure listener is set up before requesting
+            this.netplay.updateList.setupSocketListener();
+            console.log("[Netplay] Requesting room list via Socket.IO");
+            console.log(
+              `[Netplay] Socket ID: ${socketTransport.getSocketId()}, Connected: ${socketTransport.isConnected()}`,
+            );
+            socketTransport.emit("request-room-list", {});
+            // The rooms-updated event will be received by setupSocketListener
+          } else {
+            retryCount++;
+            if (retryCount >= maxRetries) {
+              console.warn(
+                "[Netplay] Socket connection timeout, falling back to HTTP",
+              );
+              // Fallback to HTTP after timeout
+              engine
+                .netplayGetRoomList()
+                .then((rooms) => this.netplayUpdateRoomTable(rooms))
+                .catch((error) =>
+                  console.error("[Netplay] HTTP fallback failed:", error),
+                );
+              return;
+            }
+            // Retry after a short delay if socket isn't ready yet
+            setTimeout(requestRoomList, 500);
+          }
+        };
+
+        // Start requesting once socket is ready
+        requestRoomList();
+      },
+      stop: () => {
+        // cleanup Socket.IO Listener, timeouts, and intervals
+        this.netplay.updateList.removeSocketListener();
+      },
+    };
+  }
+  // Clean up socket connection monitoring
+  removeSocketConnectionMonitoring() {
+    if (this.emulator?.netplay?.engine?.socketTransport) {
+      const socketTransport = this.emulator.netplay.engine.socketTransport;
+      socketTransport.off("connect");
+      socketTransport.off("disconnect");
+      socketTransport.off("connect_error");
+    }
+  }
+
+  // Parse detailed compatibility error from SFU
+  parseCompatibilityError(error) {
+    // Check if error has structured details preserved
+    if (error.details && typeof error.details === "object") {
+      return {
+        type: error.details.error || "unknown",
+        message: error.details.message || error.message,
+        canJoinAsSpectator: error.details.canJoinAsSpectator || false,
+        compatibilityIssues: error.details.compatibilityIssues || [],
+        requiredMetadata: error.details.requiredMetadata || {},
+      };
+    }
+
+    // Fallback: try to parse error message as JSON
+    const errorMessage = error.message || error.toString();
+    try {
+      const errorObj = JSON.parse(errorMessage);
+      return {
+        type: errorObj.error || "unknown",
+        message: errorObj.message || errorMessage,
+        canJoinAsSpectator: errorObj.canJoinAsSpectator || false,
+        compatibilityIssues: errorObj.compatibilityIssues || [],
+        requiredMetadata: errorObj.requiredMetadata || {},
+      };
+    } catch (e) {
+      // Final fallback for plain text errors
+      return {
+        type: "unknown",
+        message: errorMessage,
+        canJoinAsSpectator: false,
+        compatibilityIssues: [],
+        requiredMetadata: {},
+      };
+    }
+  }
+
+  // Show detailed compatibility error dialog
+  // Show detailed compatibility error dialog
+  showCompatibilityErrorDialog(errorDetails) {
+    const popups = this.createSubPopup();
+    const container = popups[0];
+    const content = popups[1];
+
+    // Style the content container
+    content.style.padding = "20px";
+    content.style.maxWidth = "500px";
+    content.style.textAlign = "center";
+    content.classList.add("ejs_cheat_parent");
+
+    // Add title
+    const header = this.createElement("div");
+    const title = this.createElement("h2");
+    title.innerText = "Compatibility Issues";
+    title.style.color = "#ff6b6b";
+    header.appendChild(title);
+    content.appendChild(header);
+
+    // Add main message
+    const message = this.createElement("p");
+    message.innerText = errorDetails.message;
+    message.style.marginBottom = "15px";
+    content.appendChild(message);
+
+    // Add compatibility issues list
+    if (errorDetails.compatibilityIssues.length > 0) {
+      const issuesTitle = this.createElement("h3");
+      issuesTitle.innerText = "Specific Issues:";
+      issuesTitle.style.marginBottom = "10px";
+      content.appendChild(issuesTitle);
+
+      const issuesList = this.createElement("ul");
+      issuesList.style.textAlign = "left";
+      issuesList.style.marginBottom = "15px";
+
+      errorDetails.compatibilityIssues.forEach((issue) => {
+        const listItem = this.createElement("li");
+        listItem.innerText = issue;
+        listItem.style.marginBottom = "5px";
+        issuesList.appendChild(listItem);
+      });
+
+      content.appendChild(issuesList);
+    }
+
+    // Add required metadata info
+    if (Object.keys(errorDetails.requiredMetadata).length > 0) {
+      const requiredTitle = this.createElement("h3");
+      requiredTitle.innerText = "Room Requirements:";
+      requiredTitle.style.marginBottom = "10px";
+      content.appendChild(requiredTitle);
+
+      const metadataDiv = this.createElement("div");
+      metadataDiv.style.textAlign = "left";
+      metadataDiv.style.backgroundColor = "rgba(0,0,0,0.1)";
+      metadataDiv.style.padding = "10px";
+      metadataDiv.style.borderRadius = "5px";
+      metadataDiv.style.marginBottom = "15px";
+
+      Object.entries(errorDetails.requiredMetadata).forEach(([key, value]) => {
+        const metaItem = this.createElement("div");
+        metaItem.innerText = `${key}: ${value}`;
+        metaItem.style.marginBottom = "3px";
+        metadataDiv.appendChild(metaItem);
+      });
+
+      content.appendChild(metadataDiv);
+    }
+
+    // Add buttons
+    const buttonContainer = this.createElement("div");
+    buttonContainer.style.display = "flex";
+    buttonContainer.style.gap = "10px";
+    buttonContainer.style.justifyContent = "center";
+
+    // Close button
+    const closeBtn = this.createElement("button");
+    closeBtn.classList.add("ejs_button_button");
+    closeBtn.innerText = "Close";
+    closeBtn.onclick = () => container.remove();
+    buttonContainer.appendChild(closeBtn);
+
+    // Spectator join button (if available)
+    if (errorDetails.canJoinAsSpectator) {
+      const spectatorBtn = this.createElement("button");
+      spectatorBtn.classList.add("ejs_button_button");
+      spectatorBtn.innerText = "Join as Spectator";
+      spectatorBtn.style.backgroundColor = "rgba(255, 193, 7, 0.8)";
+      spectatorBtn.onclick = () => {
+        container.remove();
+        // TODO: Implement spectator join functionality
+        alert("Spectator join not yet implemented");
+      };
+      buttonContainer.appendChild(spectatorBtn);
+    }
+
+    content.appendChild(buttonContainer);
+
+    // ✅ CRITICAL: Append container to DOM so it's visible
+    if (this.netplayMenu) {
+      this.netplayMenu.appendChild(container);
+    } else {
+      console.error(
+        "[NetplayMenu] Cannot show compatibility dialog: netplayMenu not found",
+      );
     }
   }
 
@@ -14718,13 +15795,20 @@ class NetplayMenu {
     }
 
     // Setup correct UI based on current room state before showing
-    if (this.emulator.netplay && this.emulator.netplay.currentRoomId) {
+    // Use engine's sessionState as single source of truth (most reliable)
+    const engine = this.emulator.netplay?.engine;
+    const isInRoom =
+      engine?.sessionState?.roomName != null &&
+      this.emulator.netplay?.currentRoom != null;
+
+    if (this.emulator.netplay && isInRoom) {
       // User is in a room, setup room UI
+      // Get room type from currentRoom if available, otherwise default to livestream
+      const netplayMode = this.emulator.netplay.currentRoom?.netplay_mode;
       const roomType =
-        this.emulator.netplay.currentRoom?.netplay_mode === 1
+        netplayMode === "delay_sync" || netplayMode === 1
           ? "delaysync"
           : "livestream";
-
       // Ensure room UI elements exist (they might not if menu was created before joining room)
       if (roomType === "livestream" && !this.netplay.liveStreamPlayerTable) {
         // Set up the player slot selector first
@@ -14739,11 +15823,11 @@ class NetplayMenu {
         // Create the player table
         const table = this.createNetplayTable("livestream");
 
-        // Insert table after the slot selector
+        // Insert table after the slot selector (as sibling of slot selector's parent container)
         if (this.netplay.slotSelect && this.netplay.slotSelect.parentElement) {
-          this.netplay.slotSelect.parentElement.insertBefore(
+          this.netplay.slotSelect.parentElement.parentElement.insertBefore(
             table,
-            this.netplay.slotSelect.nextSibling,
+            this.netplay.slotSelect.parentElement.nextSibling,
           );
         }
 
@@ -14765,16 +15849,53 @@ class NetplayMenu {
         // Create the player table
         const table = this.createNetplayTable("delaysync");
 
-        // Insert table after the slot selector
+        // Insert table after the slot selector (as sibling of slot selector's parent container)
         if (this.netplay.slotSelect && this.netplay.slotSelect.parentElement) {
-          this.netplay.slotSelect.parentElement.insertBefore(
+          this.netplay.slotSelect.parentElement.parentElement.insertBefore(
             table,
-            this.netplay.slotSelect.nextSibling,
+            this.netplay.slotSelect.parentElement.nextSibling,
           );
         }
 
         // Initialize player list (host is always player 1)
         this.netplayUpdatePlayerTable(this.netplay.joinedPlayers);
+      }
+
+      // Hide/show the correct table based on room type
+      if (roomType === "livestream") {
+        // Hide delay sync table if it exists
+        if (
+          this.netplay.delaySyncPlayerTable &&
+          this.netplay.delaySyncPlayerTable.parentElement
+        ) {
+          const table = this.netplay.delaySyncPlayerTable.parentElement;
+          table.style.display = "none";
+        }
+        // Show live stream table if it exists
+        if (
+          this.netplay.liveStreamPlayerTable &&
+          this.netplay.liveStreamPlayerTable.parentElement
+        ) {
+          const table = this.netplay.liveStreamPlayerTable.parentElement;
+          table.style.display = "";
+        }
+      } else if (roomType === "delaysync") {
+        // Hide live stream table if it exists
+        if (
+          this.netplay.liveStreamPlayerTable &&
+          this.netplay.liveStreamPlayerTable.parentElement
+        ) {
+          const table = this.netplay.liveStreamPlayerTable.parentElement;
+          table.style.display = "none";
+        }
+        // Show delay sync table if it exists
+        if (
+          this.netplay.delaySyncPlayerTable &&
+          this.netplay.delaySyncPlayerTable.parentElement
+        ) {
+          const table = this.netplay.delaySyncPlayerTable.parentElement;
+          table.style.display = "";
+        }
       }
 
       // Switch to joined tab for room view
@@ -14810,10 +15931,58 @@ class NetplayMenu {
       // User is not in a room, setup listings UI
       this.setupNetplayBottomBar("listings");
 
+      // Reset title to listings
+      const titleElement = this.netplayMenu.querySelector("h4");
+      if (titleElement) {
+        titleElement.innerText = "Netplay Listings";
+      }
+
+      // Hide both player tables when showing listings (they might be visible from previous room)
+      if (
+        this.netplay.liveStreamPlayerTable &&
+        this.netplay.liveStreamPlayerTable.parentElement
+      ) {
+        const table = this.netplay.liveStreamPlayerTable.parentElement;
+        table.style.display = "none";
+      }
+      if (
+        this.netplay.delaySyncPlayerTable &&
+        this.netplay.delaySyncPlayerTable.parentElement
+      ) {
+        const table = this.netplay.delaySyncPlayerTable.parentElement;
+        table.style.display = "none";
+      }
+
       // Switch to rooms tab when showing listings
       if (this.netplay.tabs && this.netplay.tabs[0] && this.netplay.tabs[1]) {
         this.netplay.tabs[0].style.display = ""; // Show rooms tab
         this.netplay.tabs[1].style.display = "none"; // Hide joined tab
+      }
+
+      // Aggressively hide all room UI elements when showing listings
+      // Hide slot selector and its container
+      if (this.netplay.slotSelect) {
+        if (this.netplay.slotSelect.parentElement) {
+          this.netplay.slotSelect.parentElement.style.display = "none";
+        }
+        this.netplay.slotSelect.style.display = "none";
+      }
+
+      // Clear and hide room name
+      if (this.netplay.roomNameElem) {
+        this.netplay.roomNameElem.innerText = "";
+        this.netplay.roomNameElem.style.display = "none";
+      }
+
+      // Clear and hide password
+      if (this.netplay.passwordElem) {
+        this.netplay.passwordElem.innerText = "";
+        this.netplay.passwordElem.style.display = "none";
+      }
+
+      // Ensure joined tab is completely hidden
+      if (this.netplay.tabs && this.netplay.tabs[1]) {
+        this.netplay.tabs[1].style.display = "none";
       }
     }
 
@@ -14880,9 +16049,17 @@ class NetplayMenu {
         popups[0].remove();
       });
     }
-
-    this.setupNetplayBottomBar("listings");
-    this.netplay.updateList.start();
+    // Only setup listings bottom bar if we're not in a room
+    // (if we're in a room, it was already set up above)
+    if (!isInRoom) {
+      this.setupNetplayBottomBar("listings");
+      if (this.netplay?.updateList) {
+        this.netplay.updateList.start();
+      }
+    } else if (this.netplay.readyButton && this.netplay.launchButton) {
+      this.netplayUpdateLaunchButton();
+      this.netplayUpdateReadyButton();
+    }
   }
 
   // Create a a slot slector with styling and listener to update input slot and player table
@@ -16070,11 +17247,107 @@ class NetplayMenu {
     }
   }
 
-  // Join room via socket (legacy method)
-  netplayJoinRoomViaSocket(roomName) {
+  async netplayJoinRoomViaSocket(roomName) {
     console.log("[NetplayMenu] Joining room via socket:", roomName);
-    // TODO: Implement actual socket room joining
-    // For now, this is a stub to prevent errors
+
+    if (!this.engine || !this.engine.roomManager) {
+      console.error("[NetplayMenu] Engine or RoomManager not available");
+      return;
+    }
+
+    // Ensure socket is connected
+    if (!this.engine.roomManager.socket?.isConnected()) {
+      console.warn("[NetplayMenu] Socket not connected, waiting...");
+      // Wait for socket connection
+      return new Promise((resolve) => {
+        const checkConnection = setInterval(() => {
+          if (this.engine?.roomManager?.socket?.isConnected()) {
+            clearInterval(checkConnection);
+            this.netplayJoinRoomViaSocket(roomName).then(resolve);
+          }
+        }, 100);
+
+        // Timeout after 5 seconds
+        setTimeout(() => {
+          clearInterval(checkConnection);
+          console.error("[NetplayMenu] Socket connection timeout");
+          resolve();
+        }, 5000);
+      });
+    }
+
+    try {
+      // Get player name
+      const playerName = this.engine.getPlayerName() || "Player";
+
+      // Get password if stored (from previous join attempt)
+      const password = this.emulator.netplay?.currentRoom?.password || null;
+
+      // Prepare player info with ROM metadata
+      const playerInfo = {
+        netplayUsername: playerName,
+        name: playerName,
+        preferredSlot: this.emulator.netplay.localSlot || 0,
+        userId:
+          this.emulator.netplay.engine?.sessionState?.localPlayerId || null,
+        // ROM metadata for compatibility validation
+        romHash: this.emulator.config.romHash || null,
+        romName: this.emulator.config.romName || null,
+        romFilename: this.emulator.config.romFilename || null,
+        core: this.emulator.config.core || null,
+        system: this.emulator.config.system || null,
+        platform: this.emulator.config.platform || null,
+        coreId:
+          this.emulator.config.coreId || this.emulator.config.system || null,
+        coreVersion: this.emulator.config.coreVersion || null,
+        systemType:
+          this.emulator.config.systemType ||
+          this.emulator.config.system ||
+          null,
+      };
+
+      // Join room via Socket.IO
+      const result = await this.engine.roomManager.joinRoom(
+        null, // sessionId (not needed for Socket.IO join)
+        roomName,
+        4, // maxPlayers
+        password,
+        playerInfo,
+      );
+
+      console.log(
+        "[NetplayMenu] Room joined successfully via Socket.IO:",
+        result,
+      );
+
+      // Store room info
+      this.emulator.netplay.currentRoomId = roomName;
+      this.emulator.netplay.currentRoom = result;
+
+      // Update UI based on room type
+      const netplayMode =
+        result.netplay_mode ||
+        (result.netplay_mode === 1 ? "delay_sync" : "live_stream");
+
+      if (netplayMode === "delay_sync" || result.netplay_mode === 1) {
+        this.netplaySwitchToDelaySyncRoom(roomName, password, result.max || 4);
+      } else {
+        this.netplaySwitchToLiveStreamRoom(roomName, password);
+      }
+    } catch (error) {
+      console.error("[NetplayMenu] Failed to join room via Socket.IO:", error);
+      // Handle compatibility errors
+      if (
+        error.message?.includes("ROM or emulator core doesn't match") ||
+        error.message?.includes("delay_sync_incompatible") ||
+        error.details?.error === "delay_sync_incompatible" ||
+        error.details?.error === "incompatible_game"
+      ) {
+        this.parseCompatibilityError(error);
+      } else {
+        alert(`Failed to join room: ${error.message}`);
+      }
+    }
   }
 
   // Setup input forwarding for data producers
@@ -17243,12 +18516,12 @@ class EmulatorJS {
               this.versionAsInt(version.version)
             ) {
               console.log(
-                `Using EmulatorJS version ${this.ejs_version} but the newest version is ${version.current_version}\nopen https://github.com/EmulatorJS/EmulatorJS to update`
+                `Using EmulatorJS version ${this.ejs_version} but the newest version is ${version.current_version}\nopen https://github.com/EmulatorJS/EmulatorJS to update`,
               );
             }
           });
         }
-      }
+      },
     );
   }
   versionAsInt(ver) {
@@ -17334,7 +18607,7 @@ class EmulatorJS {
       this.setupAds(
         this.config.adUrl,
         this.config.adSize[0],
-        this.config.adSize[1]
+        this.config.adSize[1],
       );
     }
     this.isMobile = (() => {
@@ -17350,10 +18623,10 @@ class EmulatorJS {
       (function (a) {
         if (
           /(android|bb\d+|meego).+mobile|avantgo|bada\/|blackberry|blazer|compal|elaine|fennec|hiptop|iemobile|ip(hone|od)|iris|kindle|lge |maemo|midp|mmp|mobile.+firefox|netfront|opera m(ob|in)i|palm( os)?|phone|p(ixi|re)\/|plucker|pocket|psp|series(4|6)0|symbian|treo|up\.(browser|link)|vodafone|wap|windows ce|xda|xiino|android|ipad|playbook|silk/i.test(
-            a
+            a,
           ) ||
           /1207|6310|6590|3gso|4thp|50[1-6]i|770s|802s|a wa|abac|ac(er|oo|s\-)|ai(ko|rn)|al(av|ca|co)|amoi|an(ex|ny|yw)|aptu|ar(ch|go)|as(te|us)|attw|au(di|\-m|r |s )|avan|be(ck|ll|nq)|bi(lb|rd)|bl(ac|az)|br(e|v)w|bumb|bw\-(n|u)|c55\/|capi|ccwa|cdm\-|cell|chtm|cldc|cmd\-|co(mp|nd)|craw|da(it|ll|ng)|dbte|dc\-s|devi|dica|dmob|do(c|p)o|ds(12|\-d)|el(49|ai)|em(l2|ul)|er(ic|k0)|esl8|ez([4-7]0|os|wa|ze)|fetc|fly(\-|_)|g1 u|g560|gene|gf\-5|g\-mo|go(\.w|od)|gr(ad|un)|haie|hcit|hd\-(m|p|t)|hei\-|hi(pt|ta)|hp( i|ip)|hs\-c|ht(c(\-| |_|a|g|p|s|t)|tp)|hu(aw|tc)|i\-(20|go|ma)|i230|iac( |\-|\/)|ibro|idea|ig01|ikom|im1k|inno|ipaq|iris|ja(t|v)a|jbro|jemu|jigs|kddi|keji|kgt( |\/)|klon|kpt |kwc\-|kyo(c|k)|le(no|xi)|lg( g|\/(k|l|u)|50|54|\-[a-w])|libw|lynx|m1\-w|m3ga|m50\/|ma(te|ui|xo)|mc(01|21|ca)|m\-cr|me(rc|ri)|mi(o8|oa|ts)|mmef|mo(01|02|bi|de|do|t(\-| |o|v)|zz)|mt(50|p1|v )|mwbp|mywa|n10[0-2]|n20[2-3]|n30(0|2)|n50(0|2|5)|n7(0(0|1)|10)|ne((c|m)\-|on|tf|wf|wg|wt)|nok(6|i)|nzph|o2im|op(ti|wv)|oran|owg1|p800|pan(a|d|t)|pdxg|pg(13|\-([1-8]|c))|phil|pire|pl(ay|uc)|pn\-2|po(ck|rt|se)|prox|psio|pt\-g|qa\-a|qc(07|12|21|32|60|\-[2-7]|i\-)|qtek|r380|r600|raks|rim9|ro(ve|zo)|s55\/|sa(ge|ma|mm|ms|ny|va)|sc(01|h\-|oo|p\-)|sdk\/|se(c(\-|0|1)|47|mc|nd|ri)|sgh\-|shar|sie(\-|m)|sk\-0|sl(45|id)|sm(al|ar|b3|it|t5)|so(ft|ny)|sp(01|h\-|v\-|v )|sy(01|mb)|t2(18|50)|t6(00|10|18)|ta(gt|lk)|tcl\-|tdg\-|tel(i|m)|tim\-|t\-mo|to(pl|sh)|ts(70|m\-|m3|m5)|tx\-9|up(\.b|g1|si)|utst|v400|v750|veri|vi(rg|te)|vk(40|5[0-3]|\-v)|vm40|voda|vulc|vx(52|53|60|61|70|80|81|83|85|98)|w3c(\-| )|webc|whit|wi(g |nc|nw)|wmlb|wonu|x700|yas\-|your|zeto|zte\-/i.test(
-            a.substr(0, 4)
+            a.substr(0, 4),
           )
         )
           check = true;
@@ -17386,7 +18659,7 @@ class EmulatorJS {
     this.capture = this.capture || {};
     this.capture.photo = this.capture.photo || {};
     this.capture.photo.source = ["canvas", "retroarch"].includes(
-      this.capture.photo.source
+      this.capture.photo.source,
     )
       ? this.capture.photo.source
       : "canvas";
@@ -17422,7 +18695,9 @@ class EmulatorJS {
     // Netplay enablement
     this.netplayEnabled = true;
     this.netplayMenu = new NetplayMenu(this, null); // Create menu first with null engine
-    this.netplayEngine = new NetplayEngine(this, this.netplayMenu);
+    this.netplayEngine = new NetplayEngine(this, this.netplayMenu, {
+      gameId: this.config.gameId,
+    });
     this.netplayMenu.engine = this.netplayEngine; // Set engine reference after creation
     this.netplayCanvas = null;
 
@@ -17460,7 +18735,6 @@ class EmulatorJS {
         : !!configSimulcast;
     window.EJS_NETPLAY_SIMULCAST = this.netplaySimulcastEnabled;
 
-    
     // Update the button click handler
     // VP9 SVC mode (used when VP9 is selected/negotiated): L1T1 | L1T3 | L2T3
     const normalizeVP9SVCMode = (v) => {
@@ -17481,7 +18755,7 @@ class EmulatorJS {
         ? this.config.netplayVP9SVC
         : envVP9SVC;
     this.netplayVP9SVCMode = normalizeVP9SVCMode(
-      typeof storedVP9SVC === "string" ? storedVP9SVC : configVP9SVC
+      typeof storedVP9SVC === "string" ? storedVP9SVC : configVP9SVC,
     );
     window.EJS_NETPLAY_VP9_SVC_MODE = this.netplayVP9SVCMode;
 
@@ -17501,7 +18775,7 @@ class EmulatorJS {
         ? this.config.netplayHostCodec
         : envHostCodec;
     this.netplayHostCodec = normalizeHostCodec(
-      typeof storedHostCodec === "string" ? storedHostCodec : configHostCodec
+      typeof storedHostCodec === "string" ? storedHostCodec : configHostCodec,
     );
     window.EJS_NETPLAY_HOST_CODEC = this.netplayHostCodec;
 
@@ -17523,7 +18797,7 @@ class EmulatorJS {
     };
 
     const storedSimulcastQuality = this.preGetSetting(
-      "netplayClientSimulcastQuality"
+      "netplayClientSimulcastQuality",
     );
     const storedClientMaxRes = this.preGetSetting("netplayClientMaxResolution");
 
@@ -17531,8 +18805,8 @@ class EmulatorJS {
       typeof window.EJS_NETPLAY_CLIENT_SIMULCAST_QUALITY === "string"
         ? window.EJS_NETPLAY_CLIENT_SIMULCAST_QUALITY
         : typeof window.EJS_NETPLAY_CLIENT_PREFERRED_QUALITY === "string"
-        ? window.EJS_NETPLAY_CLIENT_PREFERRED_QUALITY
-        : null;
+          ? window.EJS_NETPLAY_CLIENT_PREFERRED_QUALITY
+          : null;
     const envClientMaxRes =
       typeof window.EJS_NETPLAY_CLIENT_MAX_RESOLUTION === "string"
         ? window.EJS_NETPLAY_CLIENT_MAX_RESOLUTION
@@ -17563,7 +18837,7 @@ class EmulatorJS {
       this.netplayClientSimulcastQuality;
     // Keep legacy global populated for compatibility with older integrations.
     window.EJS_NETPLAY_CLIENT_MAX_RESOLUTION = simulcastQualityToLegacyRes(
-      this.netplayClientSimulcastQuality
+      this.netplayClientSimulcastQuality,
     );
 
     const storedRetryTimer = this.preGetSetting("netplayRetryConnectionTimer");
@@ -17581,7 +18855,7 @@ class EmulatorJS {
       typeof storedRetryTimer === "string"
         ? storedRetryTimer
         : configRetryTimerRaw,
-      10
+      10,
     );
     if (isNaN(retrySeconds)) retrySeconds = 3;
     if (retrySeconds < 0) retrySeconds = 0;
@@ -17590,7 +18864,7 @@ class EmulatorJS {
     window.EJS_NETPLAY_RETRY_CONNECTION_TIMER = retrySeconds;
 
     const storedUnorderedRetries = this.preGetSetting(
-      "netplayUnorderedRetries"
+      "netplayUnorderedRetries",
     );
     const envUnorderedRetriesRaw =
       typeof window.EJS_NETPLAY_UNORDERED_RETRIES === "number" ||
@@ -17606,7 +18880,7 @@ class EmulatorJS {
       typeof storedUnorderedRetries === "string"
         ? storedUnorderedRetries
         : configUnorderedRetriesRaw,
-      10
+      10,
     );
     if (isNaN(unorderedRetries)) unorderedRetries = 0;
     if (unorderedRetries < 0) unorderedRetries = 0;
@@ -17634,7 +18908,7 @@ class EmulatorJS {
       return "unorderedRelay";
     };
     this.netplayInputMode = normalizeInputMode(
-      typeof storedInputMode === "string" ? storedInputMode : configInputMode
+      typeof storedInputMode === "string" ? storedInputMode : configInputMode,
     );
     window.EJS_NETPLAY_INPUT_MODE = this.netplayInputMode;
 
@@ -17677,7 +18951,7 @@ class EmulatorJS {
       typeof storedPreferredSlot === "string" ||
         typeof storedPreferredSlot === "number"
         ? storedPreferredSlot
-        : configPreferredSlot
+        : configPreferredSlot,
     );
     window.EJS_NETPLAY_PREFERRED_SLOT = this.netplayPreferredSlot;
 
@@ -17688,19 +18962,18 @@ class EmulatorJS {
         (server) =>
           server &&
           typeof server.urls === "string" &&
-          server.urls.startsWith("turn:")
+          server.urls.startsWith("turn:"),
       );
       if (!hasTurnServer) {
         this.netplayShowTurnWarning = true;
       }
       if (this.netplayShowTurnWarning && this.debug) {
         console.warn(
-          "WARNING: No TURN addresses are configured! Many clients may fail to connect!"
+          "WARNING: No TURN addresses are configured! Many clients may fail to connect!",
         );
       }
     }
     // End of gathered dependencies. Collect dependencies and sort above here.
-
 
     if ((this.isMobile || this.hasTouchScreen) && this.virtualGamepad) {
       this.virtualGamepad.classList.add("ejs-vgamepad-active");
@@ -17746,7 +19019,7 @@ class EmulatorJS {
         this.game.classList.add("ejs_game_background_blur");
       this.game.setAttribute(
         "style",
-        `--ejs-background-image: url("${this.config.backgroundImg}"); --ejs-background-color: ${this.config.backgroundColor};`
+        `--ejs-background-image: url("${this.config.backgroundImg}"); --ejs-background-color: ${this.config.backgroundColor};`,
       );
       this.on("start", () => {
         this.game.classList.remove("ejs_game_background");
@@ -17756,7 +19029,7 @@ class EmulatorJS {
     } else {
       this.game.setAttribute(
         "style",
-        "--ejs-background-color: " + this.config.backgroundColor + ";"
+        "--ejs-background-color: " + this.config.backgroundColor + ";",
       );
     }
 
@@ -17819,13 +19092,13 @@ class EmulatorJS {
     if (!color || getColor(color) === null) {
       this.elements.parent.setAttribute(
         "style",
-        "--ejs-primary-color: 26,175,255;"
+        "--ejs-primary-color: 26,175,255;",
       );
       return;
     }
     this.elements.parent.setAttribute(
       "style",
-      "--ejs-primary-color:" + getColor(color) + ";"
+      "--ejs-primary-color:" + getColor(color) + ";",
     );
   }
   setupAds(ads, width, height) {
@@ -17888,7 +19161,7 @@ class EmulatorJS {
       this.setupAds(
         this.config.adUrl,
         this.config.adSize[0],
-        this.config.adSize[1]
+        this.config.adSize[1],
       );
     }
   }
@@ -17949,9 +19222,14 @@ class EmulatorJS {
   }
   startButtonClicked(e) {
     // DELAY_SYNC: Prevent emulator start while in lobby phase
-    if (window.EJS_emulator?.netplay?.currentRoom?.netplay_mode === 'delay_sync' &&
-        window.EJS_emulator?.netplay?.currentRoom?.room_phase === 'lobby') {
-      console.log("[EmulatorJS] Delaying emulator start - DELAY_SYNC room in lobby phase");
+    if (
+      window.EJS_emulator?.netplay?.currentRoom?.netplay_mode ===
+        "delay_sync" &&
+      window.EJS_emulator?.netplay?.currentRoom?.room_phase === "lobby"
+    ) {
+      console.log(
+        "[EmulatorJS] Delaying emulator start - DELAY_SYNC room in lobby phase",
+      );
       return;
     }
 
@@ -17987,7 +19265,7 @@ class EmulatorJS {
         if (!this.missingLang.includes(text)) this.missingLang.push(text);
         if (this.debug)
           console.log(
-            `Translation not found for '${text}'. Language set to '${this.config.language}'`
+            `Translation not found for '${text}'. Language set to '${this.config.language}'`,
           );
       }
       return this.config.langJson[text] || text;
@@ -18006,7 +19284,7 @@ class EmulatorJS {
       (m, appendMsg) => {
         this.textElem.innerText = appendMsg ? msg + m : m;
       },
-      fileCbFunc
+      fileCbFunc,
     );
   }
   checkCoreCompatibility(version) {
@@ -18017,7 +19295,7 @@ class EmulatorJS {
       this.startGameError(this.localization("Outdated EmulatorJS version"));
       throw new Error(
         "Core requires minimum EmulatorJS version of " +
-          version.minimumEJSVersion
+          version.minimumEJSVersion,
       );
     }
   }
@@ -18041,7 +19319,7 @@ class EmulatorJS {
       this.startGameError(
         this.localization("Error for site owner") +
           "\n" +
-          this.localization("Check console")
+          this.localization("Check console"),
       );
       console.warn("This core requires threads, but EJS_threads is not set!");
       return;
@@ -18054,10 +19332,10 @@ class EmulatorJS {
       this.startGameError(
         this.localization("Error for site owner") +
           "\n" +
-          this.localization("Check console")
+          this.localization("Check console"),
       );
       console.warn(
-        "Threads is set to true, but the SharedArrayBuffer function is not exposed. Threads requires 2 headers to be set when sending you html page. See https://stackoverflow.com/a/68630724"
+        "Threads is set to true, but the SharedArrayBuffer function is not exposed. Threads requires 2 headers to be set when sending you html page. See https://stackoverflow.com/a/68630724",
       );
       return;
     }
@@ -18065,7 +19343,7 @@ class EmulatorJS {
       this.defaultCoreOpts = {};
       this.checkCompression(
         new Uint8Array(data),
-        this.localization("Decompress Game Core")
+        this.localization("Decompress Game Core"),
       ).then((data) => {
         let js, thread, wasm;
         for (let k in data) {
@@ -18077,7 +19355,7 @@ class EmulatorJS {
             js = data[k];
           } else if (k === "build.json") {
             this.checkCoreCompatibility(
-              JSON.parse(new TextDecoder().decode(data[k]))
+              JSON.parse(new TextDecoder().decode(data[k])),
             );
           } else if (k === "core.json") {
             let core = JSON.parse(new TextDecoder().decode(data[k]));
@@ -18117,7 +19395,7 @@ class EmulatorJS {
       }
       if (!rep.buildStart) {
         console.warn(
-          "Could not fetch core report JSON! Core caching will be disabled!"
+          "Could not fetch core report JSON! Core caching will be disabled!",
         );
         rep.buildStart = Math.random() * 100;
       }
@@ -18155,12 +19433,12 @@ class EmulatorJS {
             this.localization("Download Game Core") + progress;
         },
         false,
-        { responseType: "arraybuffer", method: "GET" }
+        { responseType: "arraybuffer", method: "GET" },
       );
       if (res === -1) {
         console.log("File not found, attemping to fetch from emulatorjs cdn.");
         console.error(
-          "**THIS METHOD IS A FAILSAFE, AND NOT OFFICIALLY SUPPORTED. USE AT YOUR OWN RISK**"
+          "**THIS METHOD IS A FAILSAFE, AND NOT OFFICIALLY SUPPORTED. USE AT YOUR OWN RISK**",
         );
         // RomM does not bundle cores; use the upstream EmulatorJS CDN.
         // Default to `nightly` for a consistent "latest cores" location.
@@ -18176,7 +19454,7 @@ class EmulatorJS {
               this.localization("Download Game Core") + progress;
           },
           true,
-          { responseType: "arraybuffer", method: "GET" }
+          { responseType: "arraybuffer", method: "GET" },
         );
         if (res === -1) {
           if (!this.supportsWebgl2) {
@@ -18186,13 +19464,13 @@ class EmulatorJS {
               this.localization("Error downloading core") +
                 " (" +
                 filename +
-                ")"
+                ")",
             );
           }
           return;
         }
         console.warn(
-          "File was not found locally, but was found on the emulatorjs cdn.\nIt is recommended to download the stable release from here: https://cdn.emulatorjs.org/releases/"
+          "File was not found locally, but was found on the emulatorjs cdn.\nIt is recommended to download the stable release from here: https://cdn.emulatorjs.org/releases/",
         );
       }
       gotCore(res.data);
@@ -18205,7 +19483,7 @@ class EmulatorJS {
   initGameCore(js, wasm, thread) {
     let script = this.createElement("script");
     script.src = URL.createObjectURL(
-      new Blob([js], { type: "application/javascript" })
+      new Blob([js], { type: "application/javascript" }),
     );
     script.addEventListener("load", () => {
       this.initModule(wasm, thread);
@@ -18251,7 +19529,7 @@ class EmulatorJS {
       () => {
         this.msgElem.innerText = "";
       },
-      typeof time === "number" && time > 0 ? time : 3000
+      typeof time === "number" && time > 0 ? time : 3000,
     );
     this.msgElem.innerText = message;
   }
@@ -18274,11 +19552,11 @@ class EmulatorJS {
             this.localization("Download Game State") + progress;
         },
         true,
-        { responseType: "arraybuffer", method: "GET" }
+        { responseType: "arraybuffer", method: "GET" },
       ).then((res) => {
         if (res === -1) {
           this.startGameError(
-            this.localization("Error downloading game state")
+            this.localization("Error downloading game state"),
           );
           return;
         }
@@ -18303,32 +19581,32 @@ class EmulatorJS {
         const coreFilename = "/" + this.fileName;
         const coreFilePath = coreFilename.substring(
           0,
-          coreFilename.length - coreFilename.split("/").pop().length
+          coreFilename.length - coreFilename.split("/").pop().length,
         );
         if (this.config.dontExtractBIOS === true) {
           this.gameManager.FS.writeFile(
             coreFilePath + assetUrl.split("/").pop(),
-            new Uint8Array(input)
+            new Uint8Array(input),
           );
           return resolve(assetUrl);
         }
         const data = await this.checkCompression(
           new Uint8Array(input),
-          decompressProgressMessage
+          decompressProgressMessage,
         );
         for (const k in data) {
           if (k === "!!notCompressedData") {
             this.gameManager.FS.writeFile(
               coreFilePath +
                 assetUrl.split("/").pop().split("#")[0].split("?")[0],
-              data[k]
+              data[k],
             );
             break;
           }
           if (k.endsWith("/")) continue;
           this.gameManager.FS.writeFile(
             coreFilePath + k.split("/").pop(),
-            data[k]
+            data[k],
           );
         }
       };
@@ -18354,7 +19632,7 @@ class EmulatorJS {
           this.textElem.innerText = progressMessage + progress;
         },
         true,
-        { responseType: "arraybuffer", method: "GET" }
+        { responseType: "arraybuffer", method: "GET" },
       );
       if (res === -1) {
         this.startGameError(this.localization("Network Error"));
@@ -18391,7 +19669,7 @@ class EmulatorJS {
         this.config.gamePatchUrl,
         "patch",
         this.localization("Download Game Patch"),
-        this.localization("Decompress Game Patch")
+        this.localization("Decompress Game Patch"),
       );
       resolve();
     });
@@ -18402,7 +19680,7 @@ class EmulatorJS {
         this.config.gameParentUrl,
         "parent",
         this.localization("Download Game Parent"),
-        this.localization("Decompress Game Parent")
+        this.localization("Decompress Game Parent"),
       );
       resolve();
     });
@@ -18413,7 +19691,7 @@ class EmulatorJS {
         this.config.biosUrl,
         "bios",
         this.localization("Download Game BIOS"),
-        this.localization("Decompress Game BIOS")
+        this.localization("Decompress Game BIOS"),
       );
       resolve();
     });
@@ -18428,7 +19706,7 @@ class EmulatorJS {
     return new Promise((resolve) => {
       this.textElem.innerText = this.localization("Download Game Data");
 
-      const gotGameData = (data) => {
+      const gotGameData = async (data) => {
         const coreName = this.getCore(true);
         const altName = this.getBaseFileName(true);
         if (
@@ -18437,6 +19715,10 @@ class EmulatorJS {
         ) {
           this.fileName = altName;
           this.gameManager.FS.writeFile(this.fileName, new Uint8Array(data));
+
+          // Calculate and store ROM metadata for netplay
+          await this.calculateAndStoreRomMetadata(data, altName);
+
           resolve();
           return;
         }
@@ -18454,7 +19736,7 @@ class EmulatorJS {
         this.checkCompression(
           new Uint8Array(data),
           this.localization("Decompress Game Data"),
-          (fileName, fileData) => {
+          async (fileName, fileData) => {
             if (fileName.includes("/")) {
               const paths = fileName.split("/");
               let cp = "";
@@ -18477,8 +19759,8 @@ class EmulatorJS {
               this.gameManager.FS.writeFile(`/${fileName}`, fileData);
               fileNames.push(fileName);
             }
-          }
-        ).then(() => {
+          },
+        ).then(async () => {
           let isoFile = null;
           let supportedFile = null;
           let cueFile = null;
@@ -18542,6 +19824,13 @@ class EmulatorJS {
           if (this.getCore(true) === "dos" && !this.config.disableBatchBootup) {
             this.fileName = this.gameManager.writeBootupBatchFile();
           }
+
+          // Calculate and store ROM metadata for netplay
+          await this.calculateAndStoreRomMetadata(
+            data,
+            this.fileName || this.getBaseFileName(),
+          );
+
           resolve();
         });
       };
@@ -18553,7 +19842,7 @@ class EmulatorJS {
               this.localization("Download Game Data") + progress;
           },
           true,
-          { responseType: "arraybuffer", method: "GET" }
+          { responseType: "arraybuffer", method: "GET" },
         );
         if (res === -1) {
           this.startGameError(this.localization("Network Error"));
@@ -18626,7 +19915,7 @@ class EmulatorJS {
     if (typeof window.EJS_Runtime !== "function") {
       console.warn("EJS_Runtime is not defined!");
       this.startGameError(
-        this.localization("Error loading EmulatorJS runtime")
+        this.localization("Error loading EmulatorJS runtime"),
       );
       throw new Error("EJS_Runtime is not defined!");
     }
@@ -18678,7 +19967,7 @@ class EmulatorJS {
               return Reflect.construct(
                 Ctor,
                 [nextOptions],
-                PatchedAudioContext
+                PatchedAudioContext,
               );
             }
 
@@ -18709,7 +19998,7 @@ class EmulatorJS {
             originalAudioContext.prototype.createScriptProcessor = function (
               bufferSize,
               numberOfInputChannels,
-              numberOfOutputChannels
+              numberOfOutputChannels,
             ) {
               let nextBufferSize = bufferSize;
               if (
@@ -18723,7 +20012,7 @@ class EmulatorJS {
                 this,
                 nextBufferSize,
                 numberOfInputChannels,
-                numberOfOutputChannels
+                numberOfOutputChannels,
               );
             };
             cleanups.push(() => {
@@ -18760,7 +20049,7 @@ class EmulatorJS {
             "latencyHint=",
             desiredLatencyHint,
             "minScriptProcessorBufferSize=",
-            minScriptProcessorBufferSize
+            minScriptProcessorBufferSize,
           );
         }
       }
@@ -18791,11 +20080,11 @@ class EmulatorJS {
           if (this.debug) console.log(fileName);
           if (fileName.endsWith(".wasm")) {
             return URL.createObjectURL(
-              new Blob([wasmData], { type: "application/wasm" })
+              new Blob([wasmData], { type: "application/wasm" }),
             );
           } else if (fileName.endsWith(".worker.js")) {
             return URL.createObjectURL(
-              new Blob([threadData], { type: "application/javascript" })
+              new Blob([threadData], { type: "application/javascript" }),
             );
           }
         },
@@ -18846,22 +20135,22 @@ class EmulatorJS {
       const displayWidth = Math.floor((rect.width || 0) * dpr);
       const displayHeight = Math.floor((rect.height || 0) * dpr);
       const nativeWidth = Math.floor(
-        (initialResolution && initialResolution.width) || 0
+        (initialResolution && initialResolution.width) || 0,
       );
       const nativeHeight = Math.floor(
-        (initialResolution && initialResolution.height) || 0
+        (initialResolution && initialResolution.height) || 0,
       );
       const initialWidth = Math.max(
         1,
         displayWidth,
         nativeWidth,
-        Math.floor(640 * dpr)
+        Math.floor(640 * dpr),
       );
       const initialHeight = Math.max(
         1,
         displayHeight,
         nativeHeight,
-        Math.floor(480 * dpr)
+        Math.floor(480 * dpr),
       );
       this.canvas.width = initialWidth;
       this.canvas.height = initialHeight;
@@ -18959,7 +20248,7 @@ class EmulatorJS {
     this.addEventListener(
       this.elements.parent,
       "keydown keyup",
-      this.keyChange.bind(this)
+      this.keyChange.bind(this),
     );
     this.addEventListener(this.elements.parent, "mousedown touchstart", (e) => {
       if (
@@ -18974,7 +20263,7 @@ class EmulatorJS {
     let counter = 0;
     this.elements.statePopupPanel = this.createPopup("", {}, true);
     this.elements.statePopupPanel.innerText = this.localization(
-      "Drop save state here to load"
+      "Drop save state here to load",
     );
     this.elements.statePopupPanel.style["text-align"] = "center";
     this.elements.statePopupPanel.style["font-size"] = "28px";
@@ -18988,7 +20277,7 @@ class EmulatorJS {
           this.handleResize.bind(this);
           if (this.config.noAutoFocus !== true) this.elements.parent.focus();
         }, 0);
-      }
+      },
     );
     this.addEventListener(window, "beforeunload", (e) => {
       if (this.config.disableAutoUnload) {
@@ -19058,7 +20347,7 @@ class EmulatorJS {
     });
     this.gamepad.on("disconnected", (e) => {
       const gamepadIndex = this.gamepad.gamepads.indexOf(
-        this.gamepad.gamepads.find((f) => f.index == e.gamepadIndex)
+        this.gamepad.gamepads.find((f) => f.index == e.gamepadIndex),
       );
       const gamepadSelection =
         this.gamepad.gamepads[gamepadIndex].id +
@@ -19104,7 +20393,7 @@ class EmulatorJS {
         const opt = this.createElement("option");
         opt.setAttribute(
           "value",
-          this.gamepad.gamepads[j].id + "_" + this.gamepad.gamepads[j].index
+          this.gamepad.gamepads[j].id + "_" + this.gamepad.gamepads[j].index,
         );
         opt.innerText =
           this.gamepad.gamepads[j].id + "_" + this.gamepad.gamepads[j].index;
@@ -19278,7 +20567,7 @@ class EmulatorJS {
           ) {
             if (this.debug)
               console.warn(
-                `Custom button "${searchKey}" is missing required properties`
+                `Custom button "${searchKey}" is missing required properties`,
               );
             continue;
           }
@@ -19329,7 +20618,7 @@ class EmulatorJS {
               };
             } else if (this.debug) {
               console.warn(
-                `Custom button "${searchKey}" is missing required properties`
+                `Custom button "${searchKey}" is missing required properties`,
               );
             }
           }
@@ -19386,10 +20675,10 @@ class EmulatorJS {
       this.elements.contextmenu.style.display = "none";
     };
     this.addEventListener(this.elements.contextmenu, "contextmenu", (e) =>
-      e.preventDefault()
+      e.preventDefault(),
     );
     this.addEventListener(this.elements.parent, "contextmenu", (e) =>
-      e.preventDefault()
+      e.preventDefault(),
     );
     this.addEventListener(this.game, "mousedown touchend", hideMenu);
     const parent = this.createElement("ul");
@@ -19446,7 +20735,7 @@ class EmulatorJS {
         startScreenRecording.setAttribute("hidden", "hidden");
         stopScreenRecording.removeAttribute("hidden");
         hideMenu();
-      }
+      },
     );
     const stopScreenRecording = addButton("Stop Screen Recording", true, () => {
       if (screenMediaRecorder !== null) {
@@ -19464,7 +20753,7 @@ class EmulatorJS {
         : "1";
       if (this.gameManager.quickSave(slot)) {
         this.displayMessage(
-          this.localization("SAVED STATE TO SLOT") + " " + slot
+          this.localization("SAVED STATE TO SLOT") + " " + slot,
         );
       } else {
         this.displayMessage(this.localization("FAILED TO SAVE STATE"));
@@ -19477,7 +20766,7 @@ class EmulatorJS {
         : "1";
       this.gameManager.quickLoad(slot);
       this.displayMessage(
-        this.localization("LOADED STATE FROM SLOT") + " " + slot
+        this.localization("LOADED STATE FROM SLOT") + " " + slot,
       );
       hideMenu();
     });
@@ -19546,14 +20835,14 @@ class EmulatorJS {
         home,
         "https://github.com/EmulatorJS/EmulatorJS",
         "View on GitHub",
-        true
+        true,
       );
 
       this.createLink(
         home,
         "https://discord.gg/6akryGkETU",
         "Join the discord",
-        true
+        true,
       );
 
       const info = this.createElement("div");
@@ -19564,7 +20853,7 @@ class EmulatorJS {
       this.createLink(
         info,
         "https://github.com/libretro/RetroArch/",
-        "RetroArch"
+        "RetroArch",
       );
       if (this.repository && this.coreName) {
         info.innerHTML += ". This core is powered by ";
@@ -19584,7 +20873,7 @@ class EmulatorJS {
           current.style.display = "none";
         }
         let activeLi = li.parentElement.querySelector(
-          ".ejs_active_list_element"
+          ".ejs_active_list_element",
         );
         if (activeLi) {
           activeLi.classList.remove("ejs_active_list_element");
@@ -19622,7 +20911,7 @@ class EmulatorJS {
       licenseLink.href =
         "https://github.com/libretro/RetroArch/blob/master/COPYING";
       licenseLink.innerText = this.localization(
-        "View the RetroArch license here"
+        "View the RetroArch license here",
       );
       a.appendChild(this.createElement("br"));
       a.appendChild(licenseLink);
@@ -19815,13 +21104,13 @@ class EmulatorJS {
         this.menu.mousemoveListener = this.addEventListener(
           this.elements.parent,
           "mousemove",
-          mouseListener
+          mouseListener,
         );
       } else {
         this.menu.mousemoveListener = this.addEventListener(
           this.elements.parent,
           "mousemove",
-          clickListener
+          clickListener,
         );
       }
 
@@ -19954,7 +21243,7 @@ class EmulatorJS {
         try {
           this.netplay.socket.emit(
             this.paused ? "netplay-host-paused" : "netplay-host-resumed",
-            {}
+            {},
           );
         } catch (e) {
           // ignore
@@ -20010,7 +21299,7 @@ class EmulatorJS {
       const { screenshot, format } = await this.takeScreenshot(
         this.capture.photo.source,
         this.capture.photo.format,
-        this.capture.photo.upscale
+        this.capture.photo.upscale,
       );
       const called = this.callEvent("saveState", {
         screenshot: screenshot,
@@ -20073,7 +21362,7 @@ class EmulatorJS {
         const { screenshot, format } = await this.takeScreenshot(
           this.capture.photo.source,
           this.capture.photo.format,
-          this.capture.photo.upscale
+          this.capture.photo.upscale,
         );
         const called = this.callEvent("saveSave", {
           screenshot: screenshot,
@@ -20087,7 +21376,7 @@ class EmulatorJS {
         a.href = savUrl;
         a.download = this.gameManager.getSaveFilePath().split("/").pop();
         a.click();
-      }
+      },
     );
     const loadSavFiles = addButton(
       this.config.buttonOpts.loadSavFiles,
@@ -20109,7 +21398,7 @@ class EmulatorJS {
           this.gameManager.FS.unlink(path);
         this.gameManager.FS.writeFile(path, sav);
         this.gameManager.loadSaveFiles();
-      }
+      },
     );
     const netplay = addButton(this.config.buttonOpts.netplay, async () => {
       this.netplayMenu.createNetplayMenu();
@@ -20144,7 +21433,7 @@ class EmulatorJS {
         this.muted = true;
         this.setVolume(0);
       },
-      volumeSettings
+      volumeSettings,
     );
     const unmuteButton = addButton(
       this.config.buttonOpts.unmute,
@@ -20155,7 +21444,7 @@ class EmulatorJS {
         this.muted = false;
         this.setVolume(this.volume);
       },
-      volumeSettings
+      volumeSettings,
     );
     unmuteButton.style.display = "none";
 
@@ -20178,13 +21467,13 @@ class EmulatorJS {
       volumeSlider.setAttribute("aria-valuenow", volume * 100);
       volumeSlider.setAttribute(
         "aria-valuetext",
-        (volume * 100).toFixed(1) + "%"
+        (volume * 100).toFixed(1) + "%",
       );
       volumeSlider.setAttribute(
         "style",
         "--value: " +
           volume * 100 +
-          "%;margin-left: 5px;position: relative;z-index: 2;"
+          "%;margin-left: 5px;position: relative;z-index: 2;",
       );
       if (
         this.Module.AL &&
@@ -20211,7 +21500,7 @@ class EmulatorJS {
           this.volume = newVal;
           this.setVolume(this.volume);
         }, 5);
-      }
+      },
     );
 
     if (!this.config.buttonOpts || this.config.buttonOpts.volume !== false) {
@@ -20239,7 +21528,7 @@ class EmulatorJS {
         } else {
           this.elements.contextmenu.style.display = "none";
         }
-      }
+      },
     );
 
     this.diskParent = this.createElement("div");
@@ -20254,7 +21543,7 @@ class EmulatorJS {
         diskButton[2].classList.toggle("ejs_disks_text", this.disksMenuOpen);
       },
       this.diskParent,
-      true
+      true,
     );
     this.elements.menu.appendChild(this.diskParent);
     this.closeDisksMenu = () => {
@@ -20279,16 +21568,16 @@ class EmulatorJS {
         this.settingsMenuOpen = !this.settingsMenuOpen;
         settingButton[1].classList.toggle(
           "ejs_svg_rotate",
-          this.settingsMenuOpen
+          this.settingsMenuOpen,
         );
         this.settingsMenu.style.display = this.settingsMenuOpen ? "" : "none";
         settingButton[2].classList.toggle(
           "ejs_settings_text",
-          this.settingsMenuOpen
+          this.settingsMenuOpen,
         );
       },
       this.settingParent,
-      true
+      true,
     );
     this.elements.menu.appendChild(this.settingParent);
     this.closeSettingsMenu = () => {
@@ -20296,11 +21585,11 @@ class EmulatorJS {
       this.settingsMenuOpen = false;
       settingButton[1].classList.toggle(
         "ejs_svg_rotate",
-        this.settingsMenuOpen
+        this.settingsMenuOpen,
       );
       settingButton[2].classList.toggle(
         "ejs_settings_text",
-        this.settingsMenuOpen
+        this.settingsMenuOpen,
       );
       this.settingsMenu.style.display = "none";
     };
@@ -20427,7 +21716,7 @@ class EmulatorJS {
           this.callEvent("exit");
         });
         setTimeout(this.menu.close.bind(this), 20);
-      }
+      },
     );
 
     this.addEventListener(
@@ -20443,7 +21732,7 @@ class EmulatorJS {
           exit.style.display = "";
           enter.style.display = "none";
         }
-      }
+      },
     );
 
     const hasFullscreen = !!(
@@ -20583,7 +21872,7 @@ class EmulatorJS {
       const getSize = function (size) {
         let i = -1;
         do {
-          (size /= 1024), i++;
+          ((size /= 1024), i++);
         } while (size > 1024);
         return (
           Math.max(size, 0.1).toFixed(1) +
@@ -20649,7 +21938,7 @@ class EmulatorJS {
           if (this.controlMenu) this.controlMenu.style.display = "none";
         },
       },
-      true
+      true,
     );
     this.setupKeys();
     this.controlMenu = body.parentElement;
@@ -21042,7 +22331,7 @@ class EmulatorJS {
       { id: 26, label: this.localization("CHANGE STATE SLOT") },
       { id: 27, label: this.localization("FAST FORWARD") },
       { id: 29, label: this.localization("SLOW MOTION") },
-      { id: 28, label: this.localization("REWIND") }
+      { id: 28, label: this.localization("REWIND") },
     );
     let nums = [];
     for (let i = 0; i < buttons.length; i++) {
@@ -21176,7 +22465,7 @@ class EmulatorJS {
           input.checked = !input.checked;
           this.changeSettingOption(
             "virtual-gamepad",
-            input.checked ? "enabled" : "disabled"
+            input.checked ? "enabled" : "disabled",
           );
         });
         this.on("start", (e) => {
@@ -21306,7 +22595,7 @@ class EmulatorJS {
         this.addEventListener(buttonText, "mousedown", (e) => {
           e.preventDefault();
           this.controlPopup.parentElement.parentElement.removeAttribute(
-            "hidden"
+            "hidden",
           );
           this.controlPopup.innerText =
             "[ " + controlLabel + " ]\n" + this.localization("Press Keyboard");
@@ -21581,7 +22870,7 @@ class EmulatorJS {
       for (let j = 0; j < 30; j++) {
         if (this.controls[i][j]) {
           this.controls[i][j].value = parseInt(
-            this.keyLookup(this.controls[i][j].value)
+            this.keyLookup(this.controls[i][j].value),
           );
           if (this.controls[i][j].value === -1 && this.debug) {
             delete this.controls[i][j].value;
@@ -21633,17 +22922,20 @@ class EmulatorJS {
       for (let j = 0; j < 30; j++) {
         if (this.controls[i][j] && this.controls[i][j].value === e.keyCode) {
           // Route through netplay.simulateInput if netplay is active
-          if (this.netplay && typeof this.netplay.simulateInput === 'function') {
+          if (
+            this.netplay &&
+            typeof this.netplay.simulateInput === "function"
+          ) {
             this.netplay.simulateInput(
               i,
               j,
-              e.type === "keyup" ? 0 : special.includes(j) ? 0x7fff : 1
+              e.type === "keyup" ? 0 : special.includes(j) ? 0x7fff : 1,
             );
           } else {
             this.gameManager.simulateInput(
               i,
               j,
-              e.type === "keyup" ? 0 : special.includes(j) ? 0x7fff : 1
+              e.type === "keyup" ? 0 : special.includes(j) ? 0x7fff : 1,
             );
           }
         }
@@ -21655,7 +22947,7 @@ class EmulatorJS {
     const gamepadIndex = this.gamepadSelection.indexOf(
       this.gamepad.gamepads[e.gamepadIndex].id +
         "_" +
-        this.gamepad.gamepads[e.gamepadIndex].index
+        this.gamepad.gamepads[e.gamepadIndex].index,
     );
     if (gamepadIndex < 0) {
       return; // Gamepad not set anywhere
@@ -21663,7 +22955,7 @@ class EmulatorJS {
 
     // Helper function to route input through netplay or gameManager
     const simulateInput = (playerIndex, inputIndex, value) => {
-      if (this.netplay && typeof this.netplay.simulateInput === 'function') {
+      if (this.netplay && typeof this.netplay.simulateInput === "function") {
         this.netplay.simulateInput(playerIndex, inputIndex, value);
       } else {
         this.gameManager.simulateInput(playerIndex, inputIndex, value);
@@ -21712,7 +23004,7 @@ class EmulatorJS {
           simulateInput(
             i,
             j,
-            e.type === "buttonup" ? 0 : special.includes(j) ? 0x7fff : 1
+            e.type === "buttonup" ? 0 : special.includes(j) ? 0x7fff : 1,
           );
         } else if (e.type === "axischanged") {
           if (
@@ -21818,14 +23110,14 @@ class EmulatorJS {
         if (!Array.isArray(set)) {
           if (this.debug)
             console.warn(
-              "Virtual gamepad settings is not array! Using default gamepad settings"
+              "Virtual gamepad settings is not array! Using default gamepad settings",
             );
           return false;
         }
         if (!set.length) {
           if (this.debug)
             console.warn(
-              "Virtual gamepad settings is empty! Using default gamepad settings"
+              "Virtual gamepad settings is empty! Using default gamepad settings",
             );
           return false;
         }
@@ -21837,14 +23129,14 @@ class EmulatorJS {
                 console.warn(
                   "Missing location value for " +
                     set[i].type +
-                    "! Using default gamepad settings"
+                    "! Using default gamepad settings",
                 );
                 return false;
               } else if (!set[i].inputValues) {
                 console.warn(
                   "Missing inputValues for " +
                     set[i].type +
-                    "! Using default gamepad settings"
+                    "! Using default gamepad settings",
                 );
                 return false;
               }
@@ -21854,34 +23146,34 @@ class EmulatorJS {
               console.warn(
                 "Missing location value for button " +
                   set[i].text +
-                  "! Using default gamepad settings"
+                  "! Using default gamepad settings",
               );
               return false;
             } else if (!set[i].type) {
               console.warn(
                 "Missing type value for button " +
                   set[i].text +
-                  "! Using default gamepad settings"
+                  "! Using default gamepad settings",
               );
               return false;
             } else if (!set[i].id.toString()) {
               console.warn(
                 "Missing id value for button " +
                   set[i].text +
-                  "! Using default gamepad settings"
+                  "! Using default gamepad settings",
               );
               return false;
             } else if (!set[i].input_value.toString()) {
               console.warn(
                 "Missing input_value for button " +
                   set[i].text +
-                  "! Using default gamepad settings"
+                  "! Using default gamepad settings",
               );
               return false;
             }
           } catch (e) {
             console.warn(
-              "Error checking values! Using default gamepad settings"
+              "Error checking values! Using default gamepad settings",
             );
             return false;
           }
@@ -23510,17 +24802,17 @@ class EmulatorJS {
             if (e.type === "touchend" || e.type === "touchcancel") {
               e.target.classList.remove("ejs_virtualGamepad_button_down");
               window.setTimeout(() => {
-                this.netplay && typeof this.netplay.simulateInput === 'function' ?
-                  this.netplay.simulateInput(0, value, 0) :
-                  this.gameManager.simulateInput(0, value, 0);
+                this.netplay && typeof this.netplay.simulateInput === "function"
+                  ? this.netplay.simulateInput(0, value, 0)
+                  : this.gameManager.simulateInput(0, value, 0);
               });
             } else {
               e.target.classList.add("ejs_virtualGamepad_button_down");
-              this.netplay && typeof this.netplay.simulateInput === 'function' ?
-                this.netplay.simulateInput(0, value, downValue) :
-                this.gameManager.simulateInput(0, value, downValue);
+              this.netplay && typeof this.netplay.simulateInput === "function"
+                ? this.netplay.simulateInput(0, value, downValue)
+                : this.gameManager.simulateInput(0, value, downValue);
             }
-          }
+          },
         );
       }
     }
@@ -23645,8 +24937,10 @@ class EmulatorJS {
             if (left === 1) left = 0x7fff;
             if (right === 1) right = 0x7fff;
           }
-          const simulateInput = this.netplay && typeof this.netplay.simulateInput === 'function' ?
-            this.netplay.simulateInput : this.gameManager.simulateInput;
+          const simulateInput =
+            this.netplay && typeof this.netplay.simulateInput === "function"
+              ? this.netplay.simulateInput
+              : this.gameManager.simulateInput;
           simulateInput(0, dpad.inputValues[0], up);
           simulateInput(0, dpad.inputValues[1], down);
           simulateInput(0, dpad.inputValues[2], left);
@@ -23673,7 +24967,7 @@ class EmulatorJS {
         "touchstart touchmove touchend touchcancel",
         (e) => {
           e.preventDefault();
-        }
+        },
       );
       elem.classList.add(controlSchemeCls);
       if (zone.id) {
@@ -23690,8 +24984,10 @@ class EmulatorJS {
         color: zone.color || "red",
       });
       zoneObj.on("end", () => {
-        const simulateInput = this.netplay && typeof this.netplay.simulateInput === 'function' ?
-          this.netplay.simulateInput : this.gameManager.simulateInput;
+        const simulateInput =
+          this.netplay && typeof this.netplay.simulateInput === "function"
+            ? this.netplay.simulateInput
+            : this.gameManager.simulateInput;
         simulateInput(0, zone.inputValues[0], 0);
         simulateInput(0, zone.inputValues[1], 0);
         simulateInput(0, zone.inputValues[2], 0);
@@ -23735,8 +25031,10 @@ class EmulatorJS {
             x = distance / 50;
             y = (0.022222222222222223 * (360 - degree) * distance) / 50;
           }
-          const simulateInput = this.netplay && typeof this.netplay.simulateInput === 'function' ?
-            this.netplay.simulateInput : this.gameManager.simulateInput;
+          const simulateInput =
+            this.netplay && typeof this.netplay.simulateInput === "function"
+              ? this.netplay.simulateInput
+              : this.gameManager.simulateInput;
           if (x > 0) {
             simulateInput(0, zone.inputValues[0], 0x7fff * x);
             simulateInput(0, zone.inputValues[1], 0);
@@ -23815,7 +25113,7 @@ class EmulatorJS {
           ready = false;
           e.preventDefault();
           this.menu.toggle();
-        }
+        },
       );
       this.elements.menuToggle = menuButton;
     }
@@ -23836,12 +25134,12 @@ class EmulatorJS {
     const positionInfo = this.elements.parent.getBoundingClientRect();
     this.game.parentElement.classList.toggle(
       "ejs_small_screen",
-      positionInfo.width <= 575
+      positionInfo.width <= 575,
     );
     //This wouldnt work using :not()... strange.
     this.game.parentElement.classList.toggle(
       "ejs_big_screen",
-      positionInfo.width > 575
+      positionInfo.width > 575,
     );
 
     if (!this.handleSettingsResize) return;
@@ -23880,7 +25178,7 @@ class EmulatorJS {
     localStorage.setItem("ejs-settings", JSON.stringify(ejs_settings));
     localStorage.setItem(
       this.getLocalStorageKey(),
-      JSON.stringify(coreSpecific)
+      JSON.stringify(coreSpecific),
     );
   }
   getLocalStorageKey() {
@@ -23896,7 +25194,7 @@ class EmulatorJS {
       identifier += "-" + this.config.gameUrl.name;
     } else if (typeof this.config.gameId !== "number") {
       console.warn(
-        "gameId (EJS_gameID) is not set. This may result in settings persisting across games."
+        "gameId (EJS_gameID) is not set. This may result in settings persisting across games.",
       );
     }
     return "ejs-" + identifier + "-settings";
@@ -24125,7 +25423,7 @@ class EmulatorJS {
                 (c) =>
                   c &&
                   typeof c.mimeType === "string" &&
-                  c.mimeType.toLowerCase() === "video/vp9"
+                  c.mimeType.toLowerCase() === "video/vp9",
               );
             } catch (e) {
               return false;
@@ -24192,7 +25490,7 @@ class EmulatorJS {
       window.EJS_NETPLAY_CLIENT_PREFERRED_QUALITY =
         this.netplayClientSimulcastQuality;
       window.EJS_NETPLAY_CLIENT_MAX_RESOLUTION = simulcastQualityToLegacyRes(
-        this.netplayClientSimulcastQuality
+        this.netplayClientSimulcastQuality,
       );
     } else if (option === "netplayRetryConnectionTimer") {
       let retrySeconds = parseInt(value, 10);
@@ -24351,7 +25649,7 @@ class EmulatorJS {
         for (let j = 0; j < buttons.length; j++) {
           buttons[j].classList.toggle(
             "ejs_option_row_selected",
-            buttons[j].getAttribute("ejs_value") === this.disks[id]
+            buttons[j].getAttribute("ejs_value") === this.disks[id],
           );
         }
         this.menuOptionChanged(id, this.disks[id]);
@@ -24417,7 +25715,7 @@ class EmulatorJS {
           // remove the file extension from the disk file name
           let diskLabel = diskLabelValues[0].replace(
             "." + diskLabelValues[0].split(".").pop(),
-            ""
+            "",
           );
           if (diskLabelValues.length >= 2) {
             // has a label - use that instead
@@ -24430,7 +25728,7 @@ class EmulatorJS {
         this.localization("Disk"),
         "disk",
         diskLabels,
-        this.gameManager.getCurrentDisk().toString()
+        this.gameManager.getCurrentDisk().toString(),
       );
     }
 
@@ -24575,11 +25873,11 @@ class EmulatorJS {
       }
       this.settingsMenu.classList.toggle(
         "ejs_settings_center_left",
-        !onTheRight
+        !onTheRight,
       );
       this.settingsMenu.classList.toggle(
         "ejs_settings_center_right",
-        onTheRight
+        onTheRight,
       );
       if (needChange) {
         this.settingsMenu.style.display = "none";
@@ -24606,7 +25904,7 @@ class EmulatorJS {
       options,
       defaultOption,
       parentElement,
-      useParentParent
+      useParentParent,
     ) => {
       if (
         Array.isArray(this.config.hideSettings) &&
@@ -24683,7 +25981,7 @@ class EmulatorJS {
         for (let j = 0; j < buttons.length; j++) {
           buttons[j].classList.toggle(
             "ejs_option_row_selected",
-            buttons[j].getAttribute("ejs_value") === settings[id]
+            buttons[j].getAttribute("ejs_value") === settings[id],
           );
         }
         this.menuOptionChanged(id, settings[id]);
@@ -24732,12 +26030,12 @@ class EmulatorJS {
     if (core && core.length > 1) {
       addToMenu(
         this.localization(
-          "Core" + " (" + this.localization("Requires restart") + ")"
+          "Core" + " (" + this.localization("Requires restart") + ")",
         ),
         "retroarch_core",
         core,
         this.getCore(),
-        home
+        home,
       );
     }
     if (
@@ -24752,14 +26050,14 @@ class EmulatorJS {
           disabled: this.localization("Disabled"),
         },
         this.config.threads ? "enabled" : "disabled",
-        home
+        home,
       );
     }
 
     const graphicsOptions = createSettingParent(
       true,
       "Graphics Settings",
-      home
+      home,
     );
 
     if (this.config.shaders) {
@@ -24795,7 +26093,7 @@ class EmulatorJS {
         shaderMenu,
         "disabled",
         graphicsOptions,
-        true
+        true,
       );
     }
 
@@ -24812,7 +26110,7 @@ class EmulatorJS {
         },
         this.webgl2Enabled ? "enabled" : "disabled",
         graphicsOptions,
-        true
+        true,
       );
     }
 
@@ -24825,7 +26123,7 @@ class EmulatorJS {
       },
       "hide",
       graphicsOptions,
-      true
+      true,
     );
 
     addToMenu(
@@ -24837,7 +26135,7 @@ class EmulatorJS {
       },
       "disabled",
       graphicsOptions,
-      true
+      true,
     );
 
     addToMenu(
@@ -24851,13 +26149,13 @@ class EmulatorJS {
       },
       this.videoRotation.toString(),
       graphicsOptions,
-      true
+      true,
     );
 
     const screenCaptureOptions = createSettingParent(
       true,
       "Screen Capture",
-      home
+      home,
     );
 
     addToMenu(
@@ -24869,7 +26167,7 @@ class EmulatorJS {
       },
       this.capture.photo.source,
       screenCaptureOptions,
-      true
+      true,
     );
 
     let screenshotFormats = {
@@ -24889,7 +26187,7 @@ class EmulatorJS {
       screenshotFormats,
       this.capture.photo.format,
       screenCaptureOptions,
-      true
+      true,
     );
 
     const screenshotUpscale = this.capture.photo.upscale.toString();
@@ -24908,7 +26206,7 @@ class EmulatorJS {
       screenshotUpscales,
       screenshotUpscale,
       screenCaptureOptions,
-      true
+      true,
     );
 
     const screenRecordFPS = this.capture.video.fps.toString();
@@ -24925,7 +26223,7 @@ class EmulatorJS {
       screenRecordFPSs,
       screenRecordFPS,
       screenCaptureOptions,
-      true
+      true,
     );
 
     let screenRecordFormats = {
@@ -24946,7 +26244,7 @@ class EmulatorJS {
       screenRecordFormats,
       this.capture.video.format,
       screenCaptureOptions,
-      true
+      true,
     );
 
     const screenRecordUpscale = this.capture.video.upscale.toString();
@@ -24965,7 +26263,7 @@ class EmulatorJS {
       screenRecordUpscales,
       screenRecordUpscale,
       screenCaptureOptions,
-      true
+      true,
     );
 
     const screenRecordVideoBitrate = this.capture.video.videoBitrate.toString();
@@ -24986,7 +26284,7 @@ class EmulatorJS {
       screenRecordVideoBitrates,
       screenRecordVideoBitrate,
       screenCaptureOptions,
-      true
+      true,
     );
 
     const screenRecordAudioBitrate = this.capture.video.audioBitrate.toString();
@@ -25007,7 +26305,7 @@ class EmulatorJS {
       screenRecordAudioBitrates,
       screenRecordAudioBitrate,
       screenCaptureOptions,
-      true
+      true,
     );
 
     checkForEmptyMenu(screenCaptureOptions);
@@ -25023,7 +26321,7 @@ class EmulatorJS {
       },
       "disabled",
       speedOptions,
-      true
+      true,
     );
 
     addToMenu(
@@ -25052,7 +26350,7 @@ class EmulatorJS {
       ],
       "3.0",
       speedOptions,
-      true
+      true,
     );
 
     addToMenu(
@@ -25064,7 +26362,7 @@ class EmulatorJS {
       },
       "disabled",
       speedOptions,
-      true
+      true,
     );
 
     addToMenu(
@@ -25092,12 +26390,12 @@ class EmulatorJS {
       ],
       "3.0",
       speedOptions,
-      true
+      true,
     );
 
     addToMenu(
       this.localization(
-        "Rewind Enabled" + " (" + this.localization("Requires restart") + ")"
+        "Rewind Enabled" + " (" + this.localization("Requires restart") + ")",
       ),
       "rewindEnabled",
       {
@@ -25106,7 +26404,7 @@ class EmulatorJS {
       },
       "disabled",
       speedOptions,
-      true
+      true,
     );
 
     if (this.rewindEnabled) {
@@ -25116,7 +26414,7 @@ class EmulatorJS {
         ["1", "3", "6", "12", "25", "50", "100"],
         "6",
         speedOptions,
-        true
+        true,
       );
     }
 
@@ -25131,7 +26429,7 @@ class EmulatorJS {
       },
       "downward",
       inputOptions,
-      true
+      true,
     );
 
     addToMenu(
@@ -25145,7 +26443,7 @@ class EmulatorJS {
         ? "enabled"
         : "disabled",
       inputOptions,
-      true
+      true,
     );
 
     addToMenu(
@@ -25157,7 +26455,7 @@ class EmulatorJS {
       },
       "disabled",
       inputOptions,
-      true
+      true,
     );
 
     addToMenu(
@@ -25169,7 +26467,7 @@ class EmulatorJS {
       },
       this.enableMouseLock === true ? "enabled" : "disabled",
       inputOptions,
-      true
+      true,
     );
 
     checkForEmptyMenu(inputOptions);
@@ -25182,7 +26480,7 @@ class EmulatorJS {
         ["1", "2", "3", "4", "5", "6", "7", "8", "9"],
         "1",
         saveStateOpts,
-        true
+        true,
       );
       addToMenu(
         this.localization("Save State Location"),
@@ -25193,7 +26491,7 @@ class EmulatorJS {
         },
         "download",
         saveStateOpts,
-        true
+        true,
       );
       if (!this.config.fixedSaveInterval) {
         addToMenu(
@@ -25210,7 +26508,7 @@ class EmulatorJS {
           },
           "300",
           saveStateOpts,
-          true
+          true,
         );
       }
       checkForEmptyMenu(saveStateOpts);
@@ -25227,7 +26525,7 @@ class EmulatorJS {
         },
         this.isMobile ? "enabled" : "disabled",
         virtualGamepad,
-        true
+        true,
       );
       addToMenu(
         this.localization("Menu Bar Button"),
@@ -25238,7 +26536,7 @@ class EmulatorJS {
         },
         "visible",
         virtualGamepad,
-        true
+        true,
       );
       addToMenu(
         this.localization("Left Handed Mode"),
@@ -25249,7 +26547,7 @@ class EmulatorJS {
         },
         "disabled",
         virtualGamepad,
-        true
+        true,
       );
       checkForEmptyMenu(virtualGamepad);
     }
@@ -25262,7 +26560,7 @@ class EmulatorJS {
       const coreOptions = createSettingParent(
         true,
         "Backend Core Options",
-        home
+        home,
       );
       coreOpts.split("\n").forEach((line, index) => {
         let option = line.split("; ");
@@ -25278,7 +26576,7 @@ class EmulatorJS {
         for (let i = 0; i < options.length; i++) {
           availableOptions[options[i]] = this.localization(
             options[i],
-            this.config.settingsLanguage
+            this.config.settingsLanguage,
           );
         }
         addToMenu(
@@ -25289,7 +26587,7 @@ class EmulatorJS {
             ? name.split("|")[1]
             : options[0].replace("(Default) ", ""),
           coreOptions,
-          true
+          true,
         );
       });
       checkForEmptyMenu(coreOptions);
@@ -25315,7 +26613,7 @@ class EmulatorJS {
           " (" +
           this.localization("Requires restart") +
           ")",
-        home
+        home,
       );
       this.retroarchOpts.forEach((option) => {
         addToMenu(
@@ -25324,7 +26622,7 @@ class EmulatorJS {
           option.options,
           option.default,
           retroarchOptsMenu,
-          true
+          true,
         );
       });
       checkForEmptyMenu(retroarchOptsMenu);
@@ -25375,36 +26673,39 @@ class EmulatorJS {
   updateCheatUI() {
     if (!this.cheatsMenu) return;
 
-    const body = this.cheatsMenu.querySelector('.ejs_popup_body');
+    const body = this.cheatsMenu.querySelector(".ejs_popup_body");
     if (!body) return;
 
     // Clear existing content
-    body.innerHTML = '';
+    body.innerHTML = "";
 
     if (this.cheats.length === 0) {
-      body.innerHTML = '<div style="text-align: center; padding: 20px; color: #666;">No cheats available</div>';
+      body.innerHTML =
+        '<div style="text-align: center; padding: 20px; color: #666;">No cheats available</div>';
       return;
     }
 
     // Add cheat toggles
     this.cheats.forEach((cheat, index) => {
-      const cheatDiv = this.createElement('div');
-      cheatDiv.style.marginBottom = '10px';
+      const cheatDiv = this.createElement("div");
+      cheatDiv.style.marginBottom = "10px";
 
-      const checkbox = this.createElement('input');
-      checkbox.type = 'checkbox';
+      const checkbox = this.createElement("input");
+      checkbox.type = "checkbox";
       checkbox.id = `cheat_${index}`;
       checkbox.checked = cheat.checked || false;
       checkbox.onchange = () => {
         cheat.checked = checkbox.checked;
         // TODO: Apply/remove cheat code
-        console.log(`Cheat "${cheat.desc}" ${cheat.checked ? 'enabled' : 'disabled'}`);
+        console.log(
+          `Cheat "${cheat.desc}" ${cheat.checked ? "enabled" : "disabled"}`,
+        );
       };
 
-      const label = this.createElement('label');
+      const label = this.createElement("label");
       label.htmlFor = `cheat_${index}`;
       label.textContent = cheat.desc;
-      label.style.marginLeft = '8px';
+      label.style.marginLeft = "8px";
 
       cheatDiv.appendChild(checkbox);
       cheatDiv.appendChild(label);
@@ -25413,11 +26714,7 @@ class EmulatorJS {
   }
 
   createCheatsMenu() {
-    const body = this.createPopup(
-      "Cheats",
-      {},
-      true
-    );
+    const body = this.createPopup("Cheats", {}, true);
     this.cheatsMenu = body.parentElement;
     this.updateCheatUI();
   }
@@ -25429,7 +26726,7 @@ class EmulatorJS {
    * @returns {AudioNode|null} The audio node feeding the speakers, or null if not available
    */
   getAudioOutputNode() {
-    console.log('[EmulatorJS] getAudioOutputNode called');
+    console.log("[EmulatorJS] getAudioOutputNode called");
 
     // Try to find the audio node that feeds into AudioContext.destination
     // This varies by emulator core and WebAudio setup
@@ -25437,44 +26734,60 @@ class EmulatorJS {
     // First, check if there's a direct reference to an audio context and destination node
     if (this.Module && this.Module.AL && this.Module.AL.currentCtx) {
       const openALCtx = this.Module.AL.currentCtx;
-      console.log('[EmulatorJS] Found OpenAL context, checking for audio nodes:', {
-        hasAudioDestination: !!openALCtx.audioDestination,
-        hasMasterGain: !!openALCtx.masterGain,
-        hasOutputNode: !!openALCtx.outputNode,
-        contextKeys: Object.keys(openALCtx).filter(k => k.toLowerCase().includes('audio') || k.toLowerCase().includes('node'))
-      });
+      console.log(
+        "[EmulatorJS] Found OpenAL context, checking for audio nodes:",
+        {
+          hasAudioDestination: !!openALCtx.audioDestination,
+          hasMasterGain: !!openALCtx.masterGain,
+          hasOutputNode: !!openALCtx.outputNode,
+          contextKeys: Object.keys(openALCtx).filter(
+            (k) =>
+              k.toLowerCase().includes("audio") ||
+              k.toLowerCase().includes("node"),
+          ),
+        },
+      );
 
       // Some cores store the WebAudio destination node here
       if (openALCtx.audioDestination) {
-        console.log('[EmulatorJS] Returning audioDestination node');
+        console.log("[EmulatorJS] Returning audioDestination node");
         return openALCtx.audioDestination;
       }
       // Some cores have a master gain node before destination
       if (openALCtx.masterGain) {
-        console.log('[EmulatorJS] Returning masterGain node');
+        console.log("[EmulatorJS] Returning masterGain node");
         return openALCtx.masterGain;
       }
       // Some cores have an explicit output node
       if (openALCtx.outputNode) {
-        console.log('[EmulatorJS] Returning outputNode');
+        console.log("[EmulatorJS] Returning outputNode");
         return openALCtx.outputNode;
       }
 
       // Look for ScriptProcessor or AudioWorklet nodes (common in emscripten OpenAL)
       if (openALCtx.scriptProcessor) {
-        console.log('[EmulatorJS] Returning scriptProcessor node');
+        console.log("[EmulatorJS] Returning scriptProcessor node");
         return openALCtx.scriptProcessor;
       }
       if (openALCtx.audioWorklet) {
-        console.log('[EmulatorJS] Returning audioWorklet node');
+        console.log("[EmulatorJS] Returning audioWorklet node");
         return openALCtx.audioWorklet;
       }
 
       // Check for other common audio node patterns in OpenAL context
       // Some cores might have differently named properties
-      const potentialNodes = ['gainNode', 'outputGain', 'mainGain', 'audioGain', 'masterVolume'];
+      const potentialNodes = [
+        "gainNode",
+        "outputGain",
+        "mainGain",
+        "audioGain",
+        "masterVolume",
+      ];
       for (const nodeName of potentialNodes) {
-        if (openALCtx[nodeName] && typeof openALCtx[nodeName].connect === 'function') {
+        if (
+          openALCtx[nodeName] &&
+          typeof openALCtx[nodeName].connect === "function"
+        ) {
           console.log(`[EmulatorJS] Found potential audio node '${nodeName}'`);
           return openALCtx[nodeName];
         }
@@ -25484,7 +26797,7 @@ class EmulatorJS {
     // Second, try to inspect the global WebAudio state for emulator audio
     // This is more aggressive but may find the audio node
     try {
-      console.log('[EmulatorJS] Attempting global WebAudio inspection...');
+      console.log("[EmulatorJS] Attempting global WebAudio inspection...");
 
       // Get all audio contexts (browsers may have multiple)
       // We can't directly enumerate contexts, but we can look for active audio nodes
@@ -25494,27 +26807,181 @@ class EmulatorJS {
         window.AudioContext?.prototype,
         window.webkitAudioContext?.prototype,
         // Check for any global audio contexts that might be from the emulator
-        ...Object.values(window).filter(obj =>
-          obj && typeof obj === 'object' &&
-          (obj.constructor?.name?.includes('AudioContext') ||
-           obj.toString?.().includes('AudioContext'))
-        )
+        ...Object.values(window).filter(
+          (obj) =>
+            obj &&
+            typeof obj === "object" &&
+            (obj.constructor?.name?.includes("AudioContext") ||
+              obj.toString?.().includes("AudioContext")),
+        ),
       ];
 
-      console.log('[EmulatorJS] Found potential audio contexts:', potentialContexts.length);
+      console.log(
+        "[EmulatorJS] Found potential audio contexts:",
+        potentialContexts.length,
+      );
 
       // This is a fallback that won't work reliably but shows we're trying
       // The real fix is for cores to expose their audioDestination/masterGain
-      console.log('[EmulatorJS] getAudioOutputNode: No direct audio node access found');
-      console.log('[EmulatorJS] Emulator cores need to expose audioDestination or masterGain in Module.AL.currentCtx');
-
+      console.log(
+        "[EmulatorJS] getAudioOutputNode: No direct audio node access found",
+      );
+      console.log(
+        "[EmulatorJS] Emulator cores need to expose audioDestination or masterGain in Module.AL.currentCtx",
+      );
     } catch (e) {
-      console.warn('[EmulatorJS] getAudioOutputNode: Error during WebAudio inspection:', e);
+      console.warn(
+        "[EmulatorJS] getAudioOutputNode: Error during WebAudio inspection:",
+        e,
+      );
     }
 
-    console.log('[EmulatorJS] getAudioOutputNode: No suitable audio output node found');
-    console.log('[EmulatorJS] Audio capture will fall back to silent track');
+    console.log(
+      "[EmulatorJS] getAudioOutputNode: No suitable audio output node found",
+    );
+    console.log("[EmulatorJS] Audio capture will fall back to silent track");
     return null;
+  }
+
+  // Calculate and store ROM metadata for netplay
+  async calculateAndStoreRomMetadata(romData, romFilename) {
+    try {
+      // Calculate ROM hash
+      const romHash = await this.calculateRomHash(romData);
+
+      // Detect platform from filename
+      const platform = this.getPlatformFromFilename(romFilename);
+
+      // Store metadata in config
+      this.config.romHash = romHash;
+      this.config.romFilename = romFilename;
+      this.config.romName = romFilename;
+      this.config.platform = platform;
+      this.config.core = this.config.system; // Ensure core is set
+      this.config.coreVersion = this.coreName || null;
+
+      console.log("[Emulator] ROM metadata stored:", {
+        romHash: this.config.romHash,
+        romFilename: this.config.romFilename,
+        platform: this.config.platform,
+        core: this.config.core,
+        coreVersion: this.config.coreVersion,
+      });
+    } catch (error) {
+      console.warn("[Emulator] Failed to calculate ROM metadata:", error);
+      // Set defaults even if calculation fails
+      this.config.romHash = null;
+      this.config.platform = "unknown";
+      this.config.core = this.config.system;
+    }
+    // Update player metadata if in netplay session
+    if (this.netplay?.engine && this.netplay.currentRoomId) {
+      console.log("[Emulator] Updating player metadata with ROM data");
+      this.netplay.engine.roomManager
+        .updatePlayerMetadata(this.netplay.currentRoomId, {
+          coreId: this.config.system || null,
+          coreVersion: this.config.coreVersion || null,
+          romHash: this.config.romHash || null,
+          systemType: this.config.system || null,
+          platform: this.config.platform || null,
+        })
+        .catch((err) => {
+          console.warn(
+            "[Emulator] Failed to update player metadata after ROM load:",
+            err,
+          );
+        });
+    }
+  }
+
+  // Calculate ROM hash using SHA-256
+  async calculateRomHash(data) {
+    try {
+      // Convert data to ArrayBuffer if it's not already
+      let arrayBuffer;
+      if (data instanceof ArrayBuffer) {
+        arrayBuffer = data;
+      } else if (data instanceof Uint8Array) {
+        arrayBuffer = data.buffer.slice(
+          data.byteOffset,
+          data.byteOffset + data.byteLength,
+        );
+      } else {
+        // Convert other array types to Uint8Array
+        arrayBuffer = new Uint8Array(data).buffer;
+      }
+
+      const hashBuffer = await crypto.subtle.digest("SHA-256", arrayBuffer);
+      const hashArray = Array.from(new Uint8Array(hashBuffer));
+      return hashArray
+        .map((b) => b.toString(16).padStart(2, "0"))
+        .join("")
+        .substring(0, 16);
+    } catch (error) {
+      console.warn("[Emulator] Hash calculation failed:", error);
+      return null;
+    }
+  }
+
+  // Detect platform from filename extension
+  getPlatformFromFilename(filename) {
+    if (!filename) return "unknown";
+
+    const ext = filename.split(".").pop().toLowerCase();
+    const platformMap = {
+      // NES
+      nes: "nes",
+      fds: "nes",
+      unf: "nes",
+      unif: "nes",
+      // SNES
+      sfc: "snes",
+      smc: "snes",
+      fig: "snes",
+      // Game Boy
+      gb: "gb",
+      gbc: "gb",
+      // Game Boy Advance
+      gba: "gba",
+      // Nintendo 64
+      n64: "n64",
+      z64: "n64",
+      v64: "n64",
+      // PlayStation
+      bin: "psx",
+      cue: "psx",
+      iso: "psx",
+      // Sega Genesis/Mega Drive
+      md: "genesis",
+      smd: "genesis",
+      gen: "genesis",
+      // Sega Master System
+      sms: "sms",
+      // Sega Game Gear
+      gg: "gamegear",
+      // TurboGrafx-16/PC Engine
+      pce: "pce",
+      // Neo Geo Pocket
+      ngp: "ngp",
+      ngc: "ngp",
+      // WonderSwan
+      ws: "wswan",
+      wsc: "wswan",
+      // Atari 2600
+      a26: "atari2600",
+      // Atari 7800
+      a78: "atari7800",
+      // ColecoVision
+      col: "coleco",
+      // MSX
+      rom: "msx",
+      // DOS
+      exe: "dos",
+      com: "dos",
+      bat: "dos",
+    };
+
+    return platformMap[ext] || "unknown";
   }
 }
 
