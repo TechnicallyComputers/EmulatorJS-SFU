@@ -395,8 +395,18 @@ class NetplayMenu {
       newSlot,
     );
 
+    // Try to get engine from multiple sources (handles case where engine was cleared)
+    const engine =
+      this.netplay?.engine || this.emulator.netplay?.engine || this.engine;
+    if (!engine || !engine.sessionState) {
+      console.warn(
+        "[NetplayMenu] Cannot request slot change: engine or sessionState not available",
+      );
+      return;
+    }
+
     // Find local player using session state (more reliable than player table)
-    const localPlayerId = this.netplay?.engine?.sessionState?.localPlayerId;
+    const localPlayerId = engine.sessionState?.localPlayerId;
     const localPlayerName = this.netplay?.name;
 
     let me = null;
@@ -455,25 +465,24 @@ class NetplayMenu {
       "[NetplayMenu] notifyServerOfSlotChange called with slot:",
       slot,
     );
-    console.log(
-      "[NetplayMenu] roomManager exists:",
-      !!this.netplay?.engine?.roomManager,
-    );
+
+    // Try to get engine from multiple sources (handles case where engine was cleared)
+    const engine =
+      this.netplay?.engine || this.emulator.netplay?.engine || this.engine;
+
+    console.log("[NetplayMenu] roomManager exists:", !!engine?.roomManager);
     console.log(
       "[NetplayMenu] slot condition check:",
       slot === 8 || (slot >= 0 && slot < 4),
     );
 
-    if (
-      this.netplay?.engine?.roomManager &&
-      (slot === 8 || (slot >= 0 && slot < 4))
-    ) {
+    if (engine?.roomManager && (slot === 8 || (slot >= 0 && slot < 4))) {
       try {
         console.log(
           "[NetplayMenu] Calling roomManager.updatePlayerSlot with slot:",
           slot,
         );
-        await this.netplay.engine.roomManager.updatePlayerSlot(slot);
+        await engine.roomManager.updatePlayerSlot(slot);
 
         // Update global slot variable for SimpleController
         window.EJS_NETPLAY_PREFERRED_SLOT = slot;
@@ -928,12 +937,86 @@ class NetplayMenu {
   netplaySwitchToLiveStreamRoom(roomName, password) {
     if (!this.netplayMenu) return;
 
+    // Ensure netplay object and tabs are initialized
+    if (
+      !this.emulator.netplay ||
+      !this.emulator.netplay.tabs ||
+      !this.emulator.netplay.tabs[1]
+    ) {
+      console.warn(
+        "[NetplayMenu] netplaySwitchToLiveStreamRoom: tabs not initialized, ensuring menu is set up",
+      );
+      // Ensure menu is properly initialized - tabs should exist if menu exists
+      // If menu exists but tabs don't, we need to recreate them
+      if (this.netplayMenu) {
+        // Try to find the tabs in the DOM
+        const popupBody = this.netplayMenu.querySelector(".ejs_popup_body");
+        if (popupBody) {
+          const children = Array.from(popupBody.children);
+          const roomsTab = children.find((el) =>
+            el.querySelector(".ejs_netplay_table"),
+          );
+          const joinedTab =
+            children.find(
+              (el) =>
+                el.querySelector("strong") &&
+                el.innerText.includes("{roomname}"),
+            ) || children.find((el) => el !== roomsTab && el.tagName === "DIV");
+
+          if (roomsTab && joinedTab) {
+            if (!this.emulator.netplay) {
+              this.emulator.netplay = {};
+            }
+            this.emulator.netplay.tabs = [roomsTab, joinedTab];
+            console.log("[NetplayMenu] Recovered tabs from DOM");
+          }
+        }
+      }
+
+      // If still no tabs, we can't proceed
+      if (
+        !this.emulator.netplay ||
+        !this.emulator.netplay.tabs ||
+        !this.emulator.netplay.tabs[1]
+      ) {
+        console.error(
+          "[NetplayMenu] Cannot switch to live stream room - tabs not available",
+        );
+        return;
+      }
+    }
+
     // Check if host and player slot at the beginning
-    const isHost = this.netplay?.engine?.sessionState?.isHostRole() || false;
+    const isHost =
+      this.emulator.netplay?.engine?.sessionState?.isHostRole() || false;
+
+    // Remove existing slot selector if it exists (to prevent duplication)
+    const joinedDiv = this.emulator.netplay.tabs[1];
+    if (
+      this.emulator.netplay.slotSelect &&
+      this.emulator.netplay.slotSelect.parentElement
+    ) {
+      // Find and remove the label "Player Select:" that comes before the selector
+      const slotSelectParent = this.emulator.netplay.slotSelect.parentElement;
+      const slotLabel = Array.from(slotSelectParent.childNodes).find(
+        (node) =>
+          node.nodeType === Node.ELEMENT_NODE &&
+          node.tagName === "STRONG" &&
+          (node.innerText.includes("Player Select") ||
+            node.innerText.includes("Player Slot")),
+      );
+      if (slotLabel) {
+        slotLabel.remove();
+      }
+      this.emulator.netplay.slotSelect.remove();
+      console.log(
+        "[NetplayMenu] Removed existing slot selector before creating new one",
+      );
+    }
+
     // Create the slot selector
-    const joinedDiv = this.netplay.tabs[1];
     const slotSelect = this.createSlotSelector(joinedDiv, "prepend");
-    this.netplay.slotSelect = slotSelect;
+    this.emulator.netplay.slotSelect = slotSelect;
 
     // Update the slot selector with current available slots.
     this.netplayUpdateSlotSelector();
@@ -951,14 +1034,18 @@ class NetplayMenu {
     }
 
     // Stop room list fetching
-    if (this.netplay && this.netplay.updateList) {
-      this.netplay.updateList.stop();
+    if (this.emulator.netplay && this.emulator.netplay.updateList) {
+      this.emulator.netplay.updateList.stop();
     }
 
     // Hide lobby tabs and show live stream room
-    if (this.netplay.tabs && this.netplay.tabs[0] && this.netplay.tabs[1]) {
-      this.netplay.tabs[0].style.display = "none";
-      this.netplay.tabs[1].style.display = "";
+    if (
+      this.emulator.netplay.tabs &&
+      this.emulator.netplay.tabs[0] &&
+      this.emulator.netplay.tabs[1]
+    ) {
+      this.emulator.netplay.tabs[0].style.display = "none";
+      this.emulator.netplay.tabs[1].style.display = "";
     }
 
     // Update title
@@ -968,7 +1055,7 @@ class NetplayMenu {
     }
 
     // Update room name and password display
-    if (this.netplay.roomNameElem) {
+    if (this.emulator.netplay.roomNameElem) {
       this.netplay.roomNameElem.innerText = roomName;
     }
     if (this.netplay.passwordElem) {
@@ -1023,10 +1110,29 @@ class NetplayMenu {
       table.style.display = "";
     }
 
-    // This populates and updates the table.
-    this.netplayUpdatePlayerTable(this.netplay.joinedPlayers); // Uses real data
-    // Setup the bottom bar buttons.
+    // CRITICAL: Set currentRoomType BEFORE updating player table
+    // (netplayUpdatePlayerTable checks currentRoomType and will skip if not set)
+    this.currentRoomType = "livestream";
+
+    // Setup the bottom bar buttons (this also sets currentRoomType, but we set it above to be safe)
     this.setupNetplayBottomBar("livestream");
+
+    // This populates and updates the table.
+    // Call after setting currentRoomType so the guard doesn't skip it
+    this.netplayUpdatePlayerTable(this.netplay.joinedPlayers); // Uses real data
+
+    // Also update after a short delay in case users-updated event arrives after this function completes
+    // This ensures the table gets populated even if joinedPlayers is empty initially
+    setTimeout(() => {
+      if (this.netplay.joinedPlayers && this.netplay.joinedPlayers.length > 0) {
+        console.log(
+          "[NetplayMenu] Delayed live stream player table update with",
+          this.netplay.joinedPlayers.length,
+          "players",
+        );
+        this.netplayUpdatePlayerTable(this.netplay.joinedPlayers);
+      }
+    }, 500);
 
     // Setup input syncing for non-host players
     // Use setTimeout to ensure engine is fully initialized
@@ -1243,11 +1349,29 @@ class NetplayMenu {
       table.style.display = "";
     }
 
+    // CRITICAL: Set currentRoomType BEFORE updating player table
+    // (netplayUpdatePlayerTable checks currentRoomType and will skip if not set)
+    this.currentRoomType = "delaysync";
+
+    // Bottom bar buttons for Delay Sync mode (this also sets currentRoomType, but we set it above to be safe)
+    this.setupNetplayBottomBar("delaysync");
+
     // Initialize player list (host is always player 1)
+    // Call after setting currentRoomType so the guard doesn't skip it
     this.netplayUpdatePlayerTable(this.netplay.joinedPlayers);
 
-    // Bottom bar buttons for Delay Sync mode
-    this.setupNetplayBottomBar("delaysync");
+    // Also update after a short delay in case users-updated event arrives after this function completes
+    // This ensures the table gets populated even if joinedPlayers is empty initially
+    setTimeout(() => {
+      if (this.netplay.joinedPlayers && this.netplay.joinedPlayers.length > 0) {
+        console.log(
+          "[NetplayMenu] Delayed delay sync player table update with",
+          this.netplay.joinedPlayers.length,
+          "players",
+        );
+        this.netplayUpdatePlayerTable(this.netplay.joinedPlayers);
+      }
+    }, 500);
 
     // Update ready and launch button states
     this.netplayUpdateReadyButton();
@@ -1447,7 +1571,16 @@ class NetplayMenu {
         text: "Leave Room",
         action: async () => {
           try {
-            await this.emulator.netplay.engine.netplayLeaveRoom(); // ← Now awaited
+            // Use this.engine (NetplayMenu's reference) which persists even after cleanup
+            // this.emulator.netplay.engine gets cleared during cleanup, but this.engine doesn't
+            const engine = this.engine || this.emulator.netplay?.engine;
+            if (!engine) {
+              console.warn(
+                "[NetplayMenu] Cannot leave room - engine not available",
+              );
+              return;
+            }
+            await engine.netplayLeaveRoom(); // ← Now awaited
           } catch (error) {
             console.error("[NetplayMenu] Error leaving room:", error);
           }
@@ -1967,6 +2100,17 @@ class NetplayMenu {
   // Update player table - handles both individual players and bulk updates
   // Update player table - handles both individual players and bulk updates
   netplayUpdatePlayerTable(playersOrSlot) {
+    // CRITICAL: Don't update player tables when showing listings (not in a room)
+    const currentRoomTypeCheck = this.currentRoomType;
+    if (currentRoomTypeCheck === "listings" || !currentRoomTypeCheck) {
+      console.log(
+        "[NetplayMenu] netplayUpdatePlayerTable skipped - not in a room (currentRoomType:",
+        currentRoomTypeCheck,
+        ")",
+      );
+      return;
+    }
+
     // Determine which table type we're using based on current room type
     let tbody;
     let isDelaySync = false;
@@ -1983,13 +2127,35 @@ class NetplayMenu {
       tbody = this.netplay.liveStreamPlayerTable;
       isDelaySync = false;
     } else if (this.netplay.delaySyncPlayerTable) {
-      // Fallback: use delay sync table if it exists
-      tbody = this.netplay.delaySyncPlayerTable;
-      isDelaySync = true;
+      // Fallback: use delay sync table if it exists (but only if we're actually in a room)
+      const engine = this.emulator.netplay?.engine;
+      const isInRoom =
+        engine?.sessionState?.roomName != null &&
+        this.emulator.netplay?.currentRoom != null;
+      if (isInRoom) {
+        tbody = this.netplay.delaySyncPlayerTable;
+        isDelaySync = true;
+      } else {
+        console.log(
+          "[NetplayMenu] netplayUpdatePlayerTable skipped - fallback prevented (not in room)",
+        );
+        return;
+      }
     } else if (this.netplay.liveStreamPlayerTable) {
-      // Fallback: use live stream table if it exists
-      tbody = this.netplay.liveStreamPlayerTable;
-      isDelaySync = false;
+      // Fallback: use live stream table if it exists (but only if we're actually in a room)
+      const engine = this.emulator.netplay?.engine;
+      const isInRoom =
+        engine?.sessionState?.roomName != null &&
+        this.emulator.netplay?.currentRoom != null;
+      if (isInRoom) {
+        tbody = this.netplay.liveStreamPlayerTable;
+        isDelaySync = false;
+      } else {
+        console.log(
+          "[NetplayMenu] netplayUpdatePlayerTable skipped - fallback prevented (not in room)",
+        );
+        return;
+      }
     } else {
       return; // No table to update
     }
@@ -2474,9 +2640,29 @@ class NetplayMenu {
       return;
     }
 
+    // Use this.engine (NetplayMenu's persistent reference) which persists even after cleanup
+    // this.emulator.netplay.engine gets cleared during cleanup, but this.engine doesn't
+    const engine = this.engine || this.emulator.netplay?.engine;
+    if (!engine || !engine.sessionState) {
+      console.error(
+        "[NetplayMenu] Cannot toggle ready - engine or sessionState not available",
+      );
+      alert("Cannot toggle ready - engine not available. Please try again.");
+      return;
+    }
+
+    if (!engine.roomManager) {
+      console.error(
+        "[NetplayMenu] Cannot toggle ready - roomManager not available",
+      );
+      alert(
+        "Cannot toggle ready - room manager not available. Please try again.",
+      );
+      return;
+    }
+
     // Find local player
-    const localPlayerId =
-      this.emulator.netplay.engine.sessionState?.localPlayerId;
+    const localPlayerId = engine.sessionState?.localPlayerId;
     const localPlayer = this.netplay.joinedPlayers?.find(
       (p) => p.id === localPlayerId,
     );
@@ -2507,7 +2693,7 @@ class NetplayMenu {
 
     console.log("[NetplayMenu] Calling roomManager.toggleReady");
     try {
-      await this.emulator.netplay.engine.roomManager.toggleReady(roomName);
+      await engine.roomManager.toggleReady(roomName);
       console.log("[NetplayMenu] Ready state toggled successfully");
       // Don't update button here - wait for player-ready-updated event
       // The event handler (netplayUpdatePlayerReady) will update the button
@@ -2759,11 +2945,27 @@ class NetplayMenu {
   netplayUpdateLaunchButton() {
     if (!this.netplay.launchButton || !this.netplay.joinedPlayers) return;
 
+    // Check if we're in a delay_sync room
+    const room = this.emulator.netplay?.currentRoom;
+    if (!room || room.netplay_mode !== "delay_sync") {
+      console.log(
+        "[NetplayMenu] Not in delay_sync room, skipping launch button update",
+      );
+      return;
+    }
+
+    // Check if engine exists (it might be null after leaving a room)
+    const engine = this.netplay?.engine || this.emulator.netplay?.engine;
+    if (!engine || !engine.sessionState) {
+      console.log(
+        "[NetplayMenu] Engine or sessionState not available, skipping launch button update",
+      );
+      return;
+    }
+
     // Check if local player is host (check multiple sources)
-    const isHostFromSessionState =
-      this.netplay?.engine?.sessionState?.isHostRole() || false;
-    const localPlayerId =
-      this.emulator.netplay.engine.sessionState?.localPlayerId;
+    const isHostFromSessionState = engine.sessionState?.isHostRole() || false;
+    const localPlayerId = engine.sessionState?.localPlayerId;
     const localPlayer = this.netplay.joinedPlayers?.find(
       (p) => p.id === localPlayerId,
     );
@@ -2814,11 +3016,33 @@ class NetplayMenu {
 
   // Launch game (host only)
   async netplayLaunchGame() {
-    const roomName = this.emulator.netplay.currentRoom?.room_name;
-    if (!roomName) return;
+    const roomName = this.emulator.netplay?.currentRoom?.room_name;
+    if (!roomName) {
+      console.warn("[NetplayMenu] Cannot launch game - no room name");
+      return;
+    }
+
+    // Use this.engine (NetplayMenu's persistent reference) which persists even after cleanup
+    // this.emulator.netplay.engine gets cleared during cleanup, but this.engine doesn't
+    const engine = this.engine || this.emulator.netplay?.engine;
+    if (!engine) {
+      console.error("[NetplayMenu] Cannot launch game - engine not available");
+      alert("Cannot launch game - engine not available. Please try again.");
+      return;
+    }
+
+    if (!engine.roomManager) {
+      console.error(
+        "[NetplayMenu] Cannot launch game - roomManager not available",
+      );
+      alert(
+        "Cannot launch game - room manager not available. Please try again.",
+      );
+      return;
+    }
 
     try {
-      await this.emulator.netplay.engine.roomManager.startGame(roomName);
+      await engine.roomManager.startGame(roomName);
       console.log("[NetplayMenu] Game start initiated successfully");
     } catch (error) {
       console.error("[NetplayMenu] Failed to start game:", error);
@@ -2857,7 +3081,21 @@ class NetplayMenu {
     const tbody = this.netplay.table;
     tbody.innerHTML = ""; // Clear existing rows
 
-    if (rooms.length === 0) {
+    // Filter out empty rooms (client-side backup - server should already filter, but this ensures clean UI)
+    const filteredRooms = rooms.filter((room) => {
+      // Keep rooms with at least 1 player
+      const currentPlayers = room.current || 0;
+      if (currentPlayers > 0) {
+        return true;
+      }
+      // Log filtered empty rooms for debugging
+      console.log(
+        `[NetplayMenu] Filtering out empty room: ${room.name || room.id} (${currentPlayers} players)`,
+      );
+      return false;
+    });
+
+    if (filteredRooms.length === 0) {
       const row = this.createElement("tr");
       const cell = this.createElement("td");
       cell.colSpan = 4;
@@ -2869,7 +3107,7 @@ class NetplayMenu {
       return;
     }
 
-    rooms.forEach((room) => {
+    filteredRooms.forEach((room) => {
       // Normalize netplay_mode (handle both string and numeric formats)
       const netplayMode =
         room.netplay_mode === "delay_sync" || room.netplay_mode === 1
@@ -3935,10 +4173,31 @@ class NetplayMenu {
 
     // Setup correct UI based on current room state before showing
     // Use engine's sessionState as single source of truth (most reliable)
+    // IMPORTANT: Check both engine existence AND room state to avoid stale data after leaving
     const engine = this.emulator.netplay?.engine;
+    const hasEngine = engine != null;
+    const hasSessionState = engine?.sessionState != null;
+    const hasRoomName = engine?.sessionState?.roomName != null;
+    const hasCurrentRoom = this.emulator.netplay?.currentRoom != null;
+
+    // Only consider ourselves "in room" if ALL conditions are met:
+    // 1. Engine exists (not cleared after leaving)
+    // 2. SessionState exists
+    // 3. Room name is set in session state
+    // 4. CurrentRoom object exists
+    // This prevents showing room UI when we've left but cleanup hasn't completed
     const isInRoom =
-      engine?.sessionState?.roomName != null &&
-      this.emulator.netplay?.currentRoom != null;
+      hasEngine && hasSessionState && hasRoomName && hasCurrentRoom;
+
+    console.log("[NetplayMenu] createNetplayMenu state check:", {
+      hasEngine,
+      hasSessionState,
+      hasRoomName,
+      hasCurrentRoom,
+      isInRoom,
+      roomName: engine?.sessionState?.roomName,
+      currentRoomId: this.emulator.netplay?.currentRoomId,
+    });
 
     if (this.emulator.netplay && isInRoom) {
       // User is in a room, setup room UI
@@ -4068,6 +4327,27 @@ class NetplayMenu {
       }
     } else {
       // User is not in a room, setup listings UI
+      // IMPORTANT: Clear any stale room state to prevent showing old player tables
+      console.log(
+        "[NetplayMenu] Not in room - clearing stale state and showing listings",
+      );
+
+      // Clear stale room type to prevent using wrong player table
+      this.currentRoomType = "listings";
+
+      // Clear stale player data that might persist after leaving
+      if (this.netplay) {
+        // Clear joined players array if it exists
+        if (
+          this.netplay.joinedPlayers &&
+          Array.isArray(this.netplay.joinedPlayers)
+        ) {
+          this.netplay.joinedPlayers = [];
+        }
+        // Clear player table references (but keep DOM elements for reuse)
+        // The tables themselves will be hidden below
+      }
+
       this.setupNetplayBottomBar("listings");
 
       // Reset title to listings
@@ -4077,25 +4357,41 @@ class NetplayMenu {
       }
 
       // Hide both player tables when showing listings (they might be visible from previous room)
+      // This is critical - ensure tables are hidden AND cleared even if they contain stale data
       if (
-        this.netplay.liveStreamPlayerTable &&
+        this.netplay?.liveStreamPlayerTable &&
         this.netplay.liveStreamPlayerTable.parentElement
       ) {
+        // Clear the table content to remove stale player data
+        this.netplay.liveStreamPlayerTable.innerHTML = "";
         const table = this.netplay.liveStreamPlayerTable.parentElement;
         table.style.display = "none";
+        console.log("[NetplayMenu] Cleared and hid liveStreamPlayerTable");
       }
       if (
-        this.netplay.delaySyncPlayerTable &&
+        this.netplay?.delaySyncPlayerTable &&
         this.netplay.delaySyncPlayerTable.parentElement
       ) {
+        // Clear the table content to remove stale player data
+        this.netplay.delaySyncPlayerTable.innerHTML = "";
         const table = this.netplay.delaySyncPlayerTable.parentElement;
         table.style.display = "none";
+        console.log("[NetplayMenu] Cleared and hid delaySyncPlayerTable");
       }
 
       // Switch to rooms tab when showing listings
       if (this.netplay.tabs && this.netplay.tabs[0] && this.netplay.tabs[1]) {
         this.netplay.tabs[0].style.display = ""; // Show rooms tab
         this.netplay.tabs[1].style.display = "none"; // Hide joined tab
+        console.log("[NetplayMenu] Switched to rooms tab (listings view)");
+      }
+
+      // Ensure room list container is visible (in case it was hidden)
+      const roomsContainer = this.netplayMenu?.querySelector(
+        ".ejs_popup_body > div:first-child",
+      );
+      if (roomsContainer) {
+        roomsContainer.style.display = "";
       }
 
       // Aggressively hide all room UI elements when showing listings
@@ -4203,6 +4499,32 @@ class NetplayMenu {
 
   // Create a a slot slector with styling and listener to update input slot and player table
   createSlotSelector(container = null, position = "append") {
+    // If a slot selector already exists and we're adding to a container, remove the old one first
+    if (
+      container &&
+      this.netplay?.slotSelect &&
+      this.netplay.slotSelect.parentElement
+    ) {
+      const oldSelector = this.netplay.slotSelect;
+      const oldParent = oldSelector.parentElement;
+
+      // Find and remove the label that comes before the selector
+      const oldLabel = Array.from(oldParent.childNodes).find(
+        (node) =>
+          node.nodeType === Node.ELEMENT_NODE &&
+          node.tagName === "STRONG" &&
+          (node.innerText.includes("Player Select") ||
+            node.innerText.includes("Player Slot")),
+      );
+      if (oldLabel) {
+        oldLabel.remove();
+      }
+      oldSelector.remove();
+      console.log(
+        "[NetplayMenu] Removed existing slot selector before creating new one",
+      );
+    }
+
     const slotSelect = this.createElement("select");
     // Add basic styling to make it look like a proper dropdown
     slotSelect.style.backgroundColor = "#333";
@@ -5032,17 +5354,20 @@ class NetplayMenu {
    * Setup input syncing for live stream room based on host status and player slot
    * Non-host players (P2, P3, P4) will send their inputs to the host via data channel
    */
-  /**
-   * Setup input syncing for live stream room based on host status and player slot
-   * Non-host players (P2, P3, P4) will send their inputs to the host via data channel
-   */
   netplaySetupLiveStreamInputSync() {
-    if (!this.netplay || !this.netplay.engine) {
+    // Try to get engine from multiple sources (handles case where engine was cleared)
+    const engine =
+      this.netplay?.engine || this.emulator.netplay?.engine || this.engine;
+    if (!engine) {
       console.warn("[NetplayMenu] Engine not available for input sync setup");
       return;
     }
 
-    const engine = this.netplay.engine;
+    // Ensure netplay.engine is set for consistency
+    if (this.netplay && !this.netplay.engine) {
+      this.netplay.engine = engine;
+    }
+
     const isHost = engine.sessionState?.isHostRole() || false;
 
     // Get current player slot from player data (more reliable than this.netplay.localSlot)
@@ -5383,6 +5708,108 @@ class NetplayMenu {
       console.log(
         `[NetplayMenu] Skipping P2P initiation: isHost=${isHost}, mode=${inputMode}`,
       );
+    }
+  }
+
+  /**
+   * Attach a WebRTC consumer track to a video or audio element
+   * @param {MediaStreamTrack} track - The media track from the consumer
+   * @param {string} kind - Track kind: 'video' or 'audio'
+   */
+  netplayAttachConsumerTrack(track, kind) {
+    if (!track) {
+      console.warn(
+        "[NetplayMenu] Cannot attach track - track is null/undefined",
+      );
+      return;
+    }
+
+    // Initialize mediaElements if it doesn't exist
+    if (!this.netplay || !this.netplay.mediaElements) {
+      if (!this.netplay) {
+        this.netplay = {};
+      }
+      this.netplay.mediaElements = {};
+    }
+
+    if (kind === "video") {
+      // Create or reuse video element
+      let videoElement = this.netplay.mediaElements.video;
+      if (!videoElement) {
+        videoElement = document.createElement("video");
+        videoElement.autoplay = true;
+        videoElement.playsInline = true;
+        videoElement.style.width = "100%";
+        videoElement.style.height = "100%";
+        videoElement.style.objectFit = "contain";
+        this.netplay.mediaElements.video = videoElement;
+
+        // Insert video element into the joined tab (replace canvas)
+        const joinedDiv = this.emulator.netplay?.tabs?.[1];
+        if (!isHost) {
+          // Hide canvas if it exists
+          if (this.emulator?.canvas) {
+            this.emulator.canvas.style.display = "none";
+          }
+          // Append video element to joined tab
+          joinedDiv.appendChild(videoElement);
+          console.log(
+            "[NetplayMenu] Created and inserted video element for livestream",
+          );
+        } else {
+          console.warn(
+            "[NetplayMenu] Cannot insert video element - joined tab not found",
+          );
+        }
+      }
+
+      // Attach track to video element
+      if (videoElement.srcObject) {
+        // If there's already a stream, add track to it
+        const stream = videoElement.srcObject;
+        stream.addTrack(track);
+      } else {
+        // Create new stream with track
+        const stream = new MediaStream([track]);
+        videoElement.srcObject = stream;
+      }
+      console.log("[NetplayMenu] Attached video track to video element");
+    } else if (kind === "audio") {
+      // Create or reuse audio element
+      let audioElement = this.netplay.mediaElements.audio;
+      if (!audioElement) {
+        audioElement = document.createElement("audio");
+        audioElement.autoplay = true;
+        audioElement.volume = this.emulator?.volume ?? 1.0;
+        this.netplay.mediaElements.audio = audioElement;
+
+        // Insert audio element into the joined tab
+        const joinedDiv = this.emulator.netplay?.tabs?.[1];
+        if (joinedDiv) {
+          joinedDiv.appendChild(audioElement);
+          console.log(
+            "[NetplayMenu] Created and inserted audio element for livestream",
+          );
+        } else {
+          console.warn(
+            "[NetplayMenu] Cannot insert audio element - joined tab not found",
+          );
+        }
+      }
+
+      // Attach track to audio element
+      if (audioElement.srcObject) {
+        // If there's already a stream, add track to it
+        const stream = audioElement.srcObject;
+        stream.addTrack(track);
+      } else {
+        // Create new stream with track
+        const stream = new MediaStream([track]);
+        audioElement.srcObject = stream;
+      }
+      console.log("[NetplayMenu] Attached audio track to audio element");
+    } else {
+      console.warn(`[NetplayMenu] Unknown track kind: ${kind}`);
     }
   }
 

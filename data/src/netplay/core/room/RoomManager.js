@@ -283,16 +283,36 @@ class RoomManager {
         }
 
         // Check if current player is the host based on server response
-        const localPlayerId = extra.userid;
-        const localPlayerData = response?.users?.[localPlayerId];
+        // CRITICAL: Match local player by name since player ID might not match
+        // (the server may return a different player ID than the one sent in extra.userid)
+        const localPlayerName = extra.player_name || extra.netplay_username;
+        let localPlayerId = extra.userid;
+        let localPlayerData = response?.users?.[localPlayerId];
+
+        // If not found by ID, try to find by name
+        if (!localPlayerData && localPlayerName && response?.users) {
+          const foundEntry = Object.entries(response.users).find(
+            ([id, data]) =>
+              data.player_name === localPlayerName ||
+              data.netplay_username === localPlayerName,
+          );
+          if (foundEntry) {
+            localPlayerId = foundEntry[0];
+            localPlayerData = foundEntry[1];
+            console.log(
+              `[RoomManager] Matched local player by name: ${localPlayerName} -> ${localPlayerId}`,
+            );
+          }
+        }
+
         if (localPlayerData && localPlayerData.is_host === true) {
           console.log(
-            `[RoomManager] Player ${localPlayerId} is the room host (from server response)`,
+            `[RoomManager] Player ${localPlayerId} (${localPlayerName}) is the room host (from server response)`,
           );
           this.sessionState.setHost(true);
         } else {
           console.log(
-            `[RoomManager] Player ${localPlayerId} is not the room host`,
+            `[RoomManager] Player ${localPlayerId} (${localPlayerName}) is not the room host`,
           );
           this.sessionState.setHost(false);
         }

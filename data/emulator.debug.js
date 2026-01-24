@@ -2618,16 +2618,36 @@ class RoomManager {
         }
 
         // Check if current player is the host based on server response
-        const localPlayerId = extra.userid;
-        const localPlayerData = response?.users?.[localPlayerId];
+        // CRITICAL: Match local player by name since player ID might not match
+        // (the server may return a different player ID than the one sent in extra.userid)
+        const localPlayerName = extra.player_name || extra.netplay_username;
+        let localPlayerId = extra.userid;
+        let localPlayerData = response?.users?.[localPlayerId];
+
+        // If not found by ID, try to find by name
+        if (!localPlayerData && localPlayerName && response?.users) {
+          const foundEntry = Object.entries(response.users).find(
+            ([id, data]) =>
+              data.player_name === localPlayerName ||
+              data.netplay_username === localPlayerName,
+          );
+          if (foundEntry) {
+            localPlayerId = foundEntry[0];
+            localPlayerData = foundEntry[1];
+            console.log(
+              `[RoomManager] Matched local player by name: ${localPlayerName} -> ${localPlayerId}`,
+            );
+          }
+        }
+
         if (localPlayerData && localPlayerData.is_host === true) {
           console.log(
-            `[RoomManager] Player ${localPlayerId} is the room host (from server response)`,
+            `[RoomManager] Player ${localPlayerId} (${localPlayerName}) is the room host (from server response)`,
           );
           this.sessionState.setHost(true);
         } else {
           console.log(
-            `[RoomManager] Player ${localPlayerId} is not the room host`,
+            `[RoomManager] Player ${localPlayerId} (${localPlayerName}) is not the room host`,
           );
           this.sessionState.setHost(false);
         }
@@ -7215,6 +7235,22 @@ class NetplayEngine {
       throw new Error("Player name not set");
     }
 
+    // CRITICAL: Ensure engine reference is set (it might be null after leaving a room)
+    // Since this method is called on the NetplayEngine instance, 'this' IS the engine
+    if (!this.emulator.netplay.engine) {
+      console.log("[Netplay] Engine reference was null, restoring it");
+      this.emulator.netplay.engine = this;
+    }
+
+    // Also ensure netplay.engine is set for consistency (used by NetplayMenu)
+    if (
+      this.netplayMenu &&
+      this.netplayMenu.netplay &&
+      !this.netplayMenu.netplay.engine
+    ) {
+      this.netplayMenu.netplay.engine = this;
+    }
+
     // Use NetplayEngine if available
     if (this.emulator.netplay.engine) {
       console.log("[Netplay] Creating room via NetplayEngine:", {
@@ -8125,6 +8161,9 @@ class NetplayEngine {
       };
 
       try {
+        // Check if we're joining a room we just created (room creator is always host)
+        const wasRoomCreator = this.emulator.netplay.currentRoomId === roomId;
+
         const result = await this.joinRoom(
           null,
           roomId,
@@ -8134,9 +8173,17 @@ class NetplayEngine {
         );
         console.log("[Netplay] Room join successful via engine:", result);
 
+        // CRITICAL: If we created this room, ensure we're marked as host
+        // (joinRoom might have overwritten it based on server response)
+        if (wasRoomCreator && this.sessionState) {
+          console.log(
+            "[Netplay] Room creator detected - ensuring host role is set",
+          );
+          this.sessionState.setHost(true);
+        }
+
         // Store room info
         this.emulator.netplay.currentRoomId = roomId;
-        this.emulator.netplay.currentRoom = result;
 
         // Ensure currentRoom has netplay_mode set (use roomNetplayMode from room list if available)
         if (this.emulator.netplay.currentRoom) {
@@ -8188,11 +8235,14 @@ class NetplayEngine {
           // LIVESTREAM ROOM: Set up WebRTC consumer transports
           // Both hosts and clients need consumers for data channels
           // Only clients need video/audio consumers from host
-          const isHost =
-            this.emulator.netplay.engine?.sessionState?.isHostRole();
+          // CRITICAL: Use this.sessionState (not this.emulator.netplay.engine.sessionState)
+          // because 'this' IS the NetplayEngine instance
+          const isHost = this.sessionState?.isHostRole();
           console.log(
             "[Netplay] After joining livestream room - isHost:",
             isHost,
+            "sessionState.isHost:",
+            this.sessionState?.isHost,
           );
 
           if (this.emulator.netplay.engine) {
@@ -8803,6 +8853,120 @@ class NetplayEngine {
   async netplayLeaveRoom() {
     console.log("[Netplay] Leaving room and cleaning up completely...");
 
+    // ========================================================================
+    // PHASE 1: UI CLEANUP (do this BEFORE clearing engine so UI can access state)
+    // ========================================================================
+    if (this.netplayMenu) {
+      console.log("[Netplay] Phase 1: Cleaning up UI state...");
+
+      // Reset netplay menu state flag
+      this.netplayMenu.isNetplay = false;
+
+      // Reset currentRoomType to listings (critical for preventing stale UI)
+      if (this.netplayMenu.currentRoomType !== undefined) {
+        this.netplayMenu.currentRoomType = "listings";
+      }
+
+      // Clear player table content (but preserve DOM elements for reuse)
+      if (this.emulator.netplay) {
+        // Clear liveStreamPlayerTable content
+        if (this.emulator.netplay.liveStreamPlayerTable) {
+          this.emulator.netplay.liveStreamPlayerTable.innerHTML = "";
+          // Hide the table container
+          const liveTableContainer =
+            this.emulator.netplay.liveStreamPlayerTable.parentElement;
+          if (liveTableContainer) {
+            liveTableContainer.style.display = "none";
+          }
+        }
+
+        // Clear delaySyncPlayerTable content
+        if (this.emulator.netplay.delaySyncPlayerTable) {
+          this.emulator.netplay.delaySyncPlayerTable.innerHTML = "";
+          // Hide the table container
+          const delayTableContainer =
+            this.emulator.netplay.delaySyncPlayerTable.parentElement;
+          if (delayTableContainer) {
+            delayTableContainer.style.display = "none";
+          }
+        }
+
+        // Clear joined players array
+        if (this.emulator.netplay.joinedPlayers) {
+          this.emulator.netplay.joinedPlayers = [];
+        }
+
+        // Remove slot selector if it exists (to prevent duplication on next room creation)
+        if (
+          this.emulator.netplay.slotSelect &&
+          this.emulator.netplay.slotSelect.parentElement
+        ) {
+          const slotSelectParent =
+            this.emulator.netplay.slotSelect.parentElement;
+          // Find and remove the label "Player Select:" that comes before the selector
+          const slotLabel = Array.from(slotSelectParent.childNodes).find(
+            (node) =>
+              node.nodeType === Node.ELEMENT_NODE &&
+              node.tagName === "STRONG" &&
+              node.innerText &&
+              (node.innerText.includes("Player Select") ||
+                node.innerText.includes("Player Slot")),
+          );
+          if (slotLabel) {
+            slotLabel.remove();
+          }
+          this.emulator.netplay.slotSelect.remove();
+          this.emulator.netplay.slotSelect = null; // Clear the reference
+          console.log("[Netplay] Removed slot selector during cleanup");
+        }
+
+        // Clear room name and password display
+        if (this.emulator.netplay.roomNameElem) {
+          this.emulator.netplay.roomNameElem.innerText = "";
+          this.emulator.netplay.roomNameElem.style.display = "none";
+        }
+        if (this.emulator.netplay.passwordElem) {
+          this.emulator.netplay.passwordElem.innerText = "";
+          this.emulator.netplay.passwordElem.style.display = "none";
+        }
+
+        // Switch to listings tab (rooms tab)
+        if (
+          this.emulator.netplay.tabs &&
+          this.emulator.netplay.tabs[0] &&
+          this.emulator.netplay.tabs[1]
+        ) {
+          this.emulator.netplay.tabs[0].style.display = ""; // Show rooms tab
+          this.emulator.netplay.tabs[1].style.display = "none"; // Hide joined tab
+        }
+      }
+
+      // Reset title to listings
+      if (this.netplayMenu.netplayMenu) {
+        const titleElement = this.netplayMenu.netplayMenu.querySelector("h4");
+        if (titleElement) {
+          titleElement.innerText = "Netplay Listings";
+        }
+      }
+
+      // Setup listings bottom bar (this will start room list fetching)
+      if (this.netplayMenu.setupNetplayBottomBar) {
+        this.netplayMenu.setupNetplayBottomBar("listings");
+      }
+
+      // Reset global EJS netplay state
+      if (window.EJS) {
+        window.EJS.isNetplay = false;
+      }
+
+      console.log("[Netplay] UI cleanup completed");
+    }
+
+    // ========================================================================
+    // PHASE 2: NETWORK & TRANSPORT CLEANUP
+    // ========================================================================
+    console.log("[Netplay] Phase 2: Cleaning up network and transport...");
+
     // 1. Clean up intervals
     if (this._producerRetryInterval) {
       clearInterval(this._producerRetryInterval);
@@ -8813,8 +8977,8 @@ class NetplayEngine {
       this._audioRetryInterval = null;
     }
 
-    // 2. Leave room via RoomManager
-    if (this.emulator.netplay.engine) {
+    // 2. Leave room via RoomManager (this clears sessionState)
+    if (this.emulator.netplay && this.emulator.netplay.engine) {
       try {
         await this.leaveRoom();
         console.log("[Netplay] Left room successfully");
@@ -8824,7 +8988,7 @@ class NetplayEngine {
     }
 
     // 3. Disconnect transport
-    if (this.emulator.netplay.transport) {
+    if (this.emulator.netplay && this.emulator.netplay.transport) {
       try {
         await this.emulator.netplay.transport.disconnect();
         console.log("[Netplay] Transport disconnected");
@@ -8833,70 +8997,60 @@ class NetplayEngine {
       }
     }
 
-    // 4. Clean up engine and transport references and all session state
+    // ========================================================================
+    // PHASE 3: ENGINE & SESSION STATE CLEANUP
+    // ========================================================================
+    console.log("[Netplay] Phase 3: Cleaning up engine and session state...");
+
     if (this.emulator.netplay) {
-      // Clear engine, transport, and adapter
+      // Clear engine, transport, and adapter references
       this.emulator.netplay.engine = null;
       this.emulator.netplay.transport = null;
       this.emulator.netplay.adapter = null;
 
-      // Clear all room/session state - let everything reinitialize fresh
+      // Clear all room/session state
       this.emulator.netplay.currentRoom = null;
       this.emulator.netplay.currentRoomId = null;
-      this.emulator.netplay.joinedPlayers = null;
       this.emulator.netplay.localSlot = null;
+
       // Note: Keep emulator.netplay.name as it's user preference, not session state
+      // Note: Keep emulator.netplay.tabs, roomNameElem, passwordElem, etc. as they're UI structure
+      // Note: Keep emulator.netplay.liveStreamPlayerTable and delaySyncPlayerTable DOM elements
+      //   (they're cleared above, but DOM elements should persist for reuse)
 
       console.log("[Netplay] Cleared all engine, transport, and session state");
     }
 
-    // 5. Restore original simulateInput
+    // ========================================================================
+    // PHASE 4: GAME STATE CLEANUP
+    // ========================================================================
+    console.log("[Netplay] Phase 4: Cleaning up game state...");
+
+    // Restore original simulateInput
     if (this.gameManager && this.gameManager.originalSimulateInput) {
       this.gameManager.simulateInput = this.gameManager.originalSimulateInput;
       delete this.gameManager.originalSimulateInput;
       console.log("[Netplay] Restored original simulateInput");
     }
 
-    // 6. Comprehensive UI cleanup via NetplayMenu
-    if (this.netplayMenu) {
-      // Reset all netplay menu state
-      this.netplayMenu.isNetplay = false;
+    // ========================================================================
+    // PHASE 5: FINAL UI CLEANUP
+    // ========================================================================
+    console.log("[Netplay] Phase 5: Final UI cleanup...");
 
-      // Clear the entire netplay state object
-      if (this.netplayMenu.netplay) {
-        this.netplayMenu.netplay = {};
-      }
-
-      // Reset global EJS netplay state
-      if (window.EJS) {
-        window.EJS.isNetplay = false;
-      }
-
-      // Restore normal bottom bar buttons
-      if (this.netplayMenu.restoreNormalBottomBar) {
-        this.netplayMenu.restoreNormalBottomBar();
-      }
-
-      // Hide menu completely
-      if (this.netplayMenu.hide) {
-        this.netplayMenu.hide();
-      }
-
-      // Reset to initial state (no tabs shown)
-      if (this.netplayMenu.netplayMenu) {
-        const titleElement = this.netplayMenu.netplayMenu.querySelector("h4");
-        if (titleElement) {
-          titleElement.innerText = "Netplay";
-        }
-      }
-    }
-
-    // 7. Hide chat component
+    // Hide chat component
     if (this.chatComponent) {
       this.chatComponent.hide();
     }
 
-    console.log("[Netplay] Room leave and cleanup completed");
+    // Hide menu (user can reopen it to see listings)
+    if (this.netplayMenu && this.netplayMenu.hide) {
+      this.netplayMenu.hide();
+    }
+
+    console.log(
+      "[Netplay] Room leave and cleanup completed - ready for new session",
+    );
   }
 
   async netplaySetupProducers() {
@@ -10841,619 +10995,51 @@ class NetplayEngine {
 
   // Capture audio for netplay streaming
   async netplayCaptureAudio() {
-    try {
-      // FIRST: Try to capture audio directly from the EmulatorJS instance using the proper WebAudio approach
-      // This uses the clean hook to tap into the WebAudio graph and is preferred for emulator audio
-      try {
-        console.log(
-          "[Netplay] Attempting direct EmulatorJS WebAudio capture (preferred method)",
-        );
-        console.log(
-          "[Netplay] Checking for EmulatorJS instance with audio hook:",
-          {
-            hasEJS: !!window.EJS_emulator,
-            hasGetAudioOutputNode:
-              typeof window.EJS_emulator?.getAudioOutputNode === "function",
-          },
-        );
+    const ejs = window.EJS_emulator;
 
-        if (
-          window.EJS_emulator &&
-          typeof window.EJS_emulator.getAudioOutputNode === "function"
-        ) {
-          const audioOutputNode = window.EJS_emulator.getAudioOutputNode();
-          console.log("[Netplay] EmulatorJS getAudioOutputNode returned:", {
-            hasNode: !!audioOutputNode,
-            nodeType: audioOutputNode?.constructor?.name,
-            context: audioOutputNode?.context?.constructor?.name,
-          });
-
-          if (
-            audioOutputNode &&
-            audioOutputNode.context &&
-            typeof audioOutputNode.connect === "function"
-          ) {
-            try {
-              // Create MediaStreamDestinationNode in the same audio context
-              const audioContext = audioOutputNode.context;
-              const destination = audioContext.createMediaStreamDestination();
-
-              // Connect the emulator's audio output to our capture destination
-              // This taps the audio BEFORE it goes to speakers
-              audioOutputNode.connect(destination);
-
-              const audioTrack = destination.stream.getAudioTracks()[0];
-              if (audioTrack) {
-                console.log(
-                  "[Netplay] ✅ Game audio captured from EmulatorJS WebAudio graph",
-                  {
-                    trackId: audioTrack.id,
-                    enabled: audioTrack.enabled,
-                    settings: audioTrack.getSettings(),
-                    audioContextState: audioContext.state,
-                    nodeType: audioOutputNode.constructor.name,
-                  },
-                );
-                return audioTrack;
-              } else {
-                console.log(
-                  "[Netplay] MediaStreamDestinationNode created but no audio track available",
-                );
-              }
-            } catch (webAudioError) {
-              console.log(
-                "[Netplay] Failed to create MediaStreamDestinationNode:",
-                webAudioError.message,
-              );
-            }
-          } else if (audioOutputNode === null) {
-            console.log(
-              "[Netplay] EmulatorJS reports no audio output node available (expected for some cores)",
-            );
-          } else {
-            console.log(
-              "[Netplay] EmulatorJS audio output node not suitable for capture",
-            );
-          }
-        } else {
-          console.log("[Netplay] EmulatorJS audio hook not available");
-        }
-      } catch (emulatorError) {
-        console.log(
-          "[Netplay] EmulatorJS audio capture failed:",
-          emulatorError.message,
-        );
-      }
-
-      // SECOND: Try to capture browser tab audio as fallback
-      // This prompts the user to select the browser tab for ROM audio capture
-      try {
-        console.log(
-          "[Netplay] Fallback: Requesting display audio capture (select browser tab for ROM audio)",
-        );
-        const stream = await navigator.mediaDevices.getDisplayMedia({
-          video: false,
-          audio: {
-            echoCancellation: false,
-            noiseSuppression: false,
-            autoGainControl: false,
-            sampleRate: 44100,
-            channelCount: 2,
-          },
-        });
-
-        const audioTrack = stream.getAudioTracks()[0];
-        if (audioTrack) {
-          console.log("[Netplay] Audio captured from display (tab audio)", {
-            trackId: audioTrack.id,
-            enabled: audioTrack.enabled,
-            settings: audioTrack.getSettings(),
-          });
-          return audioTrack;
-        }
-      } catch (displayError) {
-        console.log(
-          "[Netplay] Display audio capture failed:",
-          displayError.message,
-        );
-        if (displayError.name === "NotSupportedError") {
-          console.log(
-            "[Netplay] Browser does not support audio capture from display/screen sharing",
-          );
-        } else if (displayError.name === "NotAllowedError") {
-          console.log(
-            "[Netplay] User denied permission for display audio capture",
-          );
-        } else {
-          console.log("[Netplay] Display audio capture cancelled or failed");
-        }
-      }
-
-      // THIRD: Try to capture audio from existing audio/video elements on the page
-      try {
-        console.log(
-          "[Netplay] Checking for EmulatorJS instance with audio hook:",
-          {
-            hasEJS: !!window.EJS_emulator,
-            hasGetAudioOutputNode:
-              typeof window.EJS_emulator?.getAudioOutputNode === "function",
-          },
-        );
-
-        if (
-          window.EJS_emulator &&
-          typeof window.EJS_emulator.getAudioOutputNode === "function"
-        ) {
-          const audioOutputNode = window.EJS_emulator.getAudioOutputNode();
-          console.log("[Netplay] EmulatorJS getAudioOutputNode returned:", {
-            hasNode: !!audioOutputNode,
-            nodeType: audioOutputNode?.constructor?.name,
-            context: audioOutputNode?.context?.constructor?.name,
-          });
-
-          if (
-            audioOutputNode &&
-            audioOutputNode.context &&
-            typeof audioOutputNode.connect === "function"
-          ) {
-            try {
-              // Create MediaStreamDestinationNode in the same audio context
-              const audioContext = audioOutputNode.context;
-              const destination = audioContext.createMediaStreamDestination();
-
-              // Connect the emulator's audio output to our capture destination
-              // This taps the audio BEFORE it goes to speakers
-              audioOutputNode.connect(destination);
-
-              const audioTrack = destination.stream.getAudioTracks()[0];
-              if (audioTrack) {
-                console.log(
-                  "[Netplay] Audio captured from EmulatorJS WebAudio graph",
-                  {
-                    trackId: audioTrack.id,
-                    enabled: audioTrack.enabled,
-                    settings: audioTrack.getSettings(),
-                    audioContextState: audioContext.state,
-                    nodeType: audioOutputNode.constructor.name,
-                  },
-                );
-                return audioTrack;
-              } else {
-                console.log(
-                  "[Netplay] MediaStreamDestinationNode created but no audio track available",
-                );
-              }
-            } catch (webAudioError) {
-              console.log(
-                "[Netplay] Failed to create MediaStreamDestinationNode:",
-                webAudioError.message,
-              );
-            }
-          } else if (audioOutputNode === null) {
-            console.log(
-              "[Netplay] EmulatorJS reports no audio output node available (expected for some cores)",
-            );
-          } else {
-            console.log(
-              "[Netplay] EmulatorJS audio output node not suitable for capture",
-            );
-          }
-        } else {
-          console.log("[Netplay] EmulatorJS audio hook not available");
-        }
-      } catch (emulatorError) {
-        console.log(
-          "[Netplay] EmulatorJS audio capture failed:",
-          emulatorError.message,
-        );
-      }
-
-      // THIRD: Try to capture audio from existing audio/video elements on the page
-      // This is most likely to capture emulator audio
-      try {
-        const mediaElements = document.querySelectorAll("audio, video");
-        console.log(
-          `[Netplay] Found ${mediaElements.length} media elements to check for audio capture`,
-        );
-
-        for (const element of mediaElements) {
-          console.log(
-            `[Netplay] Checking media element: ${element.tagName}#${element.id || "no-id"}`,
-            {
-              src: element.src || element.currentSrc,
-              readyState: element.readyState,
-              paused: element.paused,
-              muted: element.muted,
-              volume: element.volume,
-              duration: element.duration,
-            },
-          );
-
-          if (element.captureStream || element.mozCaptureStream) {
-            try {
-              const captureMethod =
-                element.captureStream || element.mozCaptureStream;
-              const stream = captureMethod.call(element);
-              const audioTrack = stream.getAudioTracks()[0];
-              if (audioTrack) {
-                console.log("[Netplay] Audio captured from media element", {
-                  elementTag: element.tagName,
-                  elementId: element.id,
-                  trackId: audioTrack.id,
-                  enabled: audioTrack.enabled,
-                  readyState: element.readyState,
-                  duration: element.duration,
-                });
-                return audioTrack;
-              } else {
-                console.log(
-                  `[Netplay] No audio track in stream from ${element.tagName} element`,
-                );
-              }
-            } catch (captureError) {
-              console.log(
-                `[Netplay] Failed to capture from ${element.tagName} element:`,
-                captureError.message,
-              );
-            }
-          } else {
-            console.log(
-              `[Netplay] ${element.tagName} element doesn't support captureStream`,
-            );
-          }
-        }
-
-        if (mediaElements.length === 0) {
-          console.log("[Netplay] No audio/video elements found on page");
-        }
-      } catch (elementError) {
-        console.log(
-          "[Netplay] Media element enumeration failed:",
-          elementError.message,
-        );
-      }
-
-      // FOURTH: Try to capture from document stream (experimental)
-      try {
-        if (document.captureStream) {
-          console.log("[Netplay] Attempting to capture from document stream");
-          const stream = document.captureStream();
-          const audioTrack = stream.getAudioTracks()[0];
-          if (audioTrack) {
-            console.log("[Netplay] Audio captured from document", {
-              trackId: audioTrack.id,
-              enabled: audioTrack.enabled,
-            });
-            return audioTrack;
-          }
-        }
-      } catch (docError) {
-        console.log("[Netplay] Document capture failed:", docError.message);
-      }
-
-      // Try canvas capture stream (may include audio in some cases)
-      try {
-        const canvas =
-          document.querySelector("canvas.ejs_canvas") ||
-          document.querySelector("canvas");
-        if (canvas && canvas.captureStream) {
-          console.log("[Netplay] Attempting to capture from canvas stream");
-          const stream = canvas.captureStream(30);
-          const audioTrack = stream.getAudioTracks()[0];
-          if (audioTrack) {
-            console.log("[Netplay] Audio captured from canvas", {
-              trackId: audioTrack.id,
-              enabled: audioTrack.enabled,
-            });
-            return audioTrack;
-          } else {
-            console.log("[Netplay] Canvas stream has no audio track");
-          }
-        }
-      } catch (canvasError) {
-        console.log(
-          "[Netplay] Canvas audio capture failed:",
-          canvasError.message,
-        );
-      }
-
-      // FIFTH: Try to capture audio from the Web Audio API context destination
-      // This captures all audio output from the page, including emulator audio
-      try {
-        console.log(
-          "[Netplay] Attempting to capture from Web Audio API destination (all page audio including ROM)",
-        );
-
-        // Create a Web Audio context if one doesn't exist
-        let audioContext = window.AudioContext || window.webkitAudioContext;
-        if (!audioContext) {
-          throw new Error("Web Audio API not supported");
-        }
-
-        const context = new audioContext();
-        const destination = context.createMediaStreamDestination();
-
-        // Note: This creates a destination, but audio needs to be routed through Web Audio context
-        const audioTrack = destination.stream.getAudioTracks()[0];
-        if (audioTrack) {
-          console.log(
-            "[Netplay] Audio destination created from Web Audio context",
-            {
-              trackId: audioTrack.id,
-              enabled: audioTrack.enabled,
-              contextState: context.state,
-              note: "This may be silent if no audio is routed through Web Audio",
-            },
-          );
-          return audioTrack;
-        }
-      } catch (contextError) {
-        console.log(
-          "[Netplay] Web Audio context capture failed:",
-          contextError.message,
-        );
-      }
-
-      // SECOND: Try to capture audio from browser's audio output (tab audio)
-      // Note: This requires user to select the browser tab/window for audio capture
-      try {
-        console.log(
-          "[Netplay] Requesting display audio capture (select browser tab for ROM audio)",
-        );
-        const stream = await navigator.mediaDevices.getDisplayMedia({
-          video: false,
-          audio: {
-            echoCancellation: false,
-            noiseSuppression: false,
-            autoGainControl: false,
-            sampleRate: 44100,
-            channelCount: 2,
-          },
-        });
-
-        const audioTrack = stream.getAudioTracks()[0];
-        if (audioTrack) {
-          console.log("[Netplay] Audio captured from display (tab audio)", {
-            trackId: audioTrack.id,
-            enabled: audioTrack.enabled,
-            settings: audioTrack.getSettings(),
-          });
-          return audioTrack;
-        }
-      } catch (displayError) {
-        console.log(
-          "[Netplay] Display audio capture failed:",
-          displayError.message,
-        );
-        if (displayError.name === "NotSupportedError") {
-          console.log(
-            "[Netplay] Browser does not support audio capture from display/screen sharing",
-          );
-          console.log(
-            "[Netplay] ROM audio capture will require alternative methods",
-          );
-        } else if (displayError.name === "NotAllowedError") {
-          console.log(
-            "[Netplay] User denied permission for display audio capture",
-          );
-        }
-      }
-
-      // Try to capture audio from emulator's OpenAL/Web Audio sources
-      if (this.emulator?.Module?.AL?.currentCtx) {
-        const openALContext = this.emulator.Module.AL.currentCtx;
-
-        console.log(
-          "[Netplay] Found OpenAL context, attempting simple audio capture",
-          {
-            hasSources: !!openALContext.sources,
-            sourcesCount: openALContext.sources?.length || 0,
-            contextType: openALContext.constructor?.name,
-          },
-        );
-
-        // Simple approach: try to tap into OpenAL's output
-        try {
-          // Create our own Web Audio context for capture
-          const webAudioContext = new (
-            window.AudioContext || window.webkitAudioContext
-          )();
-          const destination = webAudioContext.createMediaStreamDestination();
-
-          // If OpenAL has sources, try to tap the first active one
-          if (openALContext.sources && openALContext.sources.length > 0) {
-            let tapped = false;
-
-            for (const source of openALContext.sources) {
-              if (source && source.gain && source.gain.connect) {
-                try {
-                  console.log("[Netplay] Tapping OpenAL source gain node");
-                  // Create a gain node at unity gain for our capture chain
-                  const captureGain = webAudioContext.createGain();
-                  captureGain.gain.value = 1.0;
-
-                  // Try to connect the OpenAL gain node to our capture chain
-                  // Note: This may not work if they're in different contexts
-                  if (source.gain.context === webAudioContext) {
-                    source.gain.connect(captureGain);
-                    captureGain.connect(destination);
-                    tapped = true;
-                    console.log(
-                      "[Netplay] Successfully tapped OpenAL gain node for audio capture",
-                    );
-                    break; // Just tap the first one that works
-                  } else {
-                    console.log(
-                      "[Netplay] OpenAL source in different context - cannot tap directly",
-                    );
-                  }
-                } catch (tapError) {
-                  console.log(
-                    "[Netplay] Failed to tap OpenAL source:",
-                    tapError.message,
-                  );
-                }
-              }
-            }
-
-            if (tapped) {
-              const audioTrack = destination.stream.getAudioTracks()[0];
-              if (audioTrack) {
-                console.log("[Netplay] Audio captured from OpenAL gain node", {
-                  trackId: audioTrack.id,
-                  enabled: audioTrack.enabled,
-                });
-                return audioTrack;
-              }
-            }
-          }
-
-          // Fallback: create a basic audio track from the destination
-          const audioTrack = destination.stream.getAudioTracks()[0];
-          if (audioTrack) {
-            console.log(
-              "[Netplay] Created basic audio capture track from Web Audio destination",
-              {
-                trackId: audioTrack.id,
-                enabled: audioTrack.enabled,
-                note: "May be silent if no audio is routed through Web Audio",
-              },
-            );
-            return audioTrack;
-          }
-        } catch (openALError) {
-          console.log(
-            "[Netplay] OpenAL audio capture failed:",
-            openALError.message,
-          );
-        }
-      } else {
-        console.log("[Netplay] Emulator OpenAL context not available");
-      }
-    } catch (error) {
-      console.log(
-        "[Netplay] Audio capture setup failed, trying fallback:",
-        error,
-      );
+    if (!ejs || typeof ejs.getAudioOutputNode !== "function") {
+      console.warn("[Netplay] EmulatorJS audio hook not available");
+      return null;
     }
 
-    // Try alternative: Capture system audio (some browsers support this)
-    try {
-      console.log("[Netplay] Attempting system audio capture (desktop audio)");
-      const stream = await navigator.mediaDevices.getUserMedia({
-        audio: {
-          echoCancellation: false,
-          noiseSuppression: false,
-          autoGainControl: false,
-          sampleRate: 44100,
-          channelCount: 2,
-          // Some browsers support system audio via these constraints
-          deviceId: "default", // Try default system audio
-          // Try to request system audio instead of microphone
-          mandatory: {
-            chromeMediaSource: "system", // Chrome extension API for system audio
-          },
-        },
-        video: false,
-      });
-
-      const audioTrack = stream.getAudioTracks()[0];
-      if (audioTrack) {
-        console.log("[Netplay] Audio captured from system audio", {
-          trackId: audioTrack.id,
-          enabled: audioTrack.enabled,
-          note: "This may capture system audio including emulator output",
-        });
-        return audioTrack;
-      }
-    } catch (systemError) {
-      console.log(
-        "[Netplay] System audio capture failed:",
-        systemError.message,
-      );
+    const outputNode = ejs.getAudioOutputNode();
+    if (!outputNode || !outputNode.context) {
+      console.warn("[Netplay] EmulatorJS audio output node invalid");
+      return null;
     }
 
-    // Fallback: Capture microphone input (user permission required)
-    try {
-      console.log("[Netplay] Falling back to microphone capture");
-      const stream = await navigator.mediaDevices.getUserMedia({
-        audio: {
-          echoCancellation: false,
-          noiseSuppression: false,
-          autoGainControl: false,
-          sampleRate: 44100,
-          channelCount: 2,
-        },
-        video: false,
-      });
+    const audioContext = outputNode.context;
 
-      const audioTrack = stream.getAudioTracks()[0];
-      if (audioTrack) {
-        console.log("[Netplay] Audio captured from microphone", {
-          trackId: audioTrack.id,
-          enabled: audioTrack.enabled,
-          note: "Microphone audio - not ROM audio, but at least audio pipeline works",
-        });
-        return audioTrack;
-      }
-    } catch (micError) {
-      console.log(
-        "[Netplay] Microphone audio capture failed:",
-        micError.message,
-      );
+    // Resume context if suspended (VERY IMPORTANT)
+    if (audioContext.state === "suspended") {
+      await audioContext.resume();
     }
 
-    // Test audio pipeline with oscillator (for debugging)
-    try {
-      console.log(
-        "[Netplay] Creating test audio track with oscillator to verify pipeline",
-      );
-      const audioContext = new (
-        window.AudioContext || window.webkitAudioContext
-      )();
-      const oscillator = audioContext.createOscillator();
-      const gainNode = audioContext.createGain();
-      const destination = audioContext.createMediaStreamDestination();
+    // Create destination ONCE
+    if (!this._netplayAudioDestination) {
+      this._netplayAudioDestination =
+        audioContext.createMediaStreamDestination();
 
-      // Very quiet tone to test audio pipeline
-      oscillator.frequency.value = 440; // A4 note
-      gainNode.gain.value = 0.01; // Very quiet
+      // Tap emulator audio
+      outputNode.connect(this._netplayAudioDestination);
 
-      oscillator.connect(gainNode);
-      gainNode.connect(destination);
-
-      oscillator.start();
-      console.log(
-        "[Netplay] Started test oscillator (very quiet tone to verify audio pipeline works)",
-      );
-
-      const audioTrack = destination.stream.getAudioTracks()[0];
-      if (audioTrack) {
-        console.log(
-          "[Netplay] Test audio track created - if you hear a quiet tone, the audio pipeline works!",
-        );
-        return audioTrack;
-      }
-    } catch (oscError) {
-      console.log("[Netplay] Test oscillator failed:", oscError.message);
+      console.log("[Netplay] Emulator audio tapped for capture");
     }
 
-    // Last resort: Create a silent audio track (better than no audio for sync)
-    try {
-      const audioContext = new (
-        window.AudioContext || window.webkitAudioContext
-      )();
-      const destination = audioContext.createMediaStreamDestination();
-      const audioTrack = destination.stream.getAudioTracks()[0];
-      if (audioTrack) {
-        console.log("[Netplay] Created silent audio track for sync");
-        return audioTrack;
-      }
-    } catch (error) {
-      console.warn("[Netplay] Could not create audio track:", error);
+    const track =
+      this._netplayAudioDestination.stream.getAudioTracks()[0] || null;
+
+    if (!track) {
+      console.warn("[Netplay] No audio track available from destination");
+      return null;
     }
 
-    return null;
+    console.log("[Netplay] Game audio capture ready", {
+      id: track.id,
+      settings: track.getSettings(),
+    });
+
+    return track;
   }
 
   /**
@@ -12256,8 +11842,18 @@ class NetplayMenu {
       newSlot,
     );
 
+    // Try to get engine from multiple sources (handles case where engine was cleared)
+    const engine =
+      this.netplay?.engine || this.emulator.netplay?.engine || this.engine;
+    if (!engine || !engine.sessionState) {
+      console.warn(
+        "[NetplayMenu] Cannot request slot change: engine or sessionState not available",
+      );
+      return;
+    }
+
     // Find local player using session state (more reliable than player table)
-    const localPlayerId = this.netplay?.engine?.sessionState?.localPlayerId;
+    const localPlayerId = engine.sessionState?.localPlayerId;
     const localPlayerName = this.netplay?.name;
 
     let me = null;
@@ -12316,25 +11912,24 @@ class NetplayMenu {
       "[NetplayMenu] notifyServerOfSlotChange called with slot:",
       slot,
     );
-    console.log(
-      "[NetplayMenu] roomManager exists:",
-      !!this.netplay?.engine?.roomManager,
-    );
+
+    // Try to get engine from multiple sources (handles case where engine was cleared)
+    const engine =
+      this.netplay?.engine || this.emulator.netplay?.engine || this.engine;
+
+    console.log("[NetplayMenu] roomManager exists:", !!engine?.roomManager);
     console.log(
       "[NetplayMenu] slot condition check:",
       slot === 8 || (slot >= 0 && slot < 4),
     );
 
-    if (
-      this.netplay?.engine?.roomManager &&
-      (slot === 8 || (slot >= 0 && slot < 4))
-    ) {
+    if (engine?.roomManager && (slot === 8 || (slot >= 0 && slot < 4))) {
       try {
         console.log(
           "[NetplayMenu] Calling roomManager.updatePlayerSlot with slot:",
           slot,
         );
-        await this.netplay.engine.roomManager.updatePlayerSlot(slot);
+        await engine.roomManager.updatePlayerSlot(slot);
 
         // Update global slot variable for SimpleController
         window.EJS_NETPLAY_PREFERRED_SLOT = slot;
@@ -12789,12 +12384,86 @@ class NetplayMenu {
   netplaySwitchToLiveStreamRoom(roomName, password) {
     if (!this.netplayMenu) return;
 
+    // Ensure netplay object and tabs are initialized
+    if (
+      !this.emulator.netplay ||
+      !this.emulator.netplay.tabs ||
+      !this.emulator.netplay.tabs[1]
+    ) {
+      console.warn(
+        "[NetplayMenu] netplaySwitchToLiveStreamRoom: tabs not initialized, ensuring menu is set up",
+      );
+      // Ensure menu is properly initialized - tabs should exist if menu exists
+      // If menu exists but tabs don't, we need to recreate them
+      if (this.netplayMenu) {
+        // Try to find the tabs in the DOM
+        const popupBody = this.netplayMenu.querySelector(".ejs_popup_body");
+        if (popupBody) {
+          const children = Array.from(popupBody.children);
+          const roomsTab = children.find((el) =>
+            el.querySelector(".ejs_netplay_table"),
+          );
+          const joinedTab =
+            children.find(
+              (el) =>
+                el.querySelector("strong") &&
+                el.innerText.includes("{roomname}"),
+            ) || children.find((el) => el !== roomsTab && el.tagName === "DIV");
+
+          if (roomsTab && joinedTab) {
+            if (!this.emulator.netplay) {
+              this.emulator.netplay = {};
+            }
+            this.emulator.netplay.tabs = [roomsTab, joinedTab];
+            console.log("[NetplayMenu] Recovered tabs from DOM");
+          }
+        }
+      }
+
+      // If still no tabs, we can't proceed
+      if (
+        !this.emulator.netplay ||
+        !this.emulator.netplay.tabs ||
+        !this.emulator.netplay.tabs[1]
+      ) {
+        console.error(
+          "[NetplayMenu] Cannot switch to live stream room - tabs not available",
+        );
+        return;
+      }
+    }
+
     // Check if host and player slot at the beginning
-    const isHost = this.netplay?.engine?.sessionState?.isHostRole() || false;
+    const isHost =
+      this.emulator.netplay?.engine?.sessionState?.isHostRole() || false;
+
+    // Remove existing slot selector if it exists (to prevent duplication)
+    const joinedDiv = this.emulator.netplay.tabs[1];
+    if (
+      this.emulator.netplay.slotSelect &&
+      this.emulator.netplay.slotSelect.parentElement
+    ) {
+      // Find and remove the label "Player Select:" that comes before the selector
+      const slotSelectParent = this.emulator.netplay.slotSelect.parentElement;
+      const slotLabel = Array.from(slotSelectParent.childNodes).find(
+        (node) =>
+          node.nodeType === Node.ELEMENT_NODE &&
+          node.tagName === "STRONG" &&
+          (node.innerText.includes("Player Select") ||
+            node.innerText.includes("Player Slot")),
+      );
+      if (slotLabel) {
+        slotLabel.remove();
+      }
+      this.emulator.netplay.slotSelect.remove();
+      console.log(
+        "[NetplayMenu] Removed existing slot selector before creating new one",
+      );
+    }
+
     // Create the slot selector
-    const joinedDiv = this.netplay.tabs[1];
     const slotSelect = this.createSlotSelector(joinedDiv, "prepend");
-    this.netplay.slotSelect = slotSelect;
+    this.emulator.netplay.slotSelect = slotSelect;
 
     // Update the slot selector with current available slots.
     this.netplayUpdateSlotSelector();
@@ -12812,14 +12481,18 @@ class NetplayMenu {
     }
 
     // Stop room list fetching
-    if (this.netplay && this.netplay.updateList) {
-      this.netplay.updateList.stop();
+    if (this.emulator.netplay && this.emulator.netplay.updateList) {
+      this.emulator.netplay.updateList.stop();
     }
 
     // Hide lobby tabs and show live stream room
-    if (this.netplay.tabs && this.netplay.tabs[0] && this.netplay.tabs[1]) {
-      this.netplay.tabs[0].style.display = "none";
-      this.netplay.tabs[1].style.display = "";
+    if (
+      this.emulator.netplay.tabs &&
+      this.emulator.netplay.tabs[0] &&
+      this.emulator.netplay.tabs[1]
+    ) {
+      this.emulator.netplay.tabs[0].style.display = "none";
+      this.emulator.netplay.tabs[1].style.display = "";
     }
 
     // Update title
@@ -12829,7 +12502,7 @@ class NetplayMenu {
     }
 
     // Update room name and password display
-    if (this.netplay.roomNameElem) {
+    if (this.emulator.netplay.roomNameElem) {
       this.netplay.roomNameElem.innerText = roomName;
     }
     if (this.netplay.passwordElem) {
@@ -12884,10 +12557,29 @@ class NetplayMenu {
       table.style.display = "";
     }
 
-    // This populates and updates the table.
-    this.netplayUpdatePlayerTable(this.netplay.joinedPlayers); // Uses real data
-    // Setup the bottom bar buttons.
+    // CRITICAL: Set currentRoomType BEFORE updating player table
+    // (netplayUpdatePlayerTable checks currentRoomType and will skip if not set)
+    this.currentRoomType = "livestream";
+
+    // Setup the bottom bar buttons (this also sets currentRoomType, but we set it above to be safe)
     this.setupNetplayBottomBar("livestream");
+
+    // This populates and updates the table.
+    // Call after setting currentRoomType so the guard doesn't skip it
+    this.netplayUpdatePlayerTable(this.netplay.joinedPlayers); // Uses real data
+
+    // Also update after a short delay in case users-updated event arrives after this function completes
+    // This ensures the table gets populated even if joinedPlayers is empty initially
+    setTimeout(() => {
+      if (this.netplay.joinedPlayers && this.netplay.joinedPlayers.length > 0) {
+        console.log(
+          "[NetplayMenu] Delayed live stream player table update with",
+          this.netplay.joinedPlayers.length,
+          "players",
+        );
+        this.netplayUpdatePlayerTable(this.netplay.joinedPlayers);
+      }
+    }, 500);
 
     // Setup input syncing for non-host players
     // Use setTimeout to ensure engine is fully initialized
@@ -13104,11 +12796,29 @@ class NetplayMenu {
       table.style.display = "";
     }
 
+    // CRITICAL: Set currentRoomType BEFORE updating player table
+    // (netplayUpdatePlayerTable checks currentRoomType and will skip if not set)
+    this.currentRoomType = "delaysync";
+
+    // Bottom bar buttons for Delay Sync mode (this also sets currentRoomType, but we set it above to be safe)
+    this.setupNetplayBottomBar("delaysync");
+
     // Initialize player list (host is always player 1)
+    // Call after setting currentRoomType so the guard doesn't skip it
     this.netplayUpdatePlayerTable(this.netplay.joinedPlayers);
 
-    // Bottom bar buttons for Delay Sync mode
-    this.setupNetplayBottomBar("delaysync");
+    // Also update after a short delay in case users-updated event arrives after this function completes
+    // This ensures the table gets populated even if joinedPlayers is empty initially
+    setTimeout(() => {
+      if (this.netplay.joinedPlayers && this.netplay.joinedPlayers.length > 0) {
+        console.log(
+          "[NetplayMenu] Delayed delay sync player table update with",
+          this.netplay.joinedPlayers.length,
+          "players",
+        );
+        this.netplayUpdatePlayerTable(this.netplay.joinedPlayers);
+      }
+    }, 500);
 
     // Update ready and launch button states
     this.netplayUpdateReadyButton();
@@ -13308,7 +13018,16 @@ class NetplayMenu {
         text: "Leave Room",
         action: async () => {
           try {
-            await this.emulator.netplay.engine.netplayLeaveRoom(); // ← Now awaited
+            // Use this.engine (NetplayMenu's reference) which persists even after cleanup
+            // this.emulator.netplay.engine gets cleared during cleanup, but this.engine doesn't
+            const engine = this.engine || this.emulator.netplay?.engine;
+            if (!engine) {
+              console.warn(
+                "[NetplayMenu] Cannot leave room - engine not available",
+              );
+              return;
+            }
+            await engine.netplayLeaveRoom(); // ← Now awaited
           } catch (error) {
             console.error("[NetplayMenu] Error leaving room:", error);
           }
@@ -13828,6 +13547,17 @@ class NetplayMenu {
   // Update player table - handles both individual players and bulk updates
   // Update player table - handles both individual players and bulk updates
   netplayUpdatePlayerTable(playersOrSlot) {
+    // CRITICAL: Don't update player tables when showing listings (not in a room)
+    const currentRoomTypeCheck = this.currentRoomType;
+    if (currentRoomTypeCheck === "listings" || !currentRoomTypeCheck) {
+      console.log(
+        "[NetplayMenu] netplayUpdatePlayerTable skipped - not in a room (currentRoomType:",
+        currentRoomTypeCheck,
+        ")",
+      );
+      return;
+    }
+
     // Determine which table type we're using based on current room type
     let tbody;
     let isDelaySync = false;
@@ -13844,13 +13574,35 @@ class NetplayMenu {
       tbody = this.netplay.liveStreamPlayerTable;
       isDelaySync = false;
     } else if (this.netplay.delaySyncPlayerTable) {
-      // Fallback: use delay sync table if it exists
-      tbody = this.netplay.delaySyncPlayerTable;
-      isDelaySync = true;
+      // Fallback: use delay sync table if it exists (but only if we're actually in a room)
+      const engine = this.emulator.netplay?.engine;
+      const isInRoom =
+        engine?.sessionState?.roomName != null &&
+        this.emulator.netplay?.currentRoom != null;
+      if (isInRoom) {
+        tbody = this.netplay.delaySyncPlayerTable;
+        isDelaySync = true;
+      } else {
+        console.log(
+          "[NetplayMenu] netplayUpdatePlayerTable skipped - fallback prevented (not in room)",
+        );
+        return;
+      }
     } else if (this.netplay.liveStreamPlayerTable) {
-      // Fallback: use live stream table if it exists
-      tbody = this.netplay.liveStreamPlayerTable;
-      isDelaySync = false;
+      // Fallback: use live stream table if it exists (but only if we're actually in a room)
+      const engine = this.emulator.netplay?.engine;
+      const isInRoom =
+        engine?.sessionState?.roomName != null &&
+        this.emulator.netplay?.currentRoom != null;
+      if (isInRoom) {
+        tbody = this.netplay.liveStreamPlayerTable;
+        isDelaySync = false;
+      } else {
+        console.log(
+          "[NetplayMenu] netplayUpdatePlayerTable skipped - fallback prevented (not in room)",
+        );
+        return;
+      }
     } else {
       return; // No table to update
     }
@@ -14335,9 +14087,29 @@ class NetplayMenu {
       return;
     }
 
+    // Use this.engine (NetplayMenu's persistent reference) which persists even after cleanup
+    // this.emulator.netplay.engine gets cleared during cleanup, but this.engine doesn't
+    const engine = this.engine || this.emulator.netplay?.engine;
+    if (!engine || !engine.sessionState) {
+      console.error(
+        "[NetplayMenu] Cannot toggle ready - engine or sessionState not available",
+      );
+      alert("Cannot toggle ready - engine not available. Please try again.");
+      return;
+    }
+
+    if (!engine.roomManager) {
+      console.error(
+        "[NetplayMenu] Cannot toggle ready - roomManager not available",
+      );
+      alert(
+        "Cannot toggle ready - room manager not available. Please try again.",
+      );
+      return;
+    }
+
     // Find local player
-    const localPlayerId =
-      this.emulator.netplay.engine.sessionState?.localPlayerId;
+    const localPlayerId = engine.sessionState?.localPlayerId;
     const localPlayer = this.netplay.joinedPlayers?.find(
       (p) => p.id === localPlayerId,
     );
@@ -14368,7 +14140,7 @@ class NetplayMenu {
 
     console.log("[NetplayMenu] Calling roomManager.toggleReady");
     try {
-      await this.emulator.netplay.engine.roomManager.toggleReady(roomName);
+      await engine.roomManager.toggleReady(roomName);
       console.log("[NetplayMenu] Ready state toggled successfully");
       // Don't update button here - wait for player-ready-updated event
       // The event handler (netplayUpdatePlayerReady) will update the button
@@ -14620,11 +14392,27 @@ class NetplayMenu {
   netplayUpdateLaunchButton() {
     if (!this.netplay.launchButton || !this.netplay.joinedPlayers) return;
 
+    // Check if we're in a delay_sync room
+    const room = this.emulator.netplay?.currentRoom;
+    if (!room || room.netplay_mode !== "delay_sync") {
+      console.log(
+        "[NetplayMenu] Not in delay_sync room, skipping launch button update",
+      );
+      return;
+    }
+
+    // Check if engine exists (it might be null after leaving a room)
+    const engine = this.netplay?.engine || this.emulator.netplay?.engine;
+    if (!engine || !engine.sessionState) {
+      console.log(
+        "[NetplayMenu] Engine or sessionState not available, skipping launch button update",
+      );
+      return;
+    }
+
     // Check if local player is host (check multiple sources)
-    const isHostFromSessionState =
-      this.netplay?.engine?.sessionState?.isHostRole() || false;
-    const localPlayerId =
-      this.emulator.netplay.engine.sessionState?.localPlayerId;
+    const isHostFromSessionState = engine.sessionState?.isHostRole() || false;
+    const localPlayerId = engine.sessionState?.localPlayerId;
     const localPlayer = this.netplay.joinedPlayers?.find(
       (p) => p.id === localPlayerId,
     );
@@ -14675,11 +14463,33 @@ class NetplayMenu {
 
   // Launch game (host only)
   async netplayLaunchGame() {
-    const roomName = this.emulator.netplay.currentRoom?.room_name;
-    if (!roomName) return;
+    const roomName = this.emulator.netplay?.currentRoom?.room_name;
+    if (!roomName) {
+      console.warn("[NetplayMenu] Cannot launch game - no room name");
+      return;
+    }
+
+    // Use this.engine (NetplayMenu's persistent reference) which persists even after cleanup
+    // this.emulator.netplay.engine gets cleared during cleanup, but this.engine doesn't
+    const engine = this.engine || this.emulator.netplay?.engine;
+    if (!engine) {
+      console.error("[NetplayMenu] Cannot launch game - engine not available");
+      alert("Cannot launch game - engine not available. Please try again.");
+      return;
+    }
+
+    if (!engine.roomManager) {
+      console.error(
+        "[NetplayMenu] Cannot launch game - roomManager not available",
+      );
+      alert(
+        "Cannot launch game - room manager not available. Please try again.",
+      );
+      return;
+    }
 
     try {
-      await this.emulator.netplay.engine.roomManager.startGame(roomName);
+      await engine.roomManager.startGame(roomName);
       console.log("[NetplayMenu] Game start initiated successfully");
     } catch (error) {
       console.error("[NetplayMenu] Failed to start game:", error);
@@ -14718,7 +14528,21 @@ class NetplayMenu {
     const tbody = this.netplay.table;
     tbody.innerHTML = ""; // Clear existing rows
 
-    if (rooms.length === 0) {
+    // Filter out empty rooms (client-side backup - server should already filter, but this ensures clean UI)
+    const filteredRooms = rooms.filter((room) => {
+      // Keep rooms with at least 1 player
+      const currentPlayers = room.current || 0;
+      if (currentPlayers > 0) {
+        return true;
+      }
+      // Log filtered empty rooms for debugging
+      console.log(
+        `[NetplayMenu] Filtering out empty room: ${room.name || room.id} (${currentPlayers} players)`,
+      );
+      return false;
+    });
+
+    if (filteredRooms.length === 0) {
       const row = this.createElement("tr");
       const cell = this.createElement("td");
       cell.colSpan = 4;
@@ -14730,7 +14554,7 @@ class NetplayMenu {
       return;
     }
 
-    rooms.forEach((room) => {
+    filteredRooms.forEach((room) => {
       // Normalize netplay_mode (handle both string and numeric formats)
       const netplayMode =
         room.netplay_mode === "delay_sync" || room.netplay_mode === 1
@@ -15796,10 +15620,31 @@ class NetplayMenu {
 
     // Setup correct UI based on current room state before showing
     // Use engine's sessionState as single source of truth (most reliable)
+    // IMPORTANT: Check both engine existence AND room state to avoid stale data after leaving
     const engine = this.emulator.netplay?.engine;
+    const hasEngine = engine != null;
+    const hasSessionState = engine?.sessionState != null;
+    const hasRoomName = engine?.sessionState?.roomName != null;
+    const hasCurrentRoom = this.emulator.netplay?.currentRoom != null;
+
+    // Only consider ourselves "in room" if ALL conditions are met:
+    // 1. Engine exists (not cleared after leaving)
+    // 2. SessionState exists
+    // 3. Room name is set in session state
+    // 4. CurrentRoom object exists
+    // This prevents showing room UI when we've left but cleanup hasn't completed
     const isInRoom =
-      engine?.sessionState?.roomName != null &&
-      this.emulator.netplay?.currentRoom != null;
+      hasEngine && hasSessionState && hasRoomName && hasCurrentRoom;
+
+    console.log("[NetplayMenu] createNetplayMenu state check:", {
+      hasEngine,
+      hasSessionState,
+      hasRoomName,
+      hasCurrentRoom,
+      isInRoom,
+      roomName: engine?.sessionState?.roomName,
+      currentRoomId: this.emulator.netplay?.currentRoomId,
+    });
 
     if (this.emulator.netplay && isInRoom) {
       // User is in a room, setup room UI
@@ -15929,6 +15774,27 @@ class NetplayMenu {
       }
     } else {
       // User is not in a room, setup listings UI
+      // IMPORTANT: Clear any stale room state to prevent showing old player tables
+      console.log(
+        "[NetplayMenu] Not in room - clearing stale state and showing listings",
+      );
+
+      // Clear stale room type to prevent using wrong player table
+      this.currentRoomType = "listings";
+
+      // Clear stale player data that might persist after leaving
+      if (this.netplay) {
+        // Clear joined players array if it exists
+        if (
+          this.netplay.joinedPlayers &&
+          Array.isArray(this.netplay.joinedPlayers)
+        ) {
+          this.netplay.joinedPlayers = [];
+        }
+        // Clear player table references (but keep DOM elements for reuse)
+        // The tables themselves will be hidden below
+      }
+
       this.setupNetplayBottomBar("listings");
 
       // Reset title to listings
@@ -15938,25 +15804,41 @@ class NetplayMenu {
       }
 
       // Hide both player tables when showing listings (they might be visible from previous room)
+      // This is critical - ensure tables are hidden AND cleared even if they contain stale data
       if (
-        this.netplay.liveStreamPlayerTable &&
+        this.netplay?.liveStreamPlayerTable &&
         this.netplay.liveStreamPlayerTable.parentElement
       ) {
+        // Clear the table content to remove stale player data
+        this.netplay.liveStreamPlayerTable.innerHTML = "";
         const table = this.netplay.liveStreamPlayerTable.parentElement;
         table.style.display = "none";
+        console.log("[NetplayMenu] Cleared and hid liveStreamPlayerTable");
       }
       if (
-        this.netplay.delaySyncPlayerTable &&
+        this.netplay?.delaySyncPlayerTable &&
         this.netplay.delaySyncPlayerTable.parentElement
       ) {
+        // Clear the table content to remove stale player data
+        this.netplay.delaySyncPlayerTable.innerHTML = "";
         const table = this.netplay.delaySyncPlayerTable.parentElement;
         table.style.display = "none";
+        console.log("[NetplayMenu] Cleared and hid delaySyncPlayerTable");
       }
 
       // Switch to rooms tab when showing listings
       if (this.netplay.tabs && this.netplay.tabs[0] && this.netplay.tabs[1]) {
         this.netplay.tabs[0].style.display = ""; // Show rooms tab
         this.netplay.tabs[1].style.display = "none"; // Hide joined tab
+        console.log("[NetplayMenu] Switched to rooms tab (listings view)");
+      }
+
+      // Ensure room list container is visible (in case it was hidden)
+      const roomsContainer = this.netplayMenu?.querySelector(
+        ".ejs_popup_body > div:first-child",
+      );
+      if (roomsContainer) {
+        roomsContainer.style.display = "";
       }
 
       // Aggressively hide all room UI elements when showing listings
@@ -16064,6 +15946,32 @@ class NetplayMenu {
 
   // Create a a slot slector with styling and listener to update input slot and player table
   createSlotSelector(container = null, position = "append") {
+    // If a slot selector already exists and we're adding to a container, remove the old one first
+    if (
+      container &&
+      this.netplay?.slotSelect &&
+      this.netplay.slotSelect.parentElement
+    ) {
+      const oldSelector = this.netplay.slotSelect;
+      const oldParent = oldSelector.parentElement;
+
+      // Find and remove the label that comes before the selector
+      const oldLabel = Array.from(oldParent.childNodes).find(
+        (node) =>
+          node.nodeType === Node.ELEMENT_NODE &&
+          node.tagName === "STRONG" &&
+          (node.innerText.includes("Player Select") ||
+            node.innerText.includes("Player Slot")),
+      );
+      if (oldLabel) {
+        oldLabel.remove();
+      }
+      oldSelector.remove();
+      console.log(
+        "[NetplayMenu] Removed existing slot selector before creating new one",
+      );
+    }
+
     const slotSelect = this.createElement("select");
     // Add basic styling to make it look like a proper dropdown
     slotSelect.style.backgroundColor = "#333";
@@ -16893,17 +16801,20 @@ class NetplayMenu {
    * Setup input syncing for live stream room based on host status and player slot
    * Non-host players (P2, P3, P4) will send their inputs to the host via data channel
    */
-  /**
-   * Setup input syncing for live stream room based on host status and player slot
-   * Non-host players (P2, P3, P4) will send their inputs to the host via data channel
-   */
   netplaySetupLiveStreamInputSync() {
-    if (!this.netplay || !this.netplay.engine) {
+    // Try to get engine from multiple sources (handles case where engine was cleared)
+    const engine =
+      this.netplay?.engine || this.emulator.netplay?.engine || this.engine;
+    if (!engine) {
       console.warn("[NetplayMenu] Engine not available for input sync setup");
       return;
     }
 
-    const engine = this.netplay.engine;
+    // Ensure netplay.engine is set for consistency
+    if (this.netplay && !this.netplay.engine) {
+      this.netplay.engine = engine;
+    }
+
     const isHost = engine.sessionState?.isHostRole() || false;
 
     // Get current player slot from player data (more reliable than this.netplay.localSlot)
@@ -17244,6 +17155,108 @@ class NetplayMenu {
       console.log(
         `[NetplayMenu] Skipping P2P initiation: isHost=${isHost}, mode=${inputMode}`,
       );
+    }
+  }
+
+  /**
+   * Attach a WebRTC consumer track to a video or audio element
+   * @param {MediaStreamTrack} track - The media track from the consumer
+   * @param {string} kind - Track kind: 'video' or 'audio'
+   */
+  netplayAttachConsumerTrack(track, kind) {
+    if (!track) {
+      console.warn(
+        "[NetplayMenu] Cannot attach track - track is null/undefined",
+      );
+      return;
+    }
+
+    // Initialize mediaElements if it doesn't exist
+    if (!this.netplay || !this.netplay.mediaElements) {
+      if (!this.netplay) {
+        this.netplay = {};
+      }
+      this.netplay.mediaElements = {};
+    }
+
+    if (kind === "video") {
+      // Create or reuse video element
+      let videoElement = this.netplay.mediaElements.video;
+      if (!videoElement) {
+        videoElement = document.createElement("video");
+        videoElement.autoplay = true;
+        videoElement.playsInline = true;
+        videoElement.style.width = "100%";
+        videoElement.style.height = "100%";
+        videoElement.style.objectFit = "contain";
+        this.netplay.mediaElements.video = videoElement;
+
+        // Insert video element into the joined tab (replace canvas)
+        const joinedDiv = this.emulator.netplay?.tabs?.[1];
+        if (!isHost) {
+          // Hide canvas if it exists
+          if (this.emulator?.canvas) {
+            this.emulator.canvas.style.display = "none";
+          }
+          // Append video element to joined tab
+          joinedDiv.appendChild(videoElement);
+          console.log(
+            "[NetplayMenu] Created and inserted video element for livestream",
+          );
+        } else {
+          console.warn(
+            "[NetplayMenu] Cannot insert video element - joined tab not found",
+          );
+        }
+      }
+
+      // Attach track to video element
+      if (videoElement.srcObject) {
+        // If there's already a stream, add track to it
+        const stream = videoElement.srcObject;
+        stream.addTrack(track);
+      } else {
+        // Create new stream with track
+        const stream = new MediaStream([track]);
+        videoElement.srcObject = stream;
+      }
+      console.log("[NetplayMenu] Attached video track to video element");
+    } else if (kind === "audio") {
+      // Create or reuse audio element
+      let audioElement = this.netplay.mediaElements.audio;
+      if (!audioElement) {
+        audioElement = document.createElement("audio");
+        audioElement.autoplay = true;
+        audioElement.volume = this.emulator?.volume ?? 1.0;
+        this.netplay.mediaElements.audio = audioElement;
+
+        // Insert audio element into the joined tab
+        const joinedDiv = this.emulator.netplay?.tabs?.[1];
+        if (joinedDiv) {
+          joinedDiv.appendChild(audioElement);
+          console.log(
+            "[NetplayMenu] Created and inserted audio element for livestream",
+          );
+        } else {
+          console.warn(
+            "[NetplayMenu] Cannot insert audio element - joined tab not found",
+          );
+        }
+      }
+
+      // Attach track to audio element
+      if (audioElement.srcObject) {
+        // If there's already a stream, add track to it
+        const stream = audioElement.srcObject;
+        stream.addTrack(track);
+      } else {
+        // Create new stream with track
+        const stream = new MediaStream([track]);
+        audioElement.srcObject = stream;
+      }
+      console.log("[NetplayMenu] Attached audio track to audio element");
+    } else {
+      console.warn(`[NetplayMenu] Unknown track kind: ${kind}`);
     }
   }
 
