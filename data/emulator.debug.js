@@ -4039,7 +4039,9 @@ class SFUTransport {
       this.useSFU = false;
       return false;
     }
-    console.log("[SFUTransport] Socket is connected, proceeding with SFU initialization");
+    console.log(
+      "[SFUTransport] Socket is connected, proceeding with SFU initialization",
+    );
 
     try {
       // Check if SFU is available
@@ -4066,9 +4068,15 @@ class SFUTransport {
 
       // Get mediasoup client from window or global scope (must be loaded separately)
       console.log("[SFUTransport] Checking for mediasoup-client...");
-      console.log("[SFUTransport] window.mediasoupClient:", typeof window.mediasoupClient);
+      console.log(
+        "[SFUTransport] window.mediasoupClient:",
+        typeof window.mediasoupClient,
+      );
       console.log("[SFUTransport] window.mediasoup:", typeof window.mediasoup);
-      console.log("[SFUTransport] global mediasoupClient:", typeof mediasoupClient);
+      console.log(
+        "[SFUTransport] global mediasoupClient:",
+        typeof mediasoupClient,
+      );
 
       this.mediasoupClient =
         window.mediasoupClient ||
@@ -4077,33 +4085,36 @@ class SFUTransport {
 
       if (!this.mediasoupClient) {
         console.warn(
-          "[SFUTransport] mediasoup-client not available in browser; SFU disabled."
+          "[SFUTransport] mediasoup-client not available in browser; SFU disabled.",
         );
         this.useSFU = false;
         return false;
       }
-      console.log("[SFUTransport] Found mediasoup-client:", typeof this.mediasoupClient);
+      console.log(
+        "[SFUTransport] Found mediasoup-client:",
+        typeof this.mediasoupClient,
+      );
 
       // Create device
       this.device = new this.mediasoupClient.Device();
 
       // Request router RTP capabilities
       this.routerRtpCapabilities = await new Promise((resolve, reject) => {
-        this.socket.emit(
-          "sfu-get-router-rtp-capabilities",
-          {},
-          (err, data) => {
-            if (err) return reject(err);
-            resolve(data);
-          }
-        );
+        this.socket.emit("sfu-get-router-rtp-capabilities", {}, (err, data) => {
+          if (err) return reject(err);
+          resolve(data);
+        });
       });
 
       // Load device with router capabilities
-      await this.device.load({ routerRtpCapabilities: this.routerRtpCapabilities });
+      await this.device.load({
+        routerRtpCapabilities: this.routerRtpCapabilities,
+      });
 
       this.useSFU = true;
-      console.log("[SFUTransport] SFU available and mediasoup-client initialized");
+      console.log(
+        "[SFUTransport] SFU available and mediasoup-client initialized",
+      );
       return true;
     } catch (err) {
       console.error("[SFUTransport] SFU initialization failed:", err);
@@ -4121,7 +4132,9 @@ class SFUTransport {
     console.log("[SFUTransport] Fetching ICE servers from SFU...");
 
     if (!this.socket || !this.socket.isConnected()) {
-      console.warn("[SFUTransport] Cannot fetch ICE servers: Socket not connected");
+      console.warn(
+        "[SFUTransport] Cannot fetch ICE servers: Socket not connected",
+      );
       return [];
     }
 
@@ -4129,17 +4142,21 @@ class SFUTransport {
       // Get the SFU base URL from the socket
       const sfuUrl = this.socket?.serverUrl;
       if (!sfuUrl) {
-        console.warn("[SFUTransport] Cannot fetch ICE servers: No SFU URL available");
+        console.warn(
+          "[SFUTransport] Cannot fetch ICE servers: No SFU URL available",
+        );
         return [];
       }
 
       // Extract the base URL (remove /socket.io/...)
-      const baseUrl = sfuUrl.replace(/\/socket\.io.*$/, '');
+      const baseUrl = sfuUrl.replace(/\/socket\.io.*$/, "");
 
       // Get auth token for the request
       const token = this.socket?.authToken;
       if (!token) {
-        console.warn("[SFUTransport] Cannot fetch ICE servers: No auth token available");
+        console.warn(
+          "[SFUTransport] Cannot fetch ICE servers: No auth token available",
+        );
         return [];
       }
 
@@ -4148,15 +4165,17 @@ class SFUTransport {
       console.log(`[SFUTransport] Fetching ICE servers from: ${iceEndpoint}`);
 
       const response = await fetch(iceEndpoint, {
-        method: 'GET',
+        method: "GET",
         headers: {
-          'Authorization': `Bearer ${token}`,
-          'Content-Type': 'application/json'
-        }
+          Authorization: `Bearer ${token}`,
+          "Content-Type": "application/json",
+        },
       });
 
       if (!response.ok) {
-        console.warn(`[SFUTransport] ICE server fetch failed: ${response.status} ${response.statusText}`);
+        console.warn(
+          `[SFUTransport] ICE server fetch failed: ${response.status} ${response.statusText}`,
+        );
         return [];
       }
 
@@ -4165,19 +4184,29 @@ class SFUTransport {
 
       // Store announced IP for future use if provided
       if (data.announcedIp) {
-        console.log(`[SFUTransport] SFU provided announced IP: ${data.announcedIp}`);
+        console.log(
+          `[SFUTransport] SFU provided announced IP: ${data.announcedIp}`,
+        );
         this.announcedIp = data.announcedIp;
       }
 
       if (data && Array.isArray(data.iceServers)) {
-        console.log(`[SFUTransport] Successfully retrieved ${data.iceServers.length} ICE servers from SFU`);
+        console.log(
+          `[SFUTransport] Successfully retrieved ${data.iceServers.length} ICE servers from SFU`,
+        );
         return data.iceServers;
       } else {
-        console.warn("[SFUTransport] Invalid ICE server response format:", data);
+        console.warn(
+          "[SFUTransport] Invalid ICE server response format:",
+          data,
+        );
         return [];
       }
     } catch (error) {
-      console.error("[SFUTransport] Error fetching ICE servers from SFU:", error);
+      console.error(
+        "[SFUTransport] Error fetching ICE servers from SFU:",
+        error,
+      );
       return [];
     }
   }
@@ -4195,20 +4224,17 @@ class SFUTransport {
         return "auto";
       };
 
-      const mode =
-        normalizeHostCodec(
-          this.config.hostCodec ||
-            (typeof window.EJS_NETPLAY_HOST_CODEC === "string"
-              ? window.EJS_NETPLAY_HOST_CODEC
-              : null) ||
-            "auto"
-        );
+      const mode = normalizeHostCodec(
+        this.config.hostCodec ||
+          (typeof window.EJS_NETPLAY_HOST_CODEC === "string"
+            ? window.EJS_NETPLAY_HOST_CODEC
+            : null) ||
+          "auto",
+      );
 
       const routerCaps = this.routerRtpCapabilities || null;
       const routerCodecs =
-        routerCaps && Array.isArray(routerCaps.codecs)
-          ? routerCaps.codecs
-          : [];
+        routerCaps && Array.isArray(routerCaps.codecs) ? routerCaps.codecs : [];
 
       // Filter video codecs (excluding RTX)
       const candidates = routerCodecs.filter((c) => {
@@ -4216,7 +4242,9 @@ class SFUTransport {
         const mtl = mt.toLowerCase();
         if (!mtl.startsWith("video/")) return false;
         if (mtl === "video/rtx") return false;
-        return mtl === "video/vp9" || mtl === "video/h264" || mtl === "video/vp8";
+        return (
+          mtl === "video/vp9" || mtl === "video/h264" || mtl === "video/vp8"
+        );
       });
 
       // Check browser support
@@ -4231,7 +4259,7 @@ class SFUTransport {
           (cc) =>
             cc &&
             typeof cc.mimeType === "string" &&
-            cc.mimeType.toLowerCase() === mimeLower
+            cc.mimeType.toLowerCase() === mimeLower,
         );
 
       // If mode is forced, try that first
@@ -4239,14 +4267,14 @@ class SFUTransport {
         mode === "vp9"
           ? "video/vp9"
           : mode === "h264"
-          ? "video/h264"
-          : mode === "vp8"
-          ? "video/vp8"
-          : null;
+            ? "video/h264"
+            : mode === "vp8"
+              ? "video/vp8"
+              : null;
 
       if (wantMime) {
         const forced = candidates.find(
-          (c) => c && c.mimeType && c.mimeType.toLowerCase() === wantMime
+          (c) => c && c.mimeType && c.mimeType.toLowerCase() === wantMime,
         );
         if (forced && supports(wantMime)) return forced;
       }
@@ -4271,7 +4299,9 @@ class SFUTransport {
   async createTransports(isHost) {
     // Check if we need to re-initialize SFU
     if (!this.useSFU || !this.device || !this.socket.isConnected()) {
-      console.log("[SFUTransport] Not ready, attempting to re-initialize SFU...");
+      console.log(
+        "[SFUTransport] Not ready, attempting to re-initialize SFU...",
+      );
 
       // Try to re-initialize if socket is connected
       if (this.socket && this.socket.isConnected()) {
@@ -4282,7 +4312,9 @@ class SFUTransport {
         }
         console.log("[SFUTransport] SFU re-initialized successfully");
       } else {
-        console.warn("[SFUTransport] Cannot create transports: Socket not connected");
+        console.warn(
+          "[SFUTransport] Cannot create transports: Socket not connected",
+        );
         return;
       }
     }
@@ -4294,20 +4326,24 @@ class SFUTransport {
       () => {
         // If we become unready during wait, try to re-init
         if (!this.useSFU || !this.device || !this.socket.isConnected()) {
-          console.log("[SFUTransport] Lost readiness during wait, re-initializing...");
-          this.initialize().catch(err =>
-            console.warn("[SFUTransport] Re-init during wait failed:", err)
+          console.log(
+            "[SFUTransport] Lost readiness during wait, re-initializing...",
+          );
+          this.initialize().catch((err) =>
+            console.warn("[SFUTransport] Re-init during wait failed:", err),
           );
           return false;
         }
         return true;
       },
       5000,
-      200
+      200,
     );
 
     if (!ready) {
-      console.warn("[SFUTransport] Not ready for transport creation after wait");
+      console.warn(
+        "[SFUTransport] Not ready for transport creation after wait",
+      );
       return;
     }
 
@@ -4319,7 +4355,7 @@ class SFUTransport {
           (err, info) => {
             if (err) return reject(err);
             resolve(info);
-          }
+          },
         );
       });
 
@@ -4331,54 +4367,83 @@ class SFUTransport {
         this.setupTransportEventHandlers(
           this.sendTransport,
           transportInfo.id,
-          "send"
+          "send",
         );
 
         // Listen for connect event and handle DTLS connection
-        this.sendTransport.on('connect', async ({ dtlsParameters }, callback, errback) => {
-          try {
-            console.log(`[SFUTransport] Transport ${transportInfo.id} connect event received`);
-            // Send DTLS parameters to server
-            const result = await new Promise((resolve, reject) => {
-              this.socket.emit("sfu-connect-transport", {
-                transportId: transportInfo.id,
-                dtlsParameters
-              }, (err, data) => {
-                if (err) return reject(err);
-                resolve(data);
+        this.sendTransport.on(
+          "connect",
+          async ({ dtlsParameters }, callback, errback) => {
+            try {
+              console.log(
+                `[SFUTransport] Transport ${transportInfo.id} connect event received`,
+              );
+              // Send DTLS parameters to server
+              const result = await new Promise((resolve, reject) => {
+                this.socket.emit(
+                  "sfu-connect-transport",
+                  {
+                    transportId: transportInfo.id,
+                    dtlsParameters,
+                  },
+                  (err, data) => {
+                    if (err) return reject(err);
+                    resolve(data);
+                  },
+                );
               });
-            });
-            console.log(`[SFUTransport] Transport ${transportInfo.id} DTLS connection completed`);
-            callback();
-          } catch (error) {
-            console.error(`[SFUTransport] Transport ${transportInfo.id} DTLS connection failed:`, error);
-            errback(error);
-          }
-        });
+              console.log(
+                `[SFUTransport] Transport ${transportInfo.id} DTLS connection completed`,
+              );
+              callback();
+            } catch (error) {
+              console.error(
+                `[SFUTransport] Transport ${transportInfo.id} DTLS connection failed:`,
+                error,
+              );
+              errback(error);
+            }
+          },
+        );
 
         // Listen for produce event and handle producer creation
-        this.sendTransport.on('produce', async ({ kind, rtpParameters, appData }, callback, errback) => {
-          try {
-            console.log(`[SFUTransport] Transport ${transportInfo.id} produce event received for ${kind}`);
-            // Send produce request to server
-            const result = await new Promise((resolve, reject) => {
-              this.socket.emit("sfu-produce", {
-                transportId: transportInfo.id,
-                kind,
-                rtpParameters,
-                appData
-              }, (err, data) => {
-                if (err) return reject(err);
-                resolve(data);
+        this.sendTransport.on(
+          "produce",
+          async ({ kind, rtpParameters, appData }, callback, errback) => {
+            try {
+              console.log(
+                `[SFUTransport] Transport ${transportInfo.id} produce event received for ${kind}`,
+              );
+              // Send produce request to server
+              const result = await new Promise((resolve, reject) => {
+                this.socket.emit(
+                  "sfu-produce",
+                  {
+                    transportId: transportInfo.id,
+                    kind,
+                    rtpParameters,
+                    appData,
+                  },
+                  (err, data) => {
+                    if (err) return reject(err);
+                    resolve(data);
+                  },
+                );
               });
-            });
-            console.log(`[SFUTransport] Transport ${transportInfo.id} producer created:`, result);
-            callback({ id: result.id });
-          } catch (error) {
-            console.error(`[SFUTransport] Transport ${transportInfo.id} producer creation failed:`, error);
-            errback(error);
-          }
-        });
+              console.log(
+                `[SFUTransport] Transport ${transportInfo.id} producer created:`,
+                result,
+              );
+              callback({ id: result.id });
+            } catch (error) {
+              console.error(
+                `[SFUTransport] Transport ${transportInfo.id} producer creation failed:`,
+                error,
+              );
+              errback(error);
+            }
+          },
+        );
 
         console.log("[SFUTransport] Created sendTransport with handlers:", {
           id: transportInfo.id,
@@ -4387,7 +4452,7 @@ class SFUTransport {
         console.log("[SFUTransport] Created sendTransport:", {
           id: transportInfo.id,
         });
-      
+
         // HOSTS ALSO NEED RECEIVE TRANSPORT TO GET DATA FROM CLIENTS
         try {
           const recvTransportInfo = await new Promise((resolve, reject) => {
@@ -4397,49 +4462,70 @@ class SFUTransport {
               (err, info) => {
                 if (err) return reject(err);
                 resolve(info);
-              }
+              },
             );
           });
-      
-          this.recvTransport = this.device.createRecvTransport(recvTransportInfo);
+
+          this.recvTransport =
+            this.device.createRecvTransport(recvTransportInfo);
 
           this.setupTransportEventHandlers(
             this.recvTransport,
             recvTransportInfo.id,
-            "recv"
+            "recv",
           );
 
           // Listen for connect event and handle DTLS connection
-          this.recvTransport.on('connect', async ({ dtlsParameters }, callback, errback) => {
-            try {
-              console.log(`[SFUTransport] Transport ${recvTransportInfo.id} connect event received`);
-              // Send DTLS parameters to server
-              const result = await new Promise((resolve, reject) => {
-                this.socket.emit("sfu-connect-transport", {
-                  transportId: recvTransportInfo.id,
-                  dtlsParameters
-                }, (err, data) => {
-                  if (err) return reject(err);
-                  resolve(data);
+          this.recvTransport.on(
+            "connect",
+            async ({ dtlsParameters }, callback, errback) => {
+              try {
+                console.log(
+                  `[SFUTransport] Transport ${recvTransportInfo.id} connect event received`,
+                );
+                // Send DTLS parameters to server
+                const result = await new Promise((resolve, reject) => {
+                  this.socket.emit(
+                    "sfu-connect-transport",
+                    {
+                      transportId: recvTransportInfo.id,
+                      dtlsParameters,
+                    },
+                    (err, data) => {
+                      if (err) return reject(err);
+                      resolve(data);
+                    },
+                  );
                 });
-              });
-              console.log(`[SFUTransport] Transport ${recvTransportInfo.id} DTLS connection completed`);
-              callback();
-            } catch (error) {
-              console.error(`[SFUTransport] Transport ${recvTransportInfo.id} DTLS connection failed:`, error);
-              errback(error);
-            }
-          });
+                console.log(
+                  `[SFUTransport] Transport ${recvTransportInfo.id} DTLS connection completed`,
+                );
+                callback();
+              } catch (error) {
+                console.error(
+                  `[SFUTransport] Transport ${recvTransportInfo.id} DTLS connection failed:`,
+                  error,
+                );
+                errback(error);
+              }
+            },
+          );
 
-          console.log("[SFUTransport] Created recvTransport for host with connect handler:", {
-            id: recvTransportInfo.id,
-          });
+          console.log(
+            "[SFUTransport] Created recvTransport for host with connect handler:",
+            {
+              id: recvTransportInfo.id,
+            },
+          );
 
           console.log("[SFUTransport] Created recvTransport for host:", {
             id: recvTransportInfo.id,
           });
         } catch (error) {
-          console.warn("[SFUTransport] Failed to create receive transport for host:", error);
+          console.warn(
+            "[SFUTransport] Failed to create receive transport for host:",
+            error,
+          );
         }
       } else {
         // Create recv transport (client)
@@ -4448,34 +4534,51 @@ class SFUTransport {
         this.setupTransportEventHandlers(
           this.recvTransport,
           transportInfo.id,
-          "recv"
+          "recv",
         );
 
         // Listen for connect event and handle DTLS connection
-        this.recvTransport.on('connect', async ({ dtlsParameters }, callback, errback) => {
-          try {
-            console.log(`[SFUTransport] Transport ${transportInfo.id} connect event received`);
-            // Send DTLS parameters to server
-            const result = await new Promise((resolve, reject) => {
-              this.socket.emit("sfu-connect-transport", {
-                transportId: transportInfo.id,
-                dtlsParameters
-            }, (err, data) => {
-              if (err) return reject(err);
-              resolve(data);
-            });
-          });
-          console.log(`[SFUTransport] Transport ${transportInfo.id} DTLS connection completed`);
-          callback();
-          } catch (error) {
-            console.error(`[SFUTransport] Transport ${transportInfo.id} DTLS connection failed:`, error);
-            errback(error);
-          }
-        });
+        this.recvTransport.on(
+          "connect",
+          async ({ dtlsParameters }, callback, errback) => {
+            try {
+              console.log(
+                `[SFUTransport] Transport ${transportInfo.id} connect event received`,
+              );
+              // Send DTLS parameters to server
+              const result = await new Promise((resolve, reject) => {
+                this.socket.emit(
+                  "sfu-connect-transport",
+                  {
+                    transportId: transportInfo.id,
+                    dtlsParameters,
+                  },
+                  (err, data) => {
+                    if (err) return reject(err);
+                    resolve(data);
+                  },
+                );
+              });
+              console.log(
+                `[SFUTransport] Transport ${transportInfo.id} DTLS connection completed`,
+              );
+              callback();
+            } catch (error) {
+              console.error(
+                `[SFUTransport] Transport ${transportInfo.id} DTLS connection failed:`,
+                error,
+              );
+              errback(error);
+            }
+          },
+        );
 
-        console.log("[SFUTransport] Created recvTransport with connect handler:", {
-          id: transportInfo.id,
-        });
+        console.log(
+          "[SFUTransport] Created recvTransport with connect handler:",
+          {
+            id: transportInfo.id,
+          },
+        );
 
         console.log("[SFUTransport] Created recvTransport:", {
           id: transportInfo.id,
@@ -4492,10 +4595,12 @@ class SFUTransport {
    * @param {string} mediaType - 'video', 'audio', or 'data' (defaults to 'data')
    * @returns {Promise<Object>} Created transport
    */
-  async createSendTransport(mediaType = 'data') {
+  async createSendTransport(mediaType = "data") {
     // Check if we need to re-initialize SFU
     if (!this.useSFU || !this.device || !this.socket.isConnected()) {
-      console.log("[SFUTransport] Not ready, attempting to re-initialize SFU...");
+      console.log(
+        "[SFUTransport] Not ready, attempting to re-initialize SFU...",
+      );
 
       // Try to re-initialize if socket is connected
       if (this.socket && this.socket.isConnected()) {
@@ -4506,37 +4611,52 @@ class SFUTransport {
         }
         console.log("[SFUTransport] SFU re-initialized successfully");
       } else {
-        console.warn("[SFUTransport] Cannot create send transport: Socket not connected");
+        console.warn(
+          "[SFUTransport] Cannot create send transport: Socket not connected",
+        );
         return;
       }
     }
 
     // Get the appropriate transport property based on media type
-    const transportProperty = mediaType === 'video' ? 'videoSendTransport' : 
-                              mediaType === 'audio' ? 'audioSendTransport' : 
-                              'dataSendTransport';
+    const transportProperty =
+      mediaType === "video"
+        ? "videoSendTransport"
+        : mediaType === "audio"
+          ? "audioSendTransport"
+          : "dataSendTransport";
 
     // Check if transport already exists and is usable
     if (this[transportProperty]) {
       try {
-        if (!this[transportProperty].closed && 
-            this[transportProperty].connectionState !== 'closed' && 
-            this[transportProperty].connectionState !== 'failed') {
-          console.log(`[SFUTransport] ${mediaType} send transport already exists and is usable`);
+        if (
+          !this[transportProperty].closed &&
+          this[transportProperty].connectionState !== "closed" &&
+          this[transportProperty].connectionState !== "failed"
+        ) {
+          console.log(
+            `[SFUTransport] ${mediaType} send transport already exists and is usable`,
+          );
           return this[transportProperty];
         }
       } catch (e) {
-        console.log(`[SFUTransport] ${mediaType} send transport exists but appears invalid, clearing it`);
+        console.log(
+          `[SFUTransport] ${mediaType} send transport exists but appears invalid, clearing it`,
+        );
         this[transportProperty] = null;
       }
     }
-    
+
     // If transport exists but is closed, clear it
-    if (this[transportProperty] && 
-        (this[transportProperty].closed || 
-         this[transportProperty].connectionState === 'closed' || 
-         this[transportProperty].connectionState === 'failed')) {
-      console.log(`[SFUTransport] ${mediaType} send transport exists but is closed/failed, clearing and creating new one`);
+    if (
+      this[transportProperty] &&
+      (this[transportProperty].closed ||
+        this[transportProperty].connectionState === "closed" ||
+        this[transportProperty].connectionState === "failed")
+    ) {
+      console.log(
+        `[SFUTransport] ${mediaType} send transport exists but is closed/failed, clearing and creating new one`,
+      );
       this[transportProperty] = null;
     }
 
@@ -4544,20 +4664,24 @@ class SFUTransport {
     const ready = await this.waitFor(
       () => {
         if (!this.useSFU || !this.device || !this.socket.isConnected()) {
-          console.log("[SFUTransport] Lost readiness during wait, re-initializing...");
-          this.initialize().catch(err =>
-            console.warn("[SFUTransport] Re-init during wait failed:", err)
+          console.log(
+            "[SFUTransport] Lost readiness during wait, re-initializing...",
+          );
+          this.initialize().catch((err) =>
+            console.warn("[SFUTransport] Re-init during wait failed:", err),
           );
           return false;
         }
         return true;
       },
       5000,
-      200
+      200,
     );
 
     if (!ready) {
-      console.warn(`[SFUTransport] Not ready for ${mediaType} send transport creation after wait`);
+      console.warn(
+        `[SFUTransport] Not ready for ${mediaType} send transport creation after wait`,
+      );
       return;
     }
 
@@ -4569,7 +4693,7 @@ class SFUTransport {
           (err, info) => {
             if (err) return reject(err);
             resolve(info);
-          }
+          },
         );
       });
 
@@ -4578,7 +4702,7 @@ class SFUTransport {
       this[transportProperty] = transport;
 
       // Also set as the main send transport for producers to use
-      if (mediaType === 'video') {
+      if (mediaType === "video") {
         this.sendTransport = transport;
       }
 
@@ -4590,83 +4714,131 @@ class SFUTransport {
       this.setupTransportEventHandlers(
         transport,
         transportInfo.id,
-        `send-${mediaType}`
+        `send-${mediaType}`,
       );
 
       // Listen for connect event and handle DTLS connection
-      transport.on('connect', async ({ dtlsParameters }, callback, errback) => {
+      transport.on("connect", async ({ dtlsParameters }, callback, errback) => {
         try {
-          console.log(`[SFUTransport] Transport ${transportInfo.id} connect event received`);
+          console.log(
+            `[SFUTransport] Transport ${transportInfo.id} connect event received`,
+          );
           // Send DTLS parameters to server
           const result = await new Promise((resolve, reject) => {
-            this.socket.emit("sfu-connect-transport", {
-              transportId: transportInfo.id,
-              dtlsParameters
-            }, (err, data) => {
-              if (err) return reject(err);
-              resolve(data);
-            });
+            this.socket.emit(
+              "sfu-connect-transport",
+              {
+                transportId: transportInfo.id,
+                dtlsParameters,
+              },
+              (err, data) => {
+                if (err) return reject(err);
+                resolve(data);
+              },
+            );
           });
-          console.log(`[SFUTransport] Transport ${transportInfo.id} DTLS connection completed`);
+          console.log(
+            `[SFUTransport] Transport ${transportInfo.id} DTLS connection completed`,
+          );
           callback();
         } catch (error) {
-          console.error(`[SFUTransport] Transport ${transportInfo.id} DTLS connection failed:`, error);
+          console.error(
+            `[SFUTransport] Transport ${transportInfo.id} DTLS connection failed:`,
+            error,
+          );
           errback(error);
         }
       });
 
       // Listen for produce event and handle producer creation
-      transport.on('produce', async ({ kind, rtpParameters, appData }, callback, errback) => {
-        try {
-          console.log(`[SFUTransport] Transport ${transportInfo.id} produce event received for ${kind}`);
-          // Send produce request to server
-          const result = await new Promise((resolve, reject) => {
-            this.socket.emit("sfu-produce", {
-              transportId: transportInfo.id,
-              kind,
-              rtpParameters,
-              appData
-            }, (err, data) => {
-              if (err) return reject(err);
-              resolve(data);
+      transport.on(
+        "produce",
+        async ({ kind, rtpParameters, appData }, callback, errback) => {
+          try {
+            console.log(
+              `[SFUTransport] Transport ${transportInfo.id} produce event received for ${kind}`,
+            );
+            // Send produce request to server
+            const result = await new Promise((resolve, reject) => {
+              this.socket.emit(
+                "sfu-produce",
+                {
+                  transportId: transportInfo.id,
+                  kind,
+                  rtpParameters,
+                  appData,
+                },
+                (err, data) => {
+                  if (err) return reject(err);
+                  resolve(data);
+                },
+              );
             });
-          });
-          console.log(`[SFUTransport] Transport ${transportInfo.id} producer created:`, result);
-          callback({ id: result.id });
-        } catch (error) {
-          console.error(`[SFUTransport] Transport ${transportInfo.id} producer creation failed:`, error);
-          errback(error);
-        }
-      });
+            console.log(
+              `[SFUTransport] Transport ${transportInfo.id} producer created:`,
+              result,
+            );
+            callback({ id: result.id });
+          } catch (error) {
+            console.error(
+              `[SFUTransport] Transport ${transportInfo.id} producer creation failed:`,
+              error,
+            );
+            errback(error);
+          }
+        },
+      );
 
       // Listen for producedata event and handle data producer creation
-      transport.on('producedata', async ({ sctpStreamParameters, label, protocol, appData }, callback, errback) => {
-        try {
-          console.log(`[SFUTransport] Transport ${transportInfo.id} producedata event received for ${label || 'data'}`);
-          // Send produce data request to server
-          const result = await new Promise((resolve, reject) => {
-            this.socket.emit("producedata", {
-              transportId: transportInfo.id,
-              sctpStreamParameters,
-              label,
-              protocol,
-              appData
-            }, (err, data) => {
-              if (err) return reject(err);
-              resolve(data);
+      transport.on(
+        "producedata",
+        async (
+          { sctpStreamParameters, label, protocol, appData },
+          callback,
+          errback,
+        ) => {
+          try {
+            console.log(
+              `[SFUTransport] Transport ${transportInfo.id} producedata event received for ${label || "data"}`,
+            );
+            // Send produce data request to server
+            const result = await new Promise((resolve, reject) => {
+              this.socket.emit(
+                "producedata",
+                {
+                  transportId: transportInfo.id,
+                  sctpStreamParameters,
+                  label,
+                  protocol,
+                  appData,
+                },
+                (err, data) => {
+                  if (err) return reject(err);
+                  resolve(data);
+                },
+              );
             });
-          });
-          console.log(`[SFUTransport] Transport ${transportInfo.id} data producer created:`, result);
-          callback({ id: result.id });
-        } catch (error) {
-          console.error(`[SFUTransport] Transport ${transportInfo.id} data producer creation failed:`, error);
-          errback(error);
-        }
-      });
+            console.log(
+              `[SFUTransport] Transport ${transportInfo.id} data producer created:`,
+              result,
+            );
+            callback({ id: result.id });
+          } catch (error) {
+            console.error(
+              `[SFUTransport] Transport ${transportInfo.id} data producer creation failed:`,
+              error,
+            );
+            errback(error);
+          }
+        },
+      );
 
-      console.log(`[SFUTransport] Created ${mediaType} sendTransport with handlers:`, {
-        id: transportInfo.id,
-      });
+      console.log(
+        `[SFUTransport] Created ${mediaType} sendTransport with handlers:`,
+        {
+          id: transportInfo.id,
+        },
+      );
 
       console.log(`[SFUTransport] Created ${mediaType} sendTransport:`, {
         id: transportInfo.id,
@@ -4674,7 +4846,10 @@ class SFUTransport {
 
       return transport;
     } catch (error) {
-      console.error(`[SFUTransport] Failed to create ${mediaType} send transport:`, error);
+      console.error(
+        `[SFUTransport] Failed to create ${mediaType} send transport:`,
+        error,
+      );
       throw error;
     }
   }
@@ -4683,10 +4858,13 @@ class SFUTransport {
    * Create a receive transport for consuming media/data from other peers
    * @returns {Promise<Object>} Created receive transport
    */
+
   async createRecvTransport() {
     // Check if we need to re-initialize SFU
     if (!this.useSFU || !this.device || !this.socket.isConnected()) {
-      console.log("[SFUTransport] Not ready, attempting to re-initialize SFU...");
+      console.log(
+        "[SFUTransport] Not ready, attempting to re-initialize SFU...",
+      );
 
       // Try to re-initialize if socket is connected
       if (this.socket && this.socket.isConnected()) {
@@ -4697,7 +4875,9 @@ class SFUTransport {
         }
         console.log("[SFUTransport] SFU re-initialized successfully");
       } else {
-        console.warn("[SFUTransport] Cannot create receive transport: Socket not connected");
+        console.warn(
+          "[SFUTransport] Cannot create receive transport: Socket not connected",
+        );
         return;
       }
     }
@@ -4705,24 +4885,34 @@ class SFUTransport {
     // Check if receive transport already exists and is usable
     if (this.recvTransport) {
       try {
-        if (!this.recvTransport.closed && 
-            this.recvTransport.connectionState !== 'closed' && 
-            this.recvTransport.connectionState !== 'failed') {
-          console.log("[SFUTransport] Receive transport already exists and is usable");
+        if (
+          !this.recvTransport.closed &&
+          this.recvTransport.connectionState !== "closed" &&
+          this.recvTransport.connectionState !== "failed"
+        ) {
+          console.log(
+            "[SFUTransport] Receive transport already exists and is usable",
+          );
           return this.recvTransport;
         }
       } catch (e) {
-        console.log("[SFUTransport] Receive transport exists but appears invalid, clearing it");
+        console.log(
+          "[SFUTransport] Receive transport exists but appears invalid, clearing it",
+        );
         this.recvTransport = null;
       }
     }
-    
+
     // If transport exists but is closed, clear it
-    if (this.recvTransport && 
-        (this.recvTransport.closed || 
-          this.recvTransport.connectionState === 'closed' || 
-          this.recvTransport.connectionState === 'failed')) {
-      console.log("[SFUTransport] Receive transport exists but is closed/failed, clearing and creating new one");
+    if (
+      this.recvTransport &&
+      (this.recvTransport.closed ||
+        this.recvTransport.connectionState === "closed" ||
+        this.recvTransport.connectionState === "failed")
+    ) {
+      console.log(
+        "[SFUTransport] Receive transport exists but is closed/failed, clearing and creating new one",
+      );
       this.recvTransport = null;
     }
 
@@ -4730,20 +4920,24 @@ class SFUTransport {
     const ready = await this.waitFor(
       () => {
         if (!this.useSFU || !this.device || !this.socket.isConnected()) {
-          console.log("[SFUTransport] Lost readiness during wait, re-initializing...");
-          this.initialize().catch(err =>
-            console.warn("[SFUTransport] Re-init during wait failed:", err)
+          console.log(
+            "[SFUTransport] Lost readiness during wait, re-initializing...",
+          );
+          this.initialize().catch((err) =>
+            console.warn("[SFUTransport] Re-init during wait failed:", err),
           );
           return false;
         }
         return true;
       },
       5000,
-      200
+      200,
     );
 
     if (!ready) {
-      console.warn("[SFUTransport] Not ready for receive transport creation after wait");
+      console.warn(
+        "[SFUTransport] Not ready for receive transport creation after wait",
+      );
       return;
     }
 
@@ -4755,7 +4949,7 @@ class SFUTransport {
           (err, info) => {
             if (err) return reject(err);
             resolve(info);
-          }
+          },
         );
       });
 
@@ -4763,52 +4957,58 @@ class SFUTransport {
       const transport = this.device.createRecvTransport(transportInfo);
       this.recvTransport = transport;
 
-      console.log(`[SFUTransport] Created recv transport, DTLS params available:`, !!transport.dtlsParameters);
-
-      // Setup connection state handlers
-      this.setupTransportEventHandlers(
-        transport,
-        transportInfo.id,
-        "recv"
+      console.log(
+        `[SFUTransport] Created recv transport, DTLS params available:`,
+        !!transport.dtlsParameters,
       );
 
+      // Setup connection state handlers
+      this.setupTransportEventHandlers(transport, transportInfo.id, "recv");
+      {
+      }
+
       // Listen for connect event and handle DTLS connection
-      transport.on('connect', async ({ dtlsParameters }, callback, errback) => {
+      transport.on("connect", async ({ dtlsParameters }, callback, errback) => {
         try {
-          console.log(`[SFUTransport] Transport ${transportInfo.id} connect event received`);
+          console.log(
+            `[SFUTransport] Transport ${transportInfo.id} connect event received`,
+          );
           // Send DTLS parameters to server
           const result = await new Promise((resolve, reject) => {
-            this.socket.emit("sfu-connect-transport", {
-              transportId: transportInfo.id,
-              dtlsParameters
-            }, (err, data) => {
-              if (err) return reject(err);
-              resolve(data);
-            });
+            this.socket.emit(
+              "sfu-connect-transport",
+              {
+                transportId: transportInfo.id,
+                dtlsParameters,
+              },
+              (err, data) => {
+                if (err) return reject(err);
+                resolve(data);
+              },
+            );
           });
-          console.log(`[SFUTransport] Transport ${transportInfo.id} DTLS connection completed`);
+          console.log(
+            `[SFUTransport] Transport ${transportInfo.id} DTLS connection completed`,
+          );
           callback();
         } catch (error) {
-          console.error(`[SFUTransport] Transport ${transportInfo.id} DTLS connection failed:`, error);
+          console.error(
+            `[SFUTransport] Transport ${transportInfo.id} DTLS connection failed:`,
+            error,
+          );
           errback(error);
         }
       });
 
-      console.log(`[SFUTransport] Created recvTransport with connect handler:`, {
-        id: transportInfo.id,
-      });
-
-      console.log("[SFUTransport] Created recvTransport:", {
-        id: transportInfo.id,
-      });
-
       return transport;
     } catch (error) {
-      console.error("[SFUTransport] Failed to create receive transport:", error);
+      console.error(
+        "[SFUTransport] Failed to create receive transport:",
+        error,
+      );
       throw error;
     }
   }
-
   /**
    * Request ICE restart from SFU server.
    * @private
@@ -4888,32 +5088,14 @@ class SFUTransport {
    * @param {string} direction - Transport direction ('send', 'recv', 'send-video', etc.)
    */
   setupTransportEventHandlers(transport, transportId, direction) {
-    if (!transport || !transportId) {
-      console.warn("[SFUTransport] Cannot setup handlers: missing transport or transportId");
-      return;
-    }
+    transport.on("connectionstatechange", (state) => {
+      console.log(`[SFUTransport] ${direction} transport state:`, state);
 
-    // Handle connection state changes
-    transport.on("connectionstatechange", () => {
-      const state = transport.connectionState;
-      console.log(`[SFUTransport] Transport ${direction} connection state changed:`, {
-        transportId,
-        state,
-      });
-
-      if (state === "connected" || state === "connecting") {
-        // Clear any pending ICE restart timers when connection is good
-        this.clearIceRestartTimer(transport);
-      } else if (state === "disconnected") {
-        // Schedule ICE restart for disconnected transport
-        this.scheduleIceRestart(transport, transportId);
-      } else {
-        // Clear timer for other states (failed, closed)
-        this.clearIceRestartTimer(transport);
+      if (state === "failed" || state === "closed") {
+        console.warn(`[SFUTransport] ${direction} transport failed`);
       }
     });
   }
-
 
   /**
    * Clear ICE restart timer.
@@ -4957,7 +5139,7 @@ class SFUTransport {
 
     // Ensure video send transport exists
     if (!this.videoSendTransport) {
-      await this.createSendTransport('video');
+      await this.createSendTransport("video");
     }
 
     if (!this.videoSendTransport) {
@@ -5002,7 +5184,7 @@ class SFUTransport {
 
     // Ensure audio send transport exists (separate from video transport)
     if (!this.audioSendTransport) {
-      await this.createSendTransport('audio');
+      await this.createSendTransport("audio");
     }
 
     if (!this.audioSendTransport) {
@@ -5015,10 +5197,10 @@ class SFUTransport {
       this.audioProducer = await this.audioSendTransport.produce({
         track: audioTrack,
         codecOptions: {
-          opusStereo: true,      // Enable stereo for game audio
-          opusFec: true,         // Forward Error Correction for reliability
-          opusDtx: false,        // Disable DTX to prevent sync drift
-          opusPtime: 20,         // 20ms packet time for optimal latency/bandwidth
+          opusStereo: true, // Enable stereo for game audio
+          opusFec: true, // Forward Error Correction for reliability
+          opusDtx: false, // Disable DTX to prevent sync drift
+          opusPtime: 20, // 20ms packet time for optimal latency/bandwidth
         },
       });
 
@@ -5046,7 +5228,7 @@ class SFUTransport {
 
     // Ensure audio send transport exists (separate from video transport)
     if (!this.audioSendTransport) {
-      await this.createSendTransport('audio');
+      await this.createSendTransport("audio");
     }
 
     if (!this.audioSendTransport) {
@@ -5059,10 +5241,10 @@ class SFUTransport {
       this.micAudioProducer = await this.audioSendTransport.produce({
         track: micTrack,
         codecOptions: {
-          opusStereo: false,     // Mono for voice chat
-          opusFec: true,         // Forward Error Correction for reliability
-          opusDtx: false,        // Keep voice continuous
-          opusPtime: 20,         // 20ms packet time for voice latency
+          opusStereo: false, // Mono for voice chat
+          opusFec: true, // Forward Error Correction for reliability
+          opusDtx: false, // Keep voice continuous
+          opusPtime: 20, // 20ms packet time for voice latency
         },
       });
 
@@ -5073,7 +5255,10 @@ class SFUTransport {
 
       return this.micAudioProducer;
     } catch (error) {
-      console.error("[SFUTransport] Failed to create mic audio producer:", error);
+      console.error(
+        "[SFUTransport] Failed to create mic audio producer:",
+        error,
+      );
       throw error;
     }
   }
@@ -5089,7 +5274,7 @@ class SFUTransport {
 
     // Ensure data send transport exists (separate from video/audio transports)
     if (!this.dataSendTransport) {
-      await this.createSendTransport('data');
+      await this.createSendTransport("data");
     }
 
     if (!this.dataSendTransport) {
@@ -5097,7 +5282,7 @@ class SFUTransport {
     }
 
     // Check if transport supports data channels
-    if (typeof this.dataSendTransport.produceData !== 'function') {
+    if (typeof this.dataSendTransport.produceData !== "function") {
       console.warn("[SFUTransport] Transport does not support data channels");
       return null;
     }
@@ -5141,30 +5326,42 @@ class SFUTransport {
     }
 
     try {
-      console.log(`[SFUTransport] Requesting consumer for producer ${producerId}, kind: ${kind}`);
+      console.log(
+        `[SFUTransport] Requesting consumer for producer ${producerId}, kind: ${kind}`,
+      );
 
       let consumer;
 
-      if (kind === 'data') {
+      if (kind === "data") {
         // Data consumers use consumedata endpoint (different from video/audio)
         const consumerParams = await new Promise((resolve, reject) => {
-          this.socket.emit("consumedata", {
-            dataProducerId: producerId,
-            transportId: this.recvTransport.id,
-          }, (error, params) => {
-            if (error) {
-              console.error(`[SFUTransport] SFU consume-data request failed for producer ${producerId}:`, error);
-              reject(error);
-            } else {
-              console.log(`[SFUTransport] Received consumer params from SFU for data producer ${producerId}:`, params);
-              resolve(params);
-            }
-          });
+          this.socket.emit(
+            "consumedata",
+            {
+              dataProducerId: producerId,
+              transportId: this.recvTransport.id,
+            },
+            (error, params) => {
+              if (error) {
+                console.error(
+                  `[SFUTransport] SFU consume-data request failed for producer ${producerId}:`,
+                  error,
+                );
+                reject(error);
+              } else {
+                console.log(
+                  `[SFUTransport] Received consumer params from SFU for data producer ${producerId}:`,
+                  params,
+                );
+                resolve(params);
+              }
+            },
+          );
         });
 
         // Create data consumer locally using parameters from SFU
         consumer = await this.recvTransport.consumeData({
-          id: consumerParams.id,  // Add the missing id parameter
+          id: consumerParams.id, // Add the missing id parameter
           dataProducerId: consumerParams.dataProducerId,
           sctpStreamParameters: consumerParams.sctpStreamParameters,
           label: consumerParams.label,
@@ -5175,12 +5372,15 @@ class SFUTransport {
           id: consumer.id,
           label: consumer.label,
           paused: consumer.paused,
-          readyState: consumer.readyState
+          readyState: consumer.readyState,
         });
 
         // Resume consumer if paused (mediasoup consumers start paused by default)
         if (consumer.paused) {
-          console.log(`[SFUTransport] Resuming paused data consumer:`, consumer.id);
+          console.log(
+            `[SFUTransport] Resuming paused data consumer:`,
+            consumer.id,
+          );
           await consumer.resume();
           console.log(`[SFUTransport] Data consumer resumed:`, consumer.id);
         }
@@ -5188,21 +5388,30 @@ class SFUTransport {
         // Set up message handling for data consumers
         if (this.dataChannelManager) {
           // Track consumer state
-          consumer.on('transportclose', () => {
-            console.log(`[SFUTransport] Data consumer transport closed:`, consumer.id);
+          consumer.on("transportclose", () => {
+            console.log(
+              `[SFUTransport] Data consumer transport closed:`,
+              consumer.id,
+            );
           });
 
-          consumer.on('close', () => {
+          consumer.on("close", () => {
             console.log(`[SFUTransport] Data consumer closed:`, consumer.id);
           });
 
-          consumer.on('open', () => {
+          consumer.on("open", () => {
             console.log(`[SFUTransport] Data consumer opened:`, consumer.id);
           });
 
-          consumer.on('message', (message) => {
-            console.log(`[SFUTransport] 📨 Data consumer received message:`, message);
-            console.log(`[SFUTransport] Message type: ${typeof message}, value:`, message);
+          consumer.on("message", (message) => {
+            console.log(
+              `[SFUTransport] 📨 Data consumer received message:`,
+              message,
+            );
+            console.log(
+              `[SFUTransport] Message type: ${typeof message}, value:`,
+              message,
+            );
             // For SFU, we don't have the socketId mapping, so pass null
             this.dataChannelManager.handleIncomingMessage(message, null);
           });
@@ -5214,34 +5423,45 @@ class SFUTransport {
               label: consumer.label,
               readyState: consumer.readyState,
               paused: consumer.paused,
-              closed: consumer.closed
+              closed: consumer.closed,
             });
           }, 2000);
         }
       } else {
         // Video/audio consumers use sfu-consume endpoint
         const consumerParams = await new Promise((resolve, reject) => {
-          this.socket.emit("sfu-consume", {
-            producerId: producerId,
-            transportId: this.recvTransport.id,
-            rtpCapabilities: this.device.rtpCapabilities,
-            ignoreDtx: kind === 'audio', // Ignore DTX for audio consumers
-          }, (error, params) => {
-            if (error) {
-              console.error(`[SFUTransport] SFU consume request failed for producer ${producerId}:`, error);
-              reject(error);
-            } else {
-              console.log(`[SFUTransport] Received consumer params from SFU for producer ${producerId}:`, params);
-              resolve(params);
-            }
-          });
+          this.socket.emit(
+            "sfu-consume",
+            {
+              producerId: producerId,
+              transportId: this.recvTransport.id,
+              rtpCapabilities: this.device.rtpCapabilities,
+              ignoreDtx: kind === "audio", // Ignore DTX for audio consumers
+            },
+            (error, params) => {
+              if (error) {
+                console.error(
+                  `[SFUTransport] SFU consume request failed for producer ${producerId}:`,
+                  error,
+                );
+                reject(error);
+              } else {
+                console.log(
+                  `[SFUTransport] Received consumer params from SFU for producer ${producerId}:`,
+                  params,
+                );
+                resolve(params);
+              }
+            },
+          );
         });
 
         // Create audio/video consumer locally using parameters from SFU
         // For audio consumers, ignore DTX packets to prevent sync drift
-        const consumeOptions = kind === 'audio'
-          ? { ...consumerParams, ignoreDtx: true }
-          : consumerParams;
+        const consumeOptions =
+          kind === "audio"
+            ? { ...consumerParams, ignoreDtx: true }
+            : consumerParams;
         consumer = await this.recvTransport.consume(consumeOptions);
       }
 
@@ -5254,7 +5474,11 @@ class SFUTransport {
       });
 
       // Start drift monitoring if enabled and not already running
-      if (this.driftMonitoringEnabled && !this.driftMonitoringInterval && this.consumers.size > 0) {
+      if (
+        this.driftMonitoringEnabled &&
+        !this.driftMonitoringInterval &&
+        this.consumers.size > 0
+      ) {
         this.startDriftMonitoring();
       }
 
@@ -5275,7 +5499,9 @@ class SFUTransport {
       return; // Already running
     }
 
-    console.log('[SFUTransport] Starting drift monitoring (soft monitoring only)');
+    console.log(
+      "[SFUTransport] Starting drift monitoring (soft monitoring only)",
+    );
 
     // Monitor every 5 seconds
     this.driftMonitoringInterval = setInterval(() => {
@@ -5291,7 +5517,7 @@ class SFUTransport {
     if (this.driftMonitoringInterval) {
       clearInterval(this.driftMonitoringInterval);
       this.driftMonitoringInterval = null;
-      console.log('[SFUTransport] Stopped drift monitoring');
+      console.log("[SFUTransport] Stopped drift monitoring");
     }
   }
 
@@ -5315,36 +5541,45 @@ class SFUTransport {
 
         // Get consumer stats (only for video/audio consumers)
         const stats = await consumer.getStats();
-        
+
         // Find audio/video stats
         for (const [id, stat] of stats.entries()) {
-          if (stat.type === 'inbound-rtp' && stat.kind) {
+          if (stat.type === "inbound-rtp" && stat.kind) {
             const kind = stat.kind;
-            const isAudio = kind === 'audio';
+            const isAudio = kind === "audio";
 
             // Check jitter buffer (for audio, this is critical)
             if (isAudio && stat.jitter !== undefined) {
               const jitterMs = stat.jitter * 1000; // Convert to ms
               if (jitterMs > this.driftThresholds.audioJitterMs) {
-                console.warn(`[SFUTransport] Audio jitter high: ${jitterMs.toFixed(2)}ms (threshold: ${this.driftThresholds.audioJitterMs}ms)`, {
-                  producerId,
-                  consumerId: consumer.id,
-                });
+                console.warn(
+                  `[SFUTransport] Audio jitter high: ${jitterMs.toFixed(2)}ms (threshold: ${this.driftThresholds.audioJitterMs}ms)`,
+                  {
+                    producerId,
+                    consumerId: consumer.id,
+                  },
+                );
               }
             }
 
             // Check packet loss
-            if (stat.packetsLost !== undefined && stat.packetsReceived !== undefined) {
+            if (
+              stat.packetsLost !== undefined &&
+              stat.packetsReceived !== undefined
+            ) {
               const totalPackets = stat.packetsLost + stat.packetsReceived;
               if (totalPackets > 0) {
                 const lossPercent = (stat.packetsLost / totalPackets) * 100;
                 if (lossPercent > this.driftThresholds.packetLossPercent) {
-                  console.warn(`[SFUTransport] ${kind} packet loss high: ${lossPercent.toFixed(2)}% (threshold: ${this.driftThresholds.packetLossPercent}%)`, {
-                    producerId,
-                    consumerId: consumer.id,
-                    packetsLost: stat.packetsLost,
-                    packetsReceived: stat.packetsReceived,
-                  });
+                  console.warn(
+                    `[SFUTransport] ${kind} packet loss high: ${lossPercent.toFixed(2)}% (threshold: ${this.driftThresholds.packetLossPercent}%)`,
+                    {
+                      producerId,
+                      consumerId: consumer.id,
+                      packetsLost: stat.packetsLost,
+                      packetsReceived: stat.packetsReceived,
+                    },
+                  );
                 }
               }
             }
@@ -5355,18 +5590,24 @@ class SFUTransport {
               // Note: RTT drift detection would require baseline comparison
               // For now, just log if RTT is unusually high
               if (rttMs > 500) {
-                console.warn(`[SFUTransport] ${kind} RTT high: ${rttMs.toFixed(2)}ms`, {
-                  producerId,
-                  consumerId: consumer.id,
-                });
+                console.warn(
+                  `[SFUTransport] ${kind} RTT high: ${rttMs.toFixed(2)}ms`,
+                  {
+                    producerId,
+                    consumerId: consumer.id,
+                  },
+                );
               }
             }
           }
         }
       } catch (error) {
         // Silently ignore stats errors (consumer may be closed)
-        if (error.message && !error.message.includes('closed')) {
-          console.debug(`[SFUTransport] Error getting stats for consumer ${producerId}:`, error.message);
+        if (error.message && !error.message.includes("closed")) {
+          console.debug(
+            `[SFUTransport] Error getting stats for consumer ${producerId}:`,
+            error.message,
+          );
         }
       }
     }
@@ -6609,7 +6850,7 @@ class NetplayEngine {
               if (!hasAudioProducer) {
                 console.log("[Netplay] Retrying audio producer creation...");
                 try {
-                  let audioTrack = await this.netplayCaptureAudio();
+                  let audioTrack = await this.waitForEmulatorAudio();
                   let retryCount = 0;
                   const maxRetries = 3;
 
@@ -6619,7 +6860,7 @@ class NetplayEngine {
                       `[Netplay] Game start audio capture attempt ${retryCount + 1}/${maxRetries} failed, retrying in 1 second...`,
                     );
                     await new Promise((resolve) => setTimeout(resolve, 1000));
-                    audioTrack = await this.netplayCaptureAudio();
+                    audioTrack = await this.waitForEmulatorAudio();
                     retryCount++;
                   }
 
@@ -9123,7 +9364,7 @@ class NetplayEngine {
       // Capture game audio (emulator audio) with retry logic
       try {
         console.log("[Netplay] 🔊 Setting up game audio producer...");
-        let gameAudioTrack = await this.netplayCaptureAudio();
+        let gameAudioTrack = await this.waitForEmulatorAudio();
         let retryCount = 0;
         const maxRetries = 15;
 
@@ -9134,7 +9375,7 @@ class NetplayEngine {
             `[Netplay] Game audio capture attempt ${retryCount + 1}/${maxRetries} failed, retrying in ${delay / 1000}s...`,
           );
           await new Promise((resolve) => setTimeout(resolve, delay));
-          gameAudioTrack = await this.netplayCaptureAudio();
+          gameAudioTrack = await this.waitForEmulatorAudio();
           retryCount++;
         }
 
@@ -9158,7 +9399,7 @@ class NetplayEngine {
               if (!this.sfuTransport?.audioProducer) {
                 console.log("[Netplay] Host retrying game audio capture...");
                 try {
-                  const gameAudioTrack = await this.netplayCaptureAudio();
+                  const gameAudioTrack = await this.waitForEmulatorAudio();
                   if (gameAudioTrack) {
                     await this.sfuTransport.createAudioProducer(gameAudioTrack);
                     console.log(
@@ -10993,6 +11234,21 @@ class NetplayEngine {
     }
   }
 
+  async waitForEmulatorAudio(timeout = 5000) {
+    const start = Date.now();
+
+    while (Date.now() - start < timeout) {
+      const ejs = window.EJS_emulator;
+      if (ejs && typeof ejs.getAudioOutputNode === "function") {
+        const node = ejs.getAudioOutputNode();
+        if (node && node.context) return node;
+      }
+      await new Promise((r) => setTimeout(r, 100));
+    }
+
+    return null;
+  }
+
   // Capture audio for netplay streaming
   async netplayCaptureAudio() {
     const ejs = window.EJS_emulator;
@@ -12478,6 +12734,8 @@ class NetplayMenu {
         console.log("[NetplayMenu] Hiding canvas for livestream client");
         this.emulator.canvas.style.display = "none";
       }
+      // Attach video live stream track
+      this.netplayAttachConsumerTrack(track, kind);
     }
 
     // Stop room list fetching
@@ -13210,31 +13468,29 @@ class NetplayMenu {
     // Helper function to create select dropdown - more compact for two-column layout
     const createSelect = (options, currentValue, onChange) => {
       const select = this.createElement("select");
-      slotSelect.style.backgroundColor = "#333";
-      slotSelect.style.color = "#fff";
-      slotSelect.style.border = "1px solid #555";
-      slotSelect.style.borderRadius = "4px";
-      slotSelect.style.padding = "3px 6px";
-      slotSelect.style.width = "100%";
-      slotSelect.style.maxWidth = "100%";
-      slotSelect.style.fontSize = "0.9em";
-      slotSelect.style.boxSizing = "border-box";
+      select.style.backgroundColor = "#333";
+      select.style.color = "#fff";
+      select.style.border = "1px solid #555";
+      select.style.borderRadius = "4px";
+      select.style.padding = "3px 6px";
+      select.style.width = "100%";
+      select.style.maxWidth = "100%";
+      select.style.fontSize = "0.9em";
+      select.style.boxSizing = "border-box";
 
       Object.entries(options).forEach(([value, label]) => {
         const option = this.createElement("option");
         option.value = value;
         option.innerText = label;
         if (value === currentValue) option.selected = true;
-        slotSelect.appendChild(option);
+        select.appendChild(option);
       });
 
       if (onChange) {
-        this.addEventListener(slotSelect, "change", () =>
-          onChange(slotSelect.value),
-        );
+        this.addEventListener(select, "change", () => onChange(select.value));
       }
 
-      return slotSelect;
+      return select;
     };
 
     // Helper function to get current setting value
@@ -13251,7 +13507,7 @@ class NetplayMenu {
     };
 
     // SVC with VP9 setting
-    const normalizeVSVCMode = (v) => {
+    const normalizeVP9SVCMode = (v) => {
       const s = typeof v === "string" ? v.trim() : "";
       const sl = s.toLowerCase();
       if (sl === "l1t1") return "L1T1";

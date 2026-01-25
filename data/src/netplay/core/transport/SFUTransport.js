@@ -893,6 +893,7 @@ class SFUTransport {
    * Create a receive transport for consuming media/data from other peers
    * @returns {Promise<Object>} Created receive transport
    */
+
   async createRecvTransport() {
     // Check if we need to re-initialize SFU
     if (!this.useSFU || !this.device || !this.socket.isConnected()) {
@@ -998,6 +999,8 @@ class SFUTransport {
 
       // Setup connection state handlers
       this.setupTransportEventHandlers(transport, transportInfo.id, "recv");
+      {
+      }
 
       // Listen for connect event and handle DTLS connection
       transport.on("connect", async ({ dtlsParameters }, callback, errback) => {
@@ -1032,17 +1035,6 @@ class SFUTransport {
         }
       });
 
-      console.log(
-        `[SFUTransport] Created recvTransport with connect handler:`,
-        {
-          id: transportInfo.id,
-        },
-      );
-
-      console.log("[SFUTransport] Created recvTransport:", {
-        id: transportInfo.id,
-      });
-
       return transport;
     } catch (error) {
       console.error(
@@ -1052,7 +1044,6 @@ class SFUTransport {
       throw error;
     }
   }
-
   /**
    * Request ICE restart from SFU server.
    * @private
@@ -1132,33 +1123,11 @@ class SFUTransport {
    * @param {string} direction - Transport direction ('send', 'recv', 'send-video', etc.)
    */
   setupTransportEventHandlers(transport, transportId, direction) {
-    if (!transport || !transportId) {
-      console.warn(
-        "[SFUTransport] Cannot setup handlers: missing transport or transportId",
-      );
-      return;
-    }
+    transport.on("connectionstatechange", (state) => {
+      console.log(`[SFUTransport] ${direction} transport state:`, state);
 
-    // Handle connection state changes
-    transport.on("connectionstatechange", () => {
-      const state = transport.connectionState;
-      console.log(
-        `[SFUTransport] Transport ${direction} connection state changed:`,
-        {
-          transportId,
-          state,
-        },
-      );
-
-      if (state === "connected" || state === "connecting") {
-        // Clear any pending ICE restart timers when connection is good
-        this.clearIceRestartTimer(transport);
-      } else if (state === "disconnected") {
-        // Schedule ICE restart for disconnected transport
-        this.scheduleIceRestart(transport, transportId);
-      } else {
-        // Clear timer for other states (failed, closed)
-        this.clearIceRestartTimer(transport);
+      if (state === "failed" || state === "closed") {
+        console.warn(`[SFUTransport] ${direction} transport failed`);
       }
     });
   }

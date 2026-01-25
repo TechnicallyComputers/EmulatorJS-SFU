@@ -1763,31 +1763,29 @@ class NetplayMenu {
     // Helper function to create select dropdown - more compact for two-column layout
     const createSelect = (options, currentValue, onChange) => {
       const select = this.createElement("select");
-      slotSelect.style.backgroundColor = "#333";
-      slotSelect.style.color = "#fff";
-      slotSelect.style.border = "1px solid #555";
-      slotSelect.style.borderRadius = "4px";
-      slotSelect.style.padding = "3px 6px";
-      slotSelect.style.width = "100%";
-      slotSelect.style.maxWidth = "100%";
-      slotSelect.style.fontSize = "0.9em";
-      slotSelect.style.boxSizing = "border-box";
+      select.style.backgroundColor = "#333";
+      select.style.color = "#fff";
+      select.style.border = "1px solid #555";
+      select.style.borderRadius = "4px";
+      select.style.padding = "3px 6px";
+      select.style.width = "100%";
+      select.style.maxWidth = "100%";
+      select.style.fontSize = "0.9em";
+      select.style.boxSizing = "border-box";
 
       Object.entries(options).forEach(([value, label]) => {
         const option = this.createElement("option");
         option.value = value;
         option.innerText = label;
         if (value === currentValue) option.selected = true;
-        slotSelect.appendChild(option);
+        select.appendChild(option);
       });
 
       if (onChange) {
-        this.addEventListener(slotSelect, "change", () =>
-          onChange(slotSelect.value),
-        );
+        this.addEventListener(select, "change", () => onChange(select.value));
       }
 
-      return slotSelect;
+      return select;
     };
 
     // Helper function to get current setting value
@@ -1804,7 +1802,7 @@ class NetplayMenu {
     };
 
     // SVC with VP9 setting
-    const normalizeVSVCMode = (v) => {
+    const normalizeVP9SVCMode = (v) => {
       const s = typeof v === "string" ? v.trim() : "";
       const sl = s.toLowerCase();
       if (sl === "l1t1") return "L1T1";

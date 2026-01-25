@@ -567,7 +567,7 @@ class NetplayEngine {
               if (!hasAudioProducer) {
                 console.log("[Netplay] Retrying audio producer creation...");
                 try {
-                  let audioTrack = await this.netplayCaptureAudio();
+                  let audioTrack = await this.waitForEmulatorAudio();
                   let retryCount = 0;
                   const maxRetries = 3;
 
@@ -577,7 +577,7 @@ class NetplayEngine {
                       `[Netplay] Game start audio capture attempt ${retryCount + 1}/${maxRetries} failed, retrying in 1 second...`,
                     );
                     await new Promise((resolve) => setTimeout(resolve, 1000));
-                    audioTrack = await this.netplayCaptureAudio();
+                    audioTrack = await this.waitForEmulatorAudio();
                     retryCount++;
                   }
 
@@ -3081,7 +3081,7 @@ class NetplayEngine {
       // Capture game audio (emulator audio) with retry logic
       try {
         console.log("[Netplay] 🔊 Setting up game audio producer...");
-        let gameAudioTrack = await this.netplayCaptureAudio();
+        let gameAudioTrack = await this.waitForEmulatorAudio();
         let retryCount = 0;
         const maxRetries = 15;
 
@@ -3092,7 +3092,7 @@ class NetplayEngine {
             `[Netplay] Game audio capture attempt ${retryCount + 1}/${maxRetries} failed, retrying in ${delay / 1000}s...`,
           );
           await new Promise((resolve) => setTimeout(resolve, delay));
-          gameAudioTrack = await this.netplayCaptureAudio();
+          gameAudioTrack = await this.waitForEmulatorAudio();
           retryCount++;
         }
 
@@ -3116,7 +3116,7 @@ class NetplayEngine {
               if (!this.sfuTransport?.audioProducer) {
                 console.log("[Netplay] Host retrying game audio capture...");
                 try {
-                  const gameAudioTrack = await this.netplayCaptureAudio();
+                  const gameAudioTrack = await this.waitForEmulatorAudio();
                   if (gameAudioTrack) {
                     await this.sfuTransport.createAudioProducer(gameAudioTrack);
                     console.log(
@@ -4949,6 +4949,21 @@ class NetplayEngine {
       console.error("[Netplay] Failed to capture canvas video:", error);
       return null;
     }
+  }
+
+  async waitForEmulatorAudio(timeout = 5000) {
+    const start = Date.now();
+
+    while (Date.now() - start < timeout) {
+      const ejs = window.EJS_emulator;
+      if (ejs && typeof ejs.getAudioOutputNode === "function") {
+        const node = ejs.getAudioOutputNode();
+        if (node && node.context) return node;
+      }
+      await new Promise((r) => setTimeout(r, 100));
+    }
+
+    return null;
   }
 
   // Capture audio for netplay streaming
