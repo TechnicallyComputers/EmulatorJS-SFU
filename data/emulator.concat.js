@@ -724,7 +724,7 @@ class EmulatorJS {
       psx: ["pcsx_rearmed", "mednafen_psx_hw"],
       ws: ["mednafen_wswan"],
       gba: ["mgba"],
-      n64: ["mupen64plus_next", "parallel_n64"],
+      n64: ["mupen64plus_next_netplay", "mupen64plus_next", "parallel_n64"],
       "3do": ["opera"],
       psp: ["ppsspp"],
       atari7800: ["prosystem"],
