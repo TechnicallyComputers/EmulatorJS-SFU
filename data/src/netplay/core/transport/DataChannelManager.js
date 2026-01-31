@@ -65,6 +65,40 @@ class DataChannelManager {
   }
 
   /**
+   * Check if data channels are ready for sending inputs.
+   * @returns {boolean} True if ready to send inputs
+   */
+  /**
+   * Check if data channels are ready.
+   * @returns {boolean}
+   */
+  isReady() {
+    console.log(`[DataChannelManager] isReady check for ${this.mode} mode - dataProducer: ${!!this.dataProducer}, closed: ${this.dataProducer?.closed}, p2pChannels: ${this.p2pChannels.size}`);
+    if (this.mode === "orderedRelay" || this.mode === "unorderedRelay") {
+      // Relay modes: check if data producer is available and not closed
+      const ready = this.dataProducer && !this.dataProducer.closed;
+      console.log(`[DataChannelManager] Relay mode ready: ${ready}`);
+      return ready;
+    } else if (this.mode === "unorderedP2P" || this.mode === "orderedP2P") {
+      // P2P modes: check if there are any open P2P channels
+      for (const [socketId, channels] of this.p2pChannels) {
+        if (this.mode === "unorderedP2P" && channels.unordered && channels.unordered.readyState === "open") {
+          console.log(`[DataChannelManager] P2P mode ready: true (unordered channel open for ${socketId})`);
+          return true;
+        }
+        if (this.mode === "orderedP2P" && channels.ordered && channels.ordered.readyState === "open") {
+          console.log(`[DataChannelManager] P2P mode ready: true (ordered channel open for ${socketId})`);
+          return true;
+        }
+      }
+      console.log(`[DataChannelManager] P2P mode ready: false (no open channels)`);
+      return false;
+    }
+    console.log(`[DataChannelManager] Unknown mode: ${this.mode}, ready: false`);
+    return false;
+  }
+
+  /**
    * Add P2P data channel.
    * @param {string} socketId - Peer socket ID
    * @param {Object} channelData - {ordered, unordered} RTCDataChannel objects
@@ -451,49 +485,6 @@ class DataChannelManager {
         console.error("[DataChannelManager] ❌ Error flushing buffered input:", error);
       }
     });
-  }
-
-  /**
-   * Check if data channels are ready.
-   * @returns {boolean}
-   */
-  isReady() {
-    let ready = false;
-
-    if (this.mode === "orderedRelay" || this.mode === "unorderedRelay") {
-      ready = this.dataProducer && !this.dataProducer.closed;
-      console.log("[DataChannelManager] isReady check for relay mode:", {
-        mode: this.mode,
-        hasDataProducer: !!this.dataProducer,
-        dataProducerClosed: this.dataProducer?.closed,
-        ready
-      });
-    } else {
-      // P2P modes: check if at least one channel is open
-      for (const [socketId, channels] of this.p2pChannels.entries()) {
-        if (channels.ordered?.readyState === "open" || channels.unordered?.readyState === "open") {
-          console.log("[DataChannelManager] isReady check for P2P mode:", {
-            mode: this.mode,
-            socketId,
-            orderedState: channels.ordered?.readyState,
-            unorderedState: channels.unordered?.readyState,
-            ready: true
-          });
-          ready = true;
-          break;
-        }
-      }
-
-      if (!ready) {
-        console.log("[DataChannelManager] isReady check for P2P mode - no open channels:", {
-          mode: this.mode,
-          channelCount: this.p2pChannels.size,
-          ready: false
-        });
-      }
-    }
-
-    return ready;
   }
 
   /**

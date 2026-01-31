@@ -3586,6 +3586,40 @@ class DataChannelManager {
   }
 
   /**
+   * Check if data channels are ready for sending inputs.
+   * @returns {boolean} True if ready to send inputs
+   */
+  /**
+   * Check if data channels are ready.
+   * @returns {boolean}
+   */
+  isReady() {
+    console.log(`[DataChannelManager] isReady check for ${this.mode} mode - dataProducer: ${!!this.dataProducer}, closed: ${this.dataProducer?.closed}, p2pChannels: ${this.p2pChannels.size}`);
+    if (this.mode === "orderedRelay" || this.mode === "unorderedRelay") {
+      // Relay modes: check if data producer is available and not closed
+      const ready = this.dataProducer && !this.dataProducer.closed;
+      console.log(`[DataChannelManager] Relay mode ready: ${ready}`);
+      return ready;
+    } else if (this.mode === "unorderedP2P" || this.mode === "orderedP2P") {
+      // P2P modes: check if there are any open P2P channels
+      for (const [socketId, channels] of this.p2pChannels) {
+        if (this.mode === "unorderedP2P" && channels.unordered && channels.unordered.readyState === "open") {
+          console.log(`[DataChannelManager] P2P mode ready: true (unordered channel open for ${socketId})`);
+          return true;
+        }
+        if (this.mode === "orderedP2P" && channels.ordered && channels.ordered.readyState === "open") {
+          console.log(`[DataChannelManager] P2P mode ready: true (ordered channel open for ${socketId})`);
+          return true;
+        }
+      }
+      console.log(`[DataChannelManager] P2P mode ready: false (no open channels)`);
+      return false;
+    }
+    console.log(`[DataChannelManager] Unknown mode: ${this.mode}, ready: false`);
+    return false;
+  }
+
+  /**
    * Add P2P data channel.
    * @param {string} socketId - Peer socket ID
    * @param {Object} channelData - {ordered, unordered} RTCDataChannel objects
@@ -3972,49 +4006,6 @@ class DataChannelManager {
         console.error("[DataChannelManager] ❌ Error flushing buffered input:", error);
       }
     });
-  }
-
-  /**
-   * Check if data channels are ready.
-   * @returns {boolean}
-   */
-  isReady() {
-    let ready = false;
-
-    if (this.mode === "orderedRelay" || this.mode === "unorderedRelay") {
-      ready = this.dataProducer && !this.dataProducer.closed;
-      console.log("[DataChannelManager] isReady check for relay mode:", {
-        mode: this.mode,
-        hasDataProducer: !!this.dataProducer,
-        dataProducerClosed: this.dataProducer?.closed,
-        ready
-      });
-    } else {
-      // P2P modes: check if at least one channel is open
-      for (const [socketId, channels] of this.p2pChannels.entries()) {
-        if (channels.ordered?.readyState === "open" || channels.unordered?.readyState === "open") {
-          console.log("[DataChannelManager] isReady check for P2P mode:", {
-            mode: this.mode,
-            socketId,
-            orderedState: channels.ordered?.readyState,
-            unorderedState: channels.unordered?.readyState,
-            ready: true
-          });
-          ready = true;
-          break;
-        }
-      }
-
-      if (!ready) {
-        console.log("[DataChannelManager] isReady check for P2P mode - no open channels:", {
-          mode: this.mode,
-          channelCount: this.p2pChannels.size,
-          ready: false
-        });
-      }
-    }
-
-    return ready;
   }
 
   /**
@@ -9707,6 +9698,18 @@ class NetplayEngine {
       );
       await this.netplaySetupDataConsumers();
 
+      // Set up P2P channels for host (always listen for client offers)
+      if (this.sessionState?.isHostRole()) {
+        console.log(
+          `[Netplay] Host detected, setting up P2P data channels for client offers...`,
+        );
+        await this.netplaySetupP2PChannels();
+        console.log(
+          `[Netplay] Host P2P setup complete, checking channels:`,
+          this.dataChannelManager?.p2pChannels?.size || 0,
+        );
+      }
+
       // Check input mode and set up P2P channels if needed for unorderedP2P
       const inputMode =
         this.dataChannelManager?.mode ||
@@ -9718,7 +9721,10 @@ class NetplayEngine {
         console.log(
           `[Netplay] Input mode is ${inputMode}, setting up P2P data channels...`,
         );
-        await this.netplaySetupP2PChannels();
+        // Already called above for host, but for client it's different
+        if (!this.sessionState?.isHostRole()) {
+          // Client P2P setup if needed
+        }
         console.log(
           `[Netplay] P2P setup complete, checking channels:`,
           this.dataChannelManager?.p2pChannels?.size || 0,
@@ -10103,9 +10109,9 @@ class NetplayEngine {
           { urls: "stun:stun.l.google.com:19302" },
           { urls: "stun:stun1.l.google.com:19302" },
           { urls: "stun:stun2.l.google.com:19302" },
-          // Public TURN servers (may have rate limits) - using URL format for credentials
+          // Public TURN servers (may have rate limits) - using UDP for better compatibility
           {
-            urls: "turn:webrtc:webrtc@turn.anyfirewall.com:443?transport=tcp",
+            urls: "turn:webrtc:webrtc@turn.anyfirewall.com:443",
           },
         ];
         console.log(
@@ -10212,6 +10218,7 @@ class NetplayEngine {
             target: target,
             sender: clientId,
             candidate: event.candidate,
+            roomName: this.emulator.netplay.currentRoomId,
           });
         } else {
           const totalCandidates = Object.values(candidateTypes).reduce(
@@ -10361,6 +10368,7 @@ class NetplayEngine {
         target: target,
         sender: clientId,
         offer: offer,
+        roomName: this.emulator.netplay.currentRoomId,
       });
 
       // Listen for host's answer and remote ICE candidates
@@ -10439,6 +10447,8 @@ class NetplayEngine {
         } catch (e) {
           // Ignore cleanup errors
         }
+        // Reset initiation flag
+        this._p2pInitiating = false;
       };
 
       // Set up connection success/failure handlers to trigger cleanup
@@ -10974,21 +10984,19 @@ class NetplayEngine {
         "[Netplay] Setting up P2P data channels for input synchronization...",
       );
 
+      // Map to store RTCPeerConnection instances per sender for candidate handling
+      this.p2pPCs = new Map();
+
       const inputMode =
         this.dataChannelManager?.mode ||
         this.configManager?.getSetting("inputMode") ||
         this.config.inputMode ||
         "unorderedRelay";
 
-      if (inputMode !== "unorderedP2P" && inputMode !== "orderedP2P") {
-        console.log(
-          `[Netplay] Input mode is ${inputMode}, P2P channels not needed`,
-        );
-        return;
-      }
-
-      // Set up WebRTC signaling for P2P data channels
+      // Always set up WebRTC signaling listener for incoming P2P offers from clients
+      // The host can receive P2P inputs even if sending via relay
       if (this.socketTransport) {
+        console.log(`[Netplay] Host setting up WebRTC signaling listener (inputMode: ${inputMode})`);
         // Listen for WebRTC signaling from clients to establish P2P connections
         this.socketTransport.on("webrtc-signal", async (data) => {
           try {
@@ -11016,9 +11024,9 @@ class NetplayEngine {
                   { urls: "stun:stun.l.google.com:19302" },
                   { urls: "stun:stun1.l.google.com:19302" },
                   { urls: "stun:stun2.l.google.com:19302" },
-                  // Public TURN servers (may have rate limits) - using URL format for credentials
+                  // Public TURN servers (may have rate limits) - using UDP for better compatibility
                   {
-                    urls: "turn:webrtc:webrtc@turn.anyfirewall.com:443?transport=tcp",
+                    urls: "turn:webrtc:webrtc@turn.anyfirewall.com:443",
                   },
                 ];
 
@@ -11053,6 +11061,9 @@ class NetplayEngine {
                 rtcpMuxPolicy: "require",
               });
 
+              // Store PC for candidate handling
+              this.p2pPCs.set(sender, pc);
+
               // Add comprehensive WebRTC monitoring for host
               let connectionTimeout = null;
               let iceGatheringTimeout = null;
@@ -11078,6 +11089,8 @@ class NetplayEngine {
                   console.warn(
                     `[Netplay] ❌ Host P2P connection failed with ${sender}: ${pc.iceConnectionState}`,
                   );
+                  // Clean up PC reference
+                  this.p2pPCs.delete(sender);
                   // Could fall back to relay mode here
                 }
               };
@@ -11159,6 +11172,7 @@ class NetplayEngine {
                     `[Netplay] ❌ Host P2P connection timeout with ${sender} - falling back to relay mode`,
                   );
                   pc.close();
+                  this.p2pPCs.delete(sender);
                   this.handleP2PFallback(sender);
                 }
               }, 30000); // 30 second timeout for local networks
@@ -11186,6 +11200,7 @@ class NetplayEngine {
                     // Clear connection timeout since we're handling fallback now
                     clearTimeout(connectionTimeout);
                     pc.close();
+                    this.p2pPCs.delete(sender);
                     this.handleP2PFallback(sender);
                     return;
                   }
@@ -11199,9 +11214,7 @@ class NetplayEngine {
               // Set up event handler to receive channels from client
               pc.ondatachannel = (event) => {
                 const channel = event.channel;
-                console.log(
-                  `[Netplay] Host received data channel from ${sender}: ${channel.label}, id: ${channel.id}, readyState: ${channel.readyState}`,
-                );
+                console.log(`[Netplay] Host received data channel from ${sender}: ${channel.label}, id: ${channel.id}, readyState: ${channel.readyState}`);
 
                 // Add channel to DataChannelManager
                 if (this.dataChannelManager) {
@@ -11281,6 +11294,7 @@ class NetplayEngine {
                   this.socketTransport.emit("webrtc-signal", {
                     target: sender,
                     candidate: event.candidate,
+                    roomName: this.emulator.netplay.currentRoomId,
                   });
                 }
               };
@@ -11298,7 +11312,116 @@ class NetplayEngine {
               this.socketTransport.emit("webrtc-signal", {
                 target: sender,
                 answer: answer,
+                roomName: this.emulator.netplay.currentRoomId,
               });
+
+              // Create data channels from host to client for bidirectional communication
+              const inputMode =
+                this.dataChannelManager?.mode ||
+                this.configManager?.getSetting("inputMode") ||
+                this.config.inputMode ||
+                "unorderedRelay";
+
+              if (inputMode === "unorderedP2P" || inputMode === "orderedP2P") {
+                const unorderedRetries =
+                  this.configManager?.getSetting("netplayUnorderedRetries") || 0;
+
+                // Create unordered channel for unorderedP2P and orderedP2P modes
+                const unorderedChannel = pc.createDataChannel("input-unordered", {
+                  ordered: false,
+                  maxRetransmits: unorderedRetries > 0 ? unorderedRetries : undefined,
+                  maxPacketLifeTime: unorderedRetries === 0 ? 3000 : undefined,
+                });
+
+                console.log(
+                  `[Netplay] Host created unordered channel to ${sender}, id: ${unorderedChannel.id}, readyState: ${unorderedChannel.readyState}`,
+                );
+
+                // Set up channel event handlers
+                unorderedChannel.onopen = () => {
+                  console.log(
+                    `[Netplay] Host unordered P2P channel opened to ${sender} - READY FOR INPUTS!`,
+                  );
+                  console.log(`[Netplay] Host unordered channel state:`, {
+                    label: unorderedChannel.label,
+                    id: unorderedChannel.id,
+                    readyState: unorderedChannel.readyState,
+                    bufferedAmount: unorderedChannel.bufferedAmount,
+                  });
+                };
+
+                unorderedChannel.onmessage = (event) => {
+                  console.log(
+                    `[Netplay] Host received P2P message on unordered channel from ${sender}:`,
+                    event.data,
+                  );
+                };
+
+                unorderedChannel.onclose = () => {
+                  console.log(`[Netplay] Host unordered P2P channel closed to ${sender}`);
+                };
+
+                unorderedChannel.onerror = (error) => {
+                  console.error(`[Netplay] Host unordered P2P channel error to ${sender}:`, error);
+                };
+
+                // Add to DataChannelManager
+                if (this.dataChannelManager) {
+                  console.log(
+                    `[Netplay] Adding host-created unordered channel to DataChannelManager for ${sender}`,
+                  );
+                  this.dataChannelManager.addP2PChannel(sender, {
+                    unordered: unorderedChannel,
+                  });
+                  console.log(
+                    `[Netplay] Host DataChannelManager now has ${this.dataChannelManager.p2pChannels.size} P2P connections`,
+                  );
+                }
+              }
+
+              if (inputMode === "orderedP2P") {
+                // Create ordered channel for orderedP2P mode
+                const orderedChannel = pc.createDataChannel("input-ordered", {
+                  ordered: true,
+                });
+
+                console.log(
+                  `[Netplay] Host created ordered channel to ${sender}, id: ${orderedChannel.id}, readyState: ${orderedChannel.readyState}`,
+                );
+
+                // Set up channel event handlers
+                orderedChannel.onopen = () => {
+                  console.log(`[Netplay] Host ordered P2P channel opened to ${sender}`);
+                };
+
+                orderedChannel.onmessage = (event) => {
+                  console.log(
+                    `[Netplay] Host received P2P message on ordered channel from ${sender}:`,
+                    event.data,
+                  );
+                };
+
+                orderedChannel.onclose = () => {
+                  console.log(`[Netplay] Host ordered P2P channel closed to ${sender}`);
+                };
+
+                orderedChannel.onerror = (error) => {
+                  console.error(`[Netplay] Host ordered P2P channel error to ${sender}:`, error);
+                };
+
+                // Add to DataChannelManager (update existing entry)
+                if (this.dataChannelManager) {
+                  const existing = this.dataChannelManager.p2pChannels.get(sender);
+                  if (existing) {
+                    existing.ordered = orderedChannel;
+                  } else {
+                    this.dataChannelManager.addP2PChannel(sender, {
+                      ordered: orderedChannel,
+                      unordered: null,
+                    });
+                  }
+                }
+              }
 
               console.log(
                 `[Netplay] ✅ P2P connection established with ${sender}`,
@@ -11314,17 +11437,26 @@ class NetplayEngine {
 
             // Handle ICE candidate
             if (candidate) {
-              console.log(`[Netplay] Received ICE candidate from ${sender}`);
-              // ICE candidate handling would be done in RTCPeerConnection
+              const pc = this.p2pPCs.get(sender);
+              if (pc) {
+                console.log(`[Netplay] Adding ICE candidate to PC for ${sender}`);
+                pc.addIceCandidate(new RTCIceCandidate(candidate));
+              } else {
+                console.warn(`[Netplay] No PC found for ${sender} to add candidate`);
+              }
             }
           } catch (error) {
-            console.error("[Netplay] Failed to handle WebRTC signal:", error);
+              console.error("[Netplay] Failed to handle WebRTC signal:", error);
           }
         });
 
-        console.log(
-          "[Netplay] P2P channel setup complete - listening for WebRTC signals from clients",
-        );
+        // Optional: Skip additional P2P setup if host doesn't need to initiate P2P
+        if (inputMode !== "unorderedP2P" && inputMode !== "orderedP2P") {
+          console.log(
+            `[Netplay] Host input mode is ${inputMode}, skipping outbound P2P setup but listening for client offers`,
+          );
+          return;
+        }
       }
     } catch (error) {
       console.error("[Netplay] Failed to setup P2P channels:", error);
