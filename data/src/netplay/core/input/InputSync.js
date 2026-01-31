@@ -127,7 +127,12 @@ class InputSync {
 
     if (isHost) {
       // Host: Queue local input for processing
-      return this.controller.queueLocalInput(playerIndex, inputIndex, value);
+      // Enforce slot for all inputs
+      const effectivePlayerIndex = this.controller.getEffectivePlayerIndex ? this.controller.getEffectivePlayerIndex(playerIndex) : playerIndex;
+
+      // Use effectivePlayerIndex in all calls
+      return this.controller.queueLocalInput(effectivePlayerIndex, inputIndex, value);
+
     } else {
       // Client: Send input to network
       return this.controller.sendInput(playerIndex, inputIndex, value, this.sendInputCallback, this);
@@ -156,7 +161,7 @@ class InputSync {
     }
 
     const targetFrame = this.controller.getCurrentFrame() + this.frameDelay;
-    const payload = new this.InputPayload(targetFrame, 0, playerIndex, inputIndex, value);
+    const payload = new this.InputPayload(targetFrame, playerIndex, playerIndex, inputIndex, value);
     return payload.serialize();
   }
 
@@ -231,8 +236,7 @@ class InputSync {
         inputData.forEach((data) => {
           if (data.connected_input && data.connected_input.length === 3) {
             let [playerIndex, inputIndex, value] = data.connected_input;
-            // Apply slot enforcement for network transmission
-            playerIndex = this.controller.getEffectivePlayerIndex(playerIndex);
+            // Slot enforcement already applied in SimpleController.sendInput
             const inputPayload = {
               frame: data.frame || frame || 0,
               slot: slot,
@@ -247,8 +251,7 @@ class InputSync {
       } else if (inputData.connected_input && inputData.connected_input.length === 3) {
         // Single input
         let [playerIndex, inputIndex, value] = inputData.connected_input;
-        // Apply slot enforcement for network transmission
-        playerIndex = this.controller.getEffectivePlayerIndex(playerIndex);
+        // Slot enforcement already applied in SimpleController.sendInput
         const inputPayload = {
           frame: frame || inputData.frame || 0,
           slot: slot,

@@ -26,6 +26,7 @@ class SessionState {
     this.roomName = null;
     this.roomPassword = null;
     this.gameMode = null;
+    this.roomType = null; // "livestream" or "delaysync"
 
     // Local player info
     this.localPlayerId = null;
@@ -161,11 +162,13 @@ class SessionState {
    * @param {string} roomName - Room name
    * @param {string|null} roomPassword - Room password (if any)
    * @param {string|null} gameMode - Game mode ID
+   * @param {string|null} roomType - Room type ("livestream" or "delaysync")
    */
-  setRoom(roomName, roomPassword = null, gameMode = null) {
+  setRoom(roomName, roomPassword = null, gameMode = null, roomType = null) {
     this.roomName = roomName;
     this.roomPassword = roomPassword;
     this.gameMode = gameMode;
+    this.roomType = roomType;
   }
 
   /**
@@ -175,6 +178,7 @@ class SessionState {
     this.roomName = null;
     this.roomPassword = null;
     this.gameMode = null;
+    this.roomType = null;
     this.players.clear();
     this.spectators.clear();
   }

@@ -24,6 +24,9 @@ function getSourceFiles() {
     "netplay/core/input/frameworks/SimpleController.js",
     "netplay/core/input/frameworks/ComplexController.js",
     
+    // Input payload (dependency for input modules and transport)
+    "netplay/InputPayload.js",
+    
     // Input modules
     "netplay/core/input/InputQueue.js",
     "netplay/core/input/SlotManager.js",
@@ -117,6 +120,9 @@ async function doMinify() {
       comments: false,
     },
     ecma: 2020,
+    parse: {
+      ecma: 2020,
+    },
     mangle: false, // Don't mangle names
     module: false,
     toplevel: false, // Don't optimize top-level scope

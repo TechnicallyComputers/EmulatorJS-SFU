@@ -116,10 +116,12 @@ class RoomManager {
           }
 
           // Room created successfully
+          const roomType = extra.netplay_mode === 1 ? "delaysync" : "livestream";
           this.sessionState.setRoom(
             roomName,
             password,
             this.config.gameMode || null,
+            roomType,
           );
           resolve(sessionid);
         },

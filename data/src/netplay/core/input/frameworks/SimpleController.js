@@ -210,7 +210,7 @@ class SimpleController {
     });
 
     if (this.emulator && typeof this.emulator.simulateInput === "function") {
-      this.emulator.simulateInput(playerIndex, inputIndex, value);
+      this.emulator.simulateInput(playerIndex, inputIndex, value, "netplay-remote");
     } else {
       console.warn(
         "[SimpleController] No emulator available to apply remote input",

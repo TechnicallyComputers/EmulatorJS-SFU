@@ -27,11 +27,11 @@ class EmulatorJS {
       psx: ["pcsx_rearmed", "mednafen_psx_hw"],
       ws: ["mednafen_wswan"],
       gba: ["mgba"],
-      n64: ["mupen64plus_next_netplay", "mupen64plus_next", "parallel_n64"],
+      n64: ["mupen64plus_next", "parallel_n64"],
       "3do": ["opera"],
       psp: ["ppsspp"],
       atari7800: ["prosystem"],
-      snes: ["snes9x", "bsnes"],
+      snes: ["snes9x", "snes9x_netplay", "bsnes"],
       atari2600: ["stella2014"],
       jaguar: ["virtualjaguar"],
       segaSaturn: ["yabause"],
@@ -1762,7 +1762,30 @@ class EmulatorJS {
     window
       .EJS_Runtime({
         noInitialRun: true,
-        onRuntimeInitialized: null,
+        onRuntimeInitialized: () => {
+          // Hook into Emscripten OpenAL to expose audio nodes for EmulatorJS
+          if (this.Module && this.Module.AL) {
+            const originalAlcCreateContext = this.Module.AL.alcCreateContext;
+            if (originalAlcCreateContext) {
+              this.Module.AL.alcCreateContext = (...args) => {
+                const ctx = originalAlcCreateContext.apply(this.Module.AL, args);
+                if (ctx && ctx.audioCtx) {
+                  // Expose the master gain node for EmulatorJS audio capture
+                  if (!ctx.masterGain) {
+                    ctx.masterGain = ctx.audioCtx.createGain();
+                    ctx.masterGain.gain.value = 1.0;
+                    // Connect to destination if not already connected
+                    if (ctx.masterGain && ctx.audioCtx.destination) {
+                      ctx.masterGain.connect(ctx.audioCtx.destination);
+                    }
+                    console.log("[EmulatorJS] Exposed masterGain node for audio capture");
+                  }
+                }
+                return ctx;
+              };
+            }
+          }
+        },
         arguments: [],
         preRun: [],
         postRun: [],
@@ -1801,6 +1824,33 @@ class EmulatorJS {
       })
       .then((module) => {
         this.Module = module;
+        
+        // Set up audio node exposure for EmulatorJS after module loads
+        const setupAudioExposure = () => {
+          if (this.Module && this.Module.AL && this.Module.AL.currentCtx) {
+            const ctx = this.Module.AL.currentCtx;
+            if (ctx.audioCtx && !ctx.masterGain) {
+              ctx.masterGain = ctx.audioCtx.createGain();
+              ctx.masterGain.gain.value = 1.0;
+              // Connect to destination if there's a gain chain
+              if (ctx.gain && ctx.gain.connect) {
+                ctx.gain.connect(ctx.masterGain);
+                ctx.masterGain.connect(ctx.audioCtx.destination);
+              } else if (ctx.audioCtx.destination) {
+                ctx.masterGain.connect(ctx.audioCtx.destination);
+              }
+              console.log("[EmulatorJS] Exposed masterGain node for audio capture");
+            }
+          }
+        };
+        
+        // Check immediately and then periodically
+        setupAudioExposure();
+        const audioCheckInterval = setInterval(setupAudioExposure, 1000);
+        
+        // Clear interval after 10 seconds
+        setTimeout(() => clearInterval(audioCheckInterval), 10000);
+        
         this.downloadFiles();
       })
       .catch((e) => {
@@ -8449,6 +8499,9 @@ class EmulatorJS {
               k.toLowerCase().includes("audio") ||
               k.toLowerCase().includes("node"),
           ),
+          allKeys: Object.keys(openALCtx),
+          hasSources: !!openALCtx.sources,
+          sourcesCount: openALCtx.sources ? openALCtx.sources.length : 0,
         },
       );
 
@@ -8494,6 +8547,51 @@ class EmulatorJS {
         ) {
           console.log(`[EmulatorJS] Found potential audio node '${nodeName}'`);
           return openALCtx[nodeName];
+        }
+      }
+
+      // Fallback: Try to tap into existing OpenAL sources
+      // Create a master gain node and connect all source gains to it
+      console.log("[EmulatorJS] Checking OpenAL sources fallback:", {
+        hasSources: !!openALCtx.sources,
+        sourcesLength: openALCtx.sources ? openALCtx.sources.length : 'undefined',
+      });
+      if (openALCtx.sources && openALCtx.sources.length > 0) {
+        console.log("[EmulatorJS] Attempting to create master gain from OpenAL sources");
+        try {
+          // Find the audio context from the first source
+          const firstSource = openALCtx.sources[0];
+          console.log("[EmulatorJS] First source info:", {
+            hasSource: !!firstSource,
+            hasGain: !!firstSource.gain,
+            gainType: firstSource.gain ? typeof firstSource.gain : 'undefined',
+            hasContext: !!(firstSource.gain && firstSource.gain.context),
+          });
+          if (firstSource && firstSource.gain && firstSource.gain.context) {
+            const audioContext = firstSource.gain.context;
+            const masterGain = audioContext.createGain();
+            masterGain.gain.value = 1.0;
+
+            // Connect all source gains to the master gain
+            let connectedCount = 0;
+            openALCtx.sources.forEach(source => {
+              if (source.gain && typeof source.gain.connect === "function") {
+                source.gain.connect(masterGain);
+                connectedCount++;
+              }
+            });
+
+            if (connectedCount > 0) {
+              console.log(`[EmulatorJS] Created master gain node from ${connectedCount} OpenAL sources`);
+              return masterGain;
+            } else {
+              console.log("[EmulatorJS] No OpenAL sources could be connected to master gain");
+            }
+          } else {
+            console.log("[EmulatorJS] OpenAL sources found but no valid gain context");
+          }
+        } catch (e) {
+          console.warn("[EmulatorJS] Failed to create master gain from OpenAL sources:", e);
         }
       }
     }
